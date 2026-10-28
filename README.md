@@ -160,18 +160,10 @@ Packs made for the 3DS version don't match the Wii U textures and won't load. De
 
 ## What's next
 
-From the [roadmap](docs/ROADMAP.md):
-
-- **Linux on real hardware:** the AppImage boots, and needs testing on Linux desktops and the Steam Deck (sound,
-  movies, controllers); a smaller build of its video decoder.
-- **HP scaling in play:** checking it in hub quests at High and G rank.
-- **Graphics:** refining the Tri look and global illumination against the original games; widescreen and
-  high-resolution work.
-- **Hand-written code:** replacing hot or important recompiled functions with hand-written ones.
-- **Phase 6, the last phase:**
-  - **online play** through Cha-Cha's own lobby server in place of Nintendo's retired service
-    ([docs/online.md](docs/online.md)), with HP scaling then using the real number of hunters;
-  - a **custom quest maker** that writes quest packs for the MODS → Quests library.
+- **Local network play:** hunt together with players on the same network.
+- **Online play:** Cha-Cha's own lobby server in place of Nintendo's retired service
+  ([docs/online.md](docs/online.md)), with HP scaling then using the real number of hunters.
+- **Quest maker:** build your own quests and share them as packs for the MODS → Quests library.
 
 ## Building from source
 
