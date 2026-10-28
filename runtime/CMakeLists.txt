@@ -1,0 +1,7 @@
+add_subdirectory(fs)
+add_subdirectory(core)
+add_subdirectory(input)
+add_subdirectory(os)
+add_subdirectory(gfx)
+add_subdirectory(audio)
+add_subdirectory(boot)

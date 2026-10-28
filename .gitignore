@@ -1,0 +1,60 @@
+# --- Copyrighted game data: NEVER commit ---
+game/*
+!game/README.md
+extracted/*
+!extracted/.gitkeep
+*.wua
+*.wud
+*.wux
+*.rpx
+*.rpl
+*.elf
+
+# --- Generated output ---
+build/*
+!build/.gitkeep
+recomp/out/
+
+# --- Third-party tool binaries (installed locally, see tools/README.md) ---
+tools/bin/*
+!tools/bin/.gitkeep
+
+# --- Ghidra project databases (share exports, not the DB) ---
+ghidra/*.gpr
+ghidra/*.rep/
+ghidra/*.lock*
+
+# --- Editors / OS ---
+.vs/
+.vscode/
+*.user
+Thumbs.db
+desktop.ini
+
+# --- Python bytecode ---
+__pycache__/
+*.pyc
+
+# runtime save data (/vol/save)
+save/
+
+# user input settings (copy of input.example.ini)
+input.ini
+
+# runtime settings and caches when run from the checkout (data folder = repo)
+config.ini
+cache/
+
+# launcher art from the user (Capcom key art / logo: never commit)
+launcher/
+
+# texture packs and dumps (game art)
+texture_replacements/
+texture_dump/
+
+# quest library: official DLC and custom quests (game data)
+quests/
+mods.ini
+
+# run logs (the data folder is the repo when run from a checkout)
+log.txt

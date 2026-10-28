@@ -1,0 +1,23 @@
+# Game functions with hand-written replacements in src/ (recomp_emit emits <name>__orig + a dispatcher for each;
+# the replacement is registered at start-up with ppc::set_override and may call the original).
+# Format: 0xADDR name # replacement, purpose
+0x027695A0 uIDStartMenu::stepState? # src/game/boot_prompts.cpp: start-menu per-frame state step (+0x2A0); boot notices/save prompts confirmed
+0x020E28A0 sAppSaveData::yesNoAnswer? # src/game/boot_prompts.cpp: answers Yes during the boot save setup
+0x02A7830C uBloomFilter::vf11 # src/game/filters.cpp: bloom draw, skipped when bloom=0 (also used by uAppBloomFilter)
+0x02A8504C uDOFFilter::vf11 # src/game/filters.cpp: depth-of-field draw, skipped when depth_of_field=0
+0x02A79F90 uBokehFilter::vf11 # src/game/filters.cpp: bokeh depth-of-field draw, skipped when depth_of_field=0
+0x02019C0C aGame::noticeControllerPro? # src/game/boot_prompts.cpp: "will begin set to the Pro Controller" accepted
+0x02019AD4 aGame::noticeControllerPadA? # src/game/boot_prompts.cpp: GamePad controller notice accepted
+0x02019B70 aGame::noticeControllerPadB? # src/game/boot_prompts.cpp: GamePad controller notice accepted
+0x02019CA8 aGame::noticeClose? # src/game/boot_prompts.cpp: system notice closed
+0x02019D30 aGame::noticeNoController? # src/game/boot_prompts.cpp: "set controller could not be detected" closed
+0x02019E38 aGame::noticeLanguage? # src/game/boot_prompts.cpp: "In-game language has been changed" closed
+0x0201A020 aGame::noticeMessage? # src/game/boot_prompts.cpp: one-line system notice closed
+0x02BBFD3C sLtRender::frameLimit? # src/game/frame_limit.cpp: waits for the flip queue and a minimum frame time (renderer flag 1: cutscenes); skipped with our own frame pacing
+0x0259FB84 uEnemy::setMaxHp? # src/game/monster_hp.cpp: max HP = base x quest stat row (x0.55 for flagged quests); logged, scaling by hunters to follow
+0x02141DE0 sID::getText? # src/game/text_trace.cpp: sID::vf37 (group, index) -> game text; overridden only with MH3U_TRACE_TEXT (logs callers)
+0x021F0E7C sLobby::boxMenuStep? # src/game/item_sets.cpp: item box menu step; a 7th option Item Sets (Register / Load Item Set)
+0x026A6B80 uIDLobbyMaki::drawBoxMenuOptions? # src/game/item_sets.cpp: with Item Sets, row slots 3 and 7 trade places (Item Sets under Combine/Manage Items)
+0x02687D38 uIDLobbyMaki::drawBoxMenu? # src/game/item_sets.cpp: Item Sets' sub-list pop-up placed at row 3
+0x02AE1E40 cGUIInstAnimation::updateTransforms? # src/game/item_sets.cpp: box menu with Item Sets - the separator and the scroll's lower part one row down (object PosY before the transforms are redone)
+0x020ECA2C sCockpit::obtainItem? # src/game/carving.cpp: hold to gather - after an item is obtained the held button keeps repeating
