@@ -33,13 +33,22 @@ void on_fault(int sig, siginfo_t* info, void* context) {
     if (g_base && host >= base && host < base + kSpace) {
         const auto addr = static_cast<uint32_t>(host - base);
         const size_t page = addr >> 12;
-        if (g_page_state[page].load(std::memory_order_relaxed) & kTracked) {  // a write to a tracked page
+        const uint8_t state = g_page_state[page].load(std::memory_order_relaxed);
+        if (state & kTracked) {  // a write to a tracked page
             g_dirty[page].store(2, std::memory_order_relaxed);
             g_page_state[page].fetch_and(static_cast<uint8_t>(~kTracked), std::memory_order_relaxed);
             mprotect(g_base + (page << 12), 0x1000, PROT_READ | PROT_WRITE);
             return;
         }
         if (hit_watch(addr, write)) return;
+        if (write && (state & kCommitted)) {
+            // read-only without kTracked: the scanner queued this page for protection, this handler unprotected it
+            // for an earlier write, then the scanner's mprotect landed. Still a tracked write (the next pass sets
+            // kTracked again from the dirty mark).
+            g_dirty[page].store(2, std::memory_order_relaxed);
+            mprotect(g_base + (page << 12), 0x1000, PROT_READ | PROT_WRITE);
+            return;
+        }
     }
     if (!g_report) {  // not ours: the previous handler (or the default action: re-raised when this returns)
         sigaction(sig, &g_previous[sig == SIGBUS ? 1 : 0], nullptr);

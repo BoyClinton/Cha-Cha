@@ -213,13 +213,16 @@ reachable than a pure decomp.
    - [ ] Monster HP scaling by the number of hunters on the quest (1-4): find what marks a Gathering Hall quest (log
      a village and a hub quest) and the hunter count, then scale max HP in the override. Always on, no MODS switch
      (user 2026-10-28)
-   - [ ] Item sets (MHGU style) in the game's own item box menu: a new option **Item Sets** when the box is opened,
+     Progress 2026-10-28: done in src/game/monster_hp.cpp - hub quests (sGame+0x1B9 != 1) not already x0.55, MH4U
+     table 0.65 / 0.80 / 0.90 / 1.0 for 1-4 hunters (1 until online play), every rank. To check in a hub quest
+     (log line "game_hp -> hp") at Low, High and G rank
+   - [x] Item sets (MHGU style) in the game's own item box menu: a new option **Item Sets** when the box is opened,
      with a drop-down sub-menu **Register Item Set** (pouch -> set) / **Load Item Set** (refill the pouch from the box);
      needs the box menu, its option list and drop-down UI, and the pouch / box structures mapped (user 2026-10-27;
      always on, no MODS switch - 2026-10-28: the GAMEPLAY tab is gone)
      Progress: box menu mapped (sLobby box state, option tables, pouch / box); option 6 Item Sets with Register /
-     Load Item Set implemented (src/game/item_sets.cpp, MODS toggle, sets in save/80000001/cha-cha-item-sets.ini);
-     to check in a window
+     Load Item Set implemented (src/game/item_sets.cpp, sets in save/80000001/cha-cha-item-sets.ini, always on);
+     everything below seen working in a window by the user (2026-10-28)
      2026-10-27, user: menu, sub-list and help work; Item Sets drawn in row 3 under Combine/Manage Items. Still to do:
      - [x] the separator line crosses the Item Sets row: grow the upper (tan) part by a row, move the line and the
        three rows below it (blue part) and the scroll's bottom down (seen in a window 2026-10-27, Equipment Sets
@@ -249,18 +252,53 @@ reachable than a pure decomp.
   Progress: Tri reworked as a scene pass (warm grade, richer colour, soft glow, depth haze; HUD untouched) and
   screen-space GI added (VIDEO > GLOBAL ILLUMINATION); checked headless in Moga Village, to judge in play
 
+### Phase 5.5 – In-game menus instead of ImGui (user 2026-10-28)
+No launcher overlay and no Dear ImGui: the game starts as the game, and Cha-Cha's settings live in the game's own
+menus, drawn with its own widgets. Order (user): the GFX tab first. Item Sets (`src/game/item_sets.cpp`) is the
+model for adding to a game menu; MH3U_TRACE_TEXT finds a menu's code from its labels.
+- [ ] Pause menu (village / field): a third tab **GFX** after Hunter / Info, an Options-style list (label left, value
+  box right, help box below, page arrows) holding the graphics settings (resolution, frame rate, VSync, look, GI, AO,
+  DOF, bloom, vignette, texture packs, ...)
+- [ ] Title → Options (Game Options): a seventh box **Graphics Settings** with the same rows
+- [ ] Game Options → Controller Settings: our remapping (keyboard / mouse and controller per game button, layout,
+  sensitivity, invert Y), drawn in the game's UI style
+- [ ] Main menu → DLC becomes the mods menu: Capcom's DLC download screen, listing the official DLC and the custom
+  quests (packs) from `<data>/quests`, installed / removed from there
+- [ ] Game Options holds Cha-Cha's own boxes next to the game's six (user 2026-10-28: "they could be here"):
+  Graphics Settings, and the texture dump (below); more rows if the screen needs a scroll or a second column
+- [ ] The game's DLC download loading screen and progress bar (find it from the DLC menu's download flow) reused for
+  Cha-Cha's long jobs: shader translation / pipeline prebuild at boot, and the texture dump
+- [ ] Texture dump of the whole game: every `rTexture` in every archive of the content (and update) tree, written as
+  `tex_<w>x<h>_<CRC32>.dds` like today's dump, instead of only what the game draws while dumping is on; started
+  from Game Options, progress on that loading screen
+- [ ] On-screen keyboard redrawn in the game's style (our renderer, no ImGui)
+- [ ] First start without ImGui: the system folder picker chooses the dump; shader / pipeline preparation on the
+  game's loading screen (above); then every start is the game straight away
+- [ ] Dear ImGui removed from the build (setup.cpp launcher, settings panel, MODS panel, toasts)
+
 ### Phase 6 – Online and quest maker (last phase; user decision 2026-10-28)
 - [ ] Online play, option B of `docs/online.md`: replace the game's NEX backend with Cha-Cha's own - a backend behind
   the game's session interface (`MtNet::Session` / `nNetwork::Session`), matchmaking through a small Cha-Cha lobby
   server, data over direct UDP or a relay. Steps: map the session interface and how the Gathering Hall drives it
   (create / join / search, members, messages); `nsysnet` real sockets; the lobby server; friends reworked
   (replaces the old "local/LAN multiplayer reimplementation" item)
+- [ ] Local network play (user 2026-10-28, listed in the README's What's next): hunt with players on the same
+  network - the game's local-play backend (MtNet has Nex / Uds / Snow; `docs/online.md`) or the online backend
+  below with LAN discovery instead of the lobby server
 - [ ] Multiplayer hub quest scaling with real hunter counts: HP scaling (built for 1 hunter, `src/game/monster_hp.cpp`)
   takes the count from the online session; damage etc. if wanted
-- [ ] Custom quest maker + loader: document `rQuestData` (`.quest`, `SDTQ`, 824 files in `nativeCafe/quest/{eu,us}`),
-  `rQuestList` (`.list`), `.quest_btl` (`QTDB`) and `.supp` in `docs/formats/`; a tool to edit / create quests
-  (monsters, map, objectives, time, rewards) that writes quest packs the MODS > QUESTS library installs (custom
-  packs: `pack.json`, pictures)
+- [ ] Quest maker with share codes (user decision 2026-10-29, replaces the external tool writing quest packs):
+  - [ ] Document `rQuestData` (`.quest`, `SDTQ`, 824 files in `nativeCafe/quest/{eu,us}`), `rQuestList` (`.list`),
+    `.quest_btl` (`QTDB`) and `.supp` in `docs/formats/`: which fields the maker sets, their id tables
+  - [ ] Maker in the game's own menus (no ImGui, like Phase 5.5): monsters, map, objectives, time, rewards, title
+  - [ ] Share code: on saving, the maker shows a generated code with a Copy button (system clipboard). The code holds
+    the maker's choices, not the SDTQ bytes (a quest file is up to 0x2000 bytes): a compact versioned record with a
+    checksum, written in an unambiguous alphabet in short groups; the game rebuilds the quest from it, so the same
+    code gives the same quest on Windows and Linux, and old codes keep loading after format changes
+  - [ ] Enter code: paste (clipboard, on-screen keyboard as fallback), preview the quest, install it; bad or
+    tampered codes are rejected with a message, never a crash
+  - [ ] Made and received quests land in the MODS > QUESTS library (a "Shared quests" pack), quest numbers
+    assigned locally; folder packs keep working for DLC and hand-made `.quest` files
 
 ## Risks
 - ~~Paired-singles + GQR quantized loads are heavily used~~ – not in this game: only `ps_merge10` save/restore (Phase 2 finding).

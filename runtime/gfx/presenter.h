@@ -24,6 +24,7 @@ struct VulkanContext {
     uint32_t queue_family = 0;
     std::mutex* queue_mutex = nullptr;
     bool depth_clip_control = false;  // VK_EXT_depth_clip_control (GL -1..1 clip-space depth)
+    uint32_t api_version = 0;         // the device's Vulkan version (VkPhysicalDeviceProperties::apiVersion)
 };
 
 class Presenter {
@@ -51,8 +52,9 @@ public:
     void present_image(const uint8_t* rgba, uint32_t width, uint32_t height);
     // Presents a device image (TRANSFER_SRC_OPTIMAL, written by an earlier submission on the queue), scaled to fit.
     void present_vk_image(VkImage image, uint32_t width, uint32_t height);
-    // Drawn over every presented frame (the launcher): called with the queue lock held, inside dynamic rendering on
-    // the swapchain image (colour attachment, contents kept), from whichever thread presents.
+    // Drawn over every presented frame (the launcher): called with the queue lock held, inside rendering on the
+    // swapchain image (colour attachment, contents kept; a render pass where dynamic rendering is emulated, see
+    // vkc::pipeline_rendering), from whichever thread presents.
     using Overlay = std::function<void(VkCommandBuffer cmd, VkExtent2D extent)>;
     void set_overlay(Overlay overlay);
     VkFormat surface_format() const;  // of the swapchain images (the overlay's pipelines render to it)

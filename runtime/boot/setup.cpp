@@ -11,6 +11,7 @@
 #include "quests.h"
 #include "save_reads.h"
 #include "translate.h"
+#include "vk_compat.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -345,6 +346,9 @@ struct PanelLayout {
     const char *sel_title = nullptr, *sel_desc = nullptr;  // the selected row, for the description pane
     stdfs::path sel_image;                                  // and its picture (MODS -> QUESTS)
     bool sel_changes = false;                               // left / right change the selected row (control guide)
+    bool sel_value = false;                                 // the selected row is a Value row
+    // unapplied settings: A / Enter on a Value row applies them (left / right change the value) and sets apply
+    bool confirm_applies = false, apply = false;
     // the open group: its card is drawn under its rows when it closes (draw-list channel 0), with the hairlines
     // between rows and the selected row's highlight, rounded where it meets the card's corners
     bool in_group = false, focus_ring = false;
@@ -407,8 +411,8 @@ void arrow(ImDrawList* dl, ImVec2 c, float s, int dir, ImU32 col) {
     dl->AddTriangleFilled(ImVec2(c.x + dir * s, c.y), ImVec2(c.x - dir * s * 0.6f, c.y - s), ImVec2(c.x - dir * s * 0.6f, c.y + s), col);
 }
 
-// Value: the value cycles (left / right, or a click on the row's left / right half); Switch: on / off; Button: an
-// action (a chevron); Info: shown only.
+// Value: the value cycles (left / right, or a click on the row's left / right half; A / Enter applies unapplied
+// settings, else cycles); Switch: on / off; Button: an action (a chevron); Info: shown only.
 enum class Row { Value, Switch, Button, Info };
 
 // One row of the open group. Returns what the user asked for: -1 / +1 (left / right: the d-pad, the stick, the arrow
@@ -430,6 +434,7 @@ int panel_row(PanelLayout& p, Row kind, const char* label, const std::string& va
         p.sel_title = label;
         p.sel_desc = desc;
         p.sel_changes = changes;
+        p.sel_value = enabled && kind == Row::Value;
     }
     int step = 0;
     if (changes && focused) {
@@ -446,6 +451,10 @@ int panel_row(PanelLayout& p, Row kind, const char* label, const std::string& va
     }
     if (enabled && clicked && kind != Row::Info)
         step = kind == Row::Value && ImGui::IsMouseReleased(ImGuiMouseButton_Left) ? (ImGui::GetIO().MousePos.x < at.x + p.w * 0.5f ? -1 : 1) : 2;
+    if (step == 2 && kind == Row::Value && p.confirm_applies) {
+        p.apply = true;
+        step = 0;
+    }
     const ImVec2 b(at.x + p.w, at.y + p.row_h);
     if (sel && p.in_group) {
         p.hi0 = at;
@@ -684,7 +693,7 @@ struct Launcher::Impl {
     bool draw(const LaunchState& st);
     void draw_title(const LaunchState& st, ImVec2 size, bool& play, bool& quit);
     void draw_panel(ImVec2 size);
-    float draw_guide(ImDrawList* dl, ImVec2 at, float h, bool changes);
+    float draw_guide(ImDrawList* dl, ImVec2 at, float h, bool changes, bool confirm_applies);
     float key_cap(ImDrawList* dl, ImVec2 at, const std::string& key, bool draw);
     void toggle_panel(Panel which);
     void draw_tab_general(PanelLayout& p);
@@ -728,7 +737,7 @@ Launcher::Launcher(const AppPaths& paths, gfx::Presenter& presenter, std::vector
     pci.pPoolSizes = &ps;
     vkCreateDescriptorPool(vk.device, &pci, nullptr, &d.pool);
     ImGui_ImplVulkan_InitInfo ii{};
-    ii.ApiVersion = VK_API_VERSION_1_3;
+    ii.ApiVersion = vk.api_version;
     ii.Instance = vk.instance;
     ii.PhysicalDevice = vk.phys;
     ii.Device = vk.device;
@@ -736,11 +745,12 @@ Launcher::Launcher(const AppPaths& paths, gfx::Presenter& presenter, std::vector
     ii.Queue = vk.queue;
     ii.DescriptorPool = d.pool;
     ii.MinImageCount = ii.ImageCount = 3;  // vertex buffers cycled over 3 frames; the presenter keeps 2 in flight
-    ii.UseDynamicRendering = true;
     d.format = presenter.surface_format();
     ii.PipelineRenderingCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ii.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     ii.PipelineRenderingCreateInfo.pColorAttachmentFormats = &d.format;
+    ii.RenderPass = gfx::vkc::render_pass_for(ii.PipelineRenderingCreateInfo);  // older drivers: a render pass
+    ii.UseDynamicRendering = ii.RenderPass == VK_NULL_HANDLE;
     ImGui_ImplVulkan_Init(&ii);
     {
         std::lock_guard g(*vk.queue_mutex);  // the font upload submits on the shared queue
@@ -1229,6 +1239,7 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
     p.small = fonts.note;
     p.scale = s;
     p.row_h = fonts.body->FontSize + 28 * s;
+    p.confirm_applies = !mods && tab != Tab::Input && !(draft == settings);  // INPUT's rows take effect at once
     ImGui::SetCursorScreenPos(ImVec2(a.x + pad, top));
     ImGui::BeginChild("rows", ImVec2(col_w, body_h), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
     p.x = ImGui::GetCursorScreenPos().x;
@@ -1281,8 +1292,9 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
     const float fy = b.y - footer_h;
     dl->AddRectFilled(ImVec2(a.x + 1, fy), ImVec2(b.x - 1, b.y - 1), IM_COL32(0, 0, 0, 46), r - 1, ImDrawFlags_RoundCornersBottom);
     dl->AddLine(ImVec2(a.x + 1, fy), ImVec2(b.x - 1, fy), kHairline);
-    draw_guide(dl, ImVec2(a.x + pad, fy + footer_h * 0.5f), footer_h, p.sel_changes);
+    draw_guide(dl, ImVec2(a.x + pad, fy + footer_h * 0.5f), footer_h, p.sel_changes, p.confirm_applies && p.sel_value);
     if (mods) return;  // the quests apply at once
+    if (p.apply && !(draft == settings)) apply();  // A / Enter on a Value row
     const bool dirty = !(draft == settings);
     const float bh = 40 * s;
     const ImVec2 ls = fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, "Apply");
@@ -1307,7 +1319,7 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
 // The control guide: each button as a key cap followed by what it does, from the current bindings (the controller's
 // own button names, the face buttons drawn as PlayStation symbols on those pads), or the keyboard's keys with no
 // controller connected. Returns its width.
-float Launcher::Impl::draw_guide(ImDrawList* dl, ImVec2 at, float, bool changes) {
+float Launcher::Impl::draw_guide(ImDrawList* dl, ImVec2 at, float, bool changes, bool confirm_applies) {
     const std::string sel = input::pad_prompt("a"), back = input::pad_prompt("b"), apply_key = input::pad_prompt("plus");
     const bool pad = !sel.empty() && !back.empty();
     const bool settings_tab = panel == Panel::Settings && !(draft == settings);  // Apply, while there is something to apply
@@ -1319,9 +1331,10 @@ float Launcher::Impl::draw_guide(ImDrawList* dl, ImVec2 at, float, bool changes)
     if (capturing) {
         items = {{"Esc", "Cancel"}, {"Delete", "Clear"}};
     } else {
-        items.push_back({pad ? sel : "Enter", panel == Panel::Settings && tab == Tab::Input ? "Rebind" : "Select"});
+        // on a Value row with unapplied changes, A / Enter applies (left / right change the value)
+        items.push_back({pad ? sel : "Enter", confirm_applies ? "Apply" : panel == Panel::Settings && tab == Tab::Input ? "Rebind" : "Select"});
         if (changes) items.push_back({"<>", "Change"});
-        if (settings_tab) items.push_back({pad ? (apply_key.empty() ? "+" : apply_key) : "Ctrl+Enter", "Apply"});
+        if (settings_tab && !confirm_applies) items.push_back({pad ? (apply_key.empty() ? "+" : apply_key) : "Ctrl+Enter", "Apply"});
         items.push_back({pad ? back : "Esc", "Close"});
     }
     float x = at.x;

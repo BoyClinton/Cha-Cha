@@ -63,6 +63,9 @@ void clear_binding(const std::string& target, bool pad);
 // The GamePad buttons (VPAD bits) a controller button is bound to (SDL_GamepadButton value), so menus outside the game
 // answer the same buttons as the game does. 0 if unbound.
 uint32_t pad_buttons_for(int sdl_gamepad_button);
+// The controller buttons that open / close the settings over the game: the touchpad click (PlayStation), Home / guide
+// and misc (mic, Share, Capture). The game uses none of them, so they are never bound to a game button.
+bool is_settings_button(int sdl_gamepad_button);
 // Short name of the controller button bound to a game button, as printed on the connected controller ("Cross",
 // "Circle", "A", "Options", "LB", ...); "" if none is bound or no controller is connected. For on-screen prompts.
 std::string pad_prompt(const std::string& target);

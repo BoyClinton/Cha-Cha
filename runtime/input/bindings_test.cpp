@@ -35,6 +35,8 @@ int main() {
     if (!in::bind_from_event("zl", true, &e)) ++fails;
     e.gbutton.button = SDL_GAMEPAD_BUTTON_GUIDE;  // reserved for the settings
     if (in::bind_from_event("zr", true, &e)) ++fails;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_TOUCHPAD;  // so is the touchpad click
+    if (in::bind_from_event("zr", true, &e)) ++fails;
     expect(in::key_names("a"), "X", "A rebound to X");
     expect(in::pad_names("zl"), "X / Square", "ZL rebound to X / Square");
     expect(in::pad_names("y"), "", "X / Square left its old target (Y, by position)");

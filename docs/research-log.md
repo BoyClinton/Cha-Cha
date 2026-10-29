@@ -619,3 +619,48 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   the pixel (cosine x range falloff, radius 600 near-plane units), blurred depth-aware, added as c + c x gi x 0.6.
   Order in the scene: GI, AO, Tri, DOF. Tunables: MH3U_GI_RADIUS / STRENGTH, MH3U_TRI_GLOW / GLOW_RADIUS / HAZE /
   HAZE_START. Checked headless in Moga Village (Continue route, frame 5500): no ghosting, HUD untouched, GI subtle.
+
+## 2026-10-28 – Linux port: write tracking without GetWriteWatch
+- Windows reserves guest memory with `MEM_WRITE_WATCH`; Linux has no equivalent. Emulated in
+  `runtime/core/guest_memory_posix.inc`: pages of the renderer's watched ranges are `mprotect`ed read-only; the first
+  write faults, the SIGSEGV handler (`REG_ERR & 2` = write) marks the page (2), makes it writable and returns; the
+  scanner (500 us passes) stamps marked pages with the new epoch, counts the mark down (2 -> 1 -> 0, so a write that
+  completes just after the handler returned is stamped on the next pass too) and makes them read-only again.
+  Evidence: headless title run in WSL, 945 written pages caught, textures update as on Windows.
+- The kernel does not fault on its own writes: `read()`/`pread()` into a read-only guest page fails with EFAULT.
+  File reads into guest memory go through a 1 MB bounce buffer (`runtime/fs/host_tree.cpp`).
+- FFmpeg's H.264 decoder with `AV_CODEC_FLAG_LOW_DELAY`, one thread and the existing no-reorder SPS rewrite returns
+  each picture from the `avcodec_send_packet` that fed it, like the Wii U decoder with OUTPUT_PER_FRAME;
+  `apply_cropping = 0` keeps the 1088-line coded picture with the crop reported (as Media Foundation gave it).
+  Not yet checked in a window (WSL).
+- **Linux movies stall (2026-10-29, issue #2).** Reproduced headless in WSL with the released 0.1.0 AppImage and the
+  .wua: the intro (09_EU.mp4) gets only 3 H264DECExecute calls in 180 s (AU 1 = SPS/PPS/IDR, AU 2 = P slice, nal 0x41),
+  then the player waits forever - the window shows the first frame, as reported. Likely cause: libavcodec 4.4 in
+  low-delay mode with the SPS rewritten to no reordering drops a picture whose POC is below the last one output
+  (h264_select_output_frame, "no picture ooo"), so the non-reference B picture of AU 3 never reaches the output
+  callback. Media Foundation outputs it; libavcodec cannot without reordering.
+  Fix: a second libavcodec decoder with one picture of reordering (SPS rewritten to max_num_reorder_frames = 1)
+  outputs each non-reference B at once; the low-delay one skips non-reference pictures (AVDISCARD_NONREF) and gives
+  I / P at once; pictures matched by pts. Headless WSL run: 3,673 Executes with one picture each, the intro plays to
+  the end (frame dumps 600-3000 show it moving), an A press at frame 700 reaches the title, the attract movie loops.
+- **Older GPUs: Vulkan 1.2 (2026-10-29, issue #3).** The reporter's Radeon HD 7750 on AMD 23.11.1 (Windows) reports
+  Vulkan 1.2.178: no VK_KHR_push_descriptor (we required it but never used it: no vkCmdPushDescriptorSetKHR, no push
+  layouts), no dynamic rendering (core or KHR), synchronization2 and demote only as extensions, no depth_clip_control.
+  Device setup now takes 1.3 core features or the extensions; `runtime/gfx/vk_compat.*` routes vkCmdBeginRendering /
+  EndRendering / PipelineBarrier2 to the core or KHR entry points, or emulates them (render passes + framebuffers from
+  the VkRenderingInfo, cached by attachment formats / ops / layouts and by views; pipelines and Dear ImGui get a
+  compatible render pass; sync2 barriers converted to classic ones). Shaders now compile for Vulkan 1.2 (SPIR-V 1.5;
+  translator version 2 re-translates caches once: 668 in 5.8 s in WSL). MH3U_VK_LEGACY=1 forces the emulated path.
+  Checked headless with the validation layer (loader confirmed it loaded) on the Continue route to Moga Village, 200 s:
+  normal path 2,186,760 draws and legacy path 2,213,554 draws, 0 skipped, 0 validation messages each, frames at 1300 /
+  3600 / 5200 alike. Not checked: the launcher window (Dear ImGui in a render pass) and a real 1.2 driver.
+- **Linux write-tracking race (2026-10-29, issue #3).** WSL headless New Game and Continue both died at the save load
+  with "guest memory fault: write to guest address 1D15xxxx (uncommitted)" in sub_02953DF8. The scanner sets kTracked
+  and queues a page for mprotect(PROT_READ); a write faulting meanwhile clears kTracked and unprotects it; the queued
+  mprotect then lands and leaves the page read-only, untracked, and the next write was reported as uncommitted. The
+  SIGSEGV handler now treats a write fault on any committed page (outside diagnostic watches) as a tracked write. Both
+  routes then ran 300 s (character creation; Moga Village with 93 pipelines, as on Windows).
+  House route (the reporter's other crash): a copy of the user's save, Continue, walk up to the red-curtain door
+  + A, back out (stick holds scaled to WSL's ~12 fps: the game moves by wall time). In WSL: house loaded at frame
+  3170, inside at 3250, village again at 3750, no fault through 420 s. The unfixed build never got that far (the save
+  load itself faulted, 2 of 2 runs).

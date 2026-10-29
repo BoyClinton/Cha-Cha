@@ -3,7 +3,8 @@
 `mh3u` (`runtime/boot/main.cpp`) runs the recompiled game (`recomp/out`, library `mh3u_recomp_game`) on HLE
 implementations of the Cafe OS libraries (`runtime/os`). Run from the repo root: `build/cmake/runtime/boot/Debug/Cha-Cha.exe .`
 (`MH3U_TRACE=1` prints the first calls of every import and HLE details such as file opens and heap carving;
-`--headless` runs without a window; `MH3U_VK_VALIDATION=1` enables the Vulkan validation layer;
+`--headless` runs without a window; `MH3U_VK_VALIDATION=1` enables the Vulkan validation layer; `MH3U_VK_LEGACY=1`
+takes the old-driver path (render passes, classic barriers);
 `MH3U_EXIT_AFTER_FRAMES=N` stops cleanly after N frames and prints frame/time/import statistics).
 
 ## Boot
@@ -55,8 +56,13 @@ as-is. Device used here: NVIDIA GeForce RTX 3060.
 
 ### Rendering, stage 2 (Vulkan) – `runtime/gfx/renderer.*`
 The window and the device come from `Presenter`; `--headless` creates the same device without a window, so frame
-dumps render too. Required: Vulkan 1.3 (dynamic rendering, demote-to-helper, synchronization2) and
-`VK_KHR_push_descriptor`-capable hardware; `VK_EXT_depth_clip_control` is used for GX2's -1..1 clip-space depth.
+dumps render too. Written against Vulkan 1.3 (dynamic rendering, demote-to-helper, synchronization2); Vulkan 1.1 / 1.2
+drivers work too (issue #3: a Radeon HD 7750 on AMD's last Windows driver, 1.2.178): demote must come as
+`VK_EXT_shader_demote_to_helper_invocation`, synchronization2 and dynamic rendering are used through their KHR
+extensions or emulated (`runtime/gfx/vk_compat.*`: classic barriers; render passes + framebuffers built from the same
+`VkRenderingInfo`, cached per attachment set, pipelines given a compatible render pass). Translated shaders are
+SPIR-V 1.5 (Vulkan 1.2 target). `MH3U_VK_LEGACY=1` takes the emulated path on a new GPU for testing.
+`VK_EXT_depth_clip_control` is used for GX2's -1..1 clip-space depth when present.
 - **State.** gx2.cpp collects a `DrawState`: shaders (VS/PS, GS when `GX2SetShaderModeEx` mode 2), fetch-shader
   streams, attribute buffers, per-stage uniform blocks, pixel textures + samplers, colour/depth buffers, viewport,
   scissor, blend (`GX2SetColorControl`/`BlendControl`/`TargetChannelMasks`/constant), depth, cull, alpha test,
@@ -203,6 +209,11 @@ The HLE decodes with the Windows Media Foundation H.264 decoder:
   to the oldest pending access unit (MF re-stamps sample times in display order).
 - **Output:** NV12 at pitch = width rounded up to 256, UV after `pitch * height`, coded height (1088) with crop, in an
   `H264DECFrameOutput` record (result 100, timestamp, size, pitch, crop, image pointer) – layout as in Cemu.
+- **Linux (libavcodec):** libavcodec can't output in decode order: with no reordering it drops a B picture whose POC
+  is below the last one output, so the game waited forever for it (issue #2). Two decoders get every access unit: a
+  low-delay one with no reordering that skips non-reference pictures (I and P out at once) and one with one picture
+  of reordering (each non-reference B out at once). Pictures are matched to their access unit by pts; a unit neither
+  decoder gave back is delivered black so the game never waits.
 - No Media Foundation → pictures are delivered black so movies still run their course.
 
 ## Render comparison against Cemu

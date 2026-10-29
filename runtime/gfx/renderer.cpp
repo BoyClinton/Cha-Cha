@@ -32,6 +32,7 @@
 #include "shader_abi.h"
 #include "texture_pack.h"
 #include "translate.h"
+#include "vk_compat.h"
 
 namespace mh3u::gfx {
 namespace {
@@ -837,7 +838,7 @@ void VkRenderer::begin() {
 
 void VkRenderer::end_rendering() {
     if (!rendering_) return;
-    vkCmdEndRendering(fc().cmd);
+    vkc::cmd_end_rendering(fc().cmd);
     rendering_ = false;
     active_color_.clear();
     active_depth_ = nullptr;
@@ -933,7 +934,7 @@ Alloc VkRenderer::upload_static(const void* data, size_t bytes, VkPipelineStageF
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.bufferMemoryBarrierCount = 1;
     dep.pBufferMemoryBarriers = &bb;
-    vkCmdPipelineBarrier2(cmd(), &dep);
+    vkc::cmd_pipeline_barrier2(cmd(), dep);
     return g;
 }
 
@@ -974,7 +975,10 @@ std::unique_ptr<Image> VkRenderer::create_image(VkFormat format, VkImageType typ
 }
 
 void VkRenderer::destroy_image(Image& img) {
-    for (auto& [k, v] : img.views) vkDestroyImageView(dev_, v, nullptr);
+    for (auto& [k, v] : img.views) {
+        vkc::forget_view(v);
+        vkDestroyImageView(dev_, v, nullptr);
+    }
     img.views.clear();
     if (img.depth_alias) destroy_image(*img.depth_alias);
     if (img.snapshot) destroy_image(*img.snapshot);
@@ -1008,7 +1012,7 @@ void VkRenderer::transition(Image& img, VkImageLayout to) {
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.imageMemoryBarrierCount = 1;
     dep.pImageMemoryBarriers = &b;
-    vkCmdPipelineBarrier2(cmd(), &dep);
+    vkc::cmd_pipeline_barrier2(cmd(), dep);
     img.layout = to;
 }
 
@@ -1268,7 +1272,7 @@ Image* VkRenderer::depth_alias(Image& color) {
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.bufferMemoryBarrierCount = 1;
     dep.pBufferMemoryBarriers = &bb;
-    vkCmdPipelineBarrier2(cmd(), &dep);
+    vkc::cmd_pipeline_barrier2(cmd(), dep);
     transition(d, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
     vkCmdCopyBufferToImage(cmd(), a.buffer, d.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
@@ -1716,6 +1720,7 @@ VkPipeline VkRenderer::create_pipeline(const PipelineDesc& d, VkPipelineLayout l
     pci.pColorBlendState = &cb;
     pci.pDynamicState = &dy;
     pci.layout = layout;
+    vkc::pipeline_rendering(pci, ri);
     VkPipeline pipe = VK_NULL_HANDLE;
     if (vkCreateGraphicsPipelines(dev_, pipeline_cache_, 1, &pci, nullptr, &pipe) != VK_SUCCESS) return VK_NULL_HANDLE;
     return pipe;
@@ -2375,7 +2380,10 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
         ri.pColorAttachments = ca;
         ri.pDepthAttachment = depth ? &da : nullptr;
         ri.pStencilAttachment = depth && has_stencil(depth->format) ? &da : nullptr;
-        vkCmdBeginRendering(cmd(), &ri);
+        VkFormat formats[8] = {};
+        for (uint32_t t = 0; t < ncolor; ++t)
+            if (colors[t]) formats[t] = colors[t]->format;
+        vkc::cmd_begin_rendering(cmd(), ri, formats, depth ? depth->format : VK_FORMAT_UNDEFINED);
         rendering_ = true;
         active_color_.assign(colors, colors + ncolor);
         active_depth_ = depth;
@@ -2777,6 +2785,7 @@ VkPipeline VkRenderer::fx_pipeline(VkShaderModule fs, VkFormat fmt, FxBlend blen
     pci.pColorBlendState = &cb;
     pci.pDynamicState = &dy;
     pci.layout = fx_layout_;
+    vkc::pipeline_rendering(pci, ri);
     VkPipeline pipe = VK_NULL_HANDLE;
     if (vkCreateGraphicsPipelines(dev_, pipeline_cache_, 1, &pci, nullptr, &pipe) != VK_SUCCESS) {
         pipe = VK_NULL_HANDLE;
@@ -2821,7 +2830,7 @@ void VkRenderer::fx_pass(VkPipeline pipe, Image& out, std::initializer_list<Imag
     ri.colorAttachmentCount = 1;
     ri.pColorAttachments = &ca;
     VkCommandBuffer c = cmd();
-    vkCmdBeginRendering(c, &ri);
+    vkc::cmd_begin_rendering(c, ri, &out.format);
     const VkViewport v{0, 0, static_cast<float>(out.width), static_cast<float>(out.height), 0, 1};
     const VkRect2D sc{{0, 0}, {out.width, out.height}};
     vkCmdSetViewport(c, 0, 1, &v);
@@ -2831,7 +2840,7 @@ void VkRenderer::fx_pass(VkPipeline pipe, Image& out, std::initializer_list<Imag
     float zero[8] = {};
     vkCmdPushConstants(c, fx_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 32, push ? push : zero);
     vkCmdDraw(c, 3, 1, 0, 0);
-    vkCmdEndRendering(c);
+    vkc::cmd_end_rendering(c);
 }
 
 bool VkRenderer::init_post(std::string* error) {

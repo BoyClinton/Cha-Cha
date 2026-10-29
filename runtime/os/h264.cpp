@@ -10,7 +10,7 @@
 //   +0x18, cropEnable +0x1C, crop top/bottom/left/right +0x20..+0x2C, imagePtr +0x44.
 // - Pictures are NV12 in the game's buffer: Y rows at pitch = width rounded up to 256, interleaved UV at
 //   pitch * height. Height is the coded height (1088 for 1080p) with the crop reported.
-// If Media Foundation is unavailable, pictures are delivered black so movies still play out in time.
+// If the decoder is unavailable, pictures are delivered black so movies still play out in time.
 #include "hle.h"
 
 #ifdef _WIN32
@@ -83,7 +83,8 @@ struct Decoder {
     MFVideoArea aperture{};
     bool has_aperture = false;
 #else
-    AVCodecContext* mft = nullptr;  // named like the Windows decoder: "there is a decoder"
+    AVCodecContext* mft = nullptr;      // low delay, no reordering, B pictures skipped: I and P pictures at once
+    AVCodecContext* reorder = nullptr;  // one picture of reordering: each (non-reference) B picture at once
     AVFrame* frame = nullptr;
     AVPacket* packet = nullptr;
 #endif
@@ -284,42 +285,59 @@ void drain(ppc::Context& ctx, uint8_t* base, Decoder& d) {
     }
 }
 #else
-// libavcodec, single-threaded and low-delay: each picture comes out of the call that fed its access unit (decode
-// order, with the SPS rewrite below), as the Wii U decoder does with OUTPUT_PER_FRAME. No cropping: the game gets the
-// coded picture (1088 lines for 1080p) with the crop reported, as on the console.
-bool create_mft(Decoder& d) {
+// libavcodec, single-threaded. The Wii U decoder with OUTPUT_PER_FRAME returns each picture from the call that fed its
+// access unit (decode order). libavcodec cannot do that on its own: without reordering it drops a picture whose POC is
+// below the last one output (the movies' B pictures), and with reordering it holds back I and P pictures. Two decoders
+// are fed every access unit instead: one low-delay with no reordering that skips non-reference pictures (I and P come
+// out at once), one with one picture of reordering (each non-reference B comes out at once, its I / P a unit late).
+// Pictures are matched to their access unit by pts; a picture the other decoder already delivered is dropped. No
+// cropping: the game gets the coded picture (1088 lines for 1080p) with the crop reported, as on the console.
+AVCodecContext* open_codec(bool low_delay) {
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (!codec || !(d.mft = avcodec_alloc_context3(codec))) return false;
-    d.mft->thread_count = 1;
-    d.mft->flags |= AV_CODEC_FLAG_LOW_DELAY;
-    d.mft->apply_cropping = 0;
+    AVCodecContext* c = codec ? avcodec_alloc_context3(codec) : nullptr;
+    if (!c) return nullptr;
+    c->thread_count = 1;
+    c->apply_cropping = 0;
+    if (low_delay) {
+        c->flags |= AV_CODEC_FLAG_LOW_DELAY;
+        c->skip_frame = AVDISCARD_NONREF;
+    }
+    if (avcodec_open2(c, codec, nullptr) < 0) avcodec_free_context(&c);
+    return c;
+}
+
+void release_decoder(Decoder& d) {
+    avcodec_free_context(&d.mft);
+    avcodec_free_context(&d.reorder);
+    av_frame_free(&d.frame);
+    av_packet_free(&d.packet);
+}
+
+bool create_mft(Decoder& d) {
+    d.mft = open_codec(true);
+    d.reorder = open_codec(false);
     d.frame = av_frame_alloc();
     d.packet = av_packet_alloc();
-    if (!d.frame || !d.packet || avcodec_open2(d.mft, codec, nullptr) < 0) {
-        avcodec_free_context(&d.mft);
-        av_frame_free(&d.frame);
-        av_packet_free(&d.packet);
+    if (!d.mft || !d.reorder || !d.frame || !d.packet) {
+        release_decoder(d);
         return false;
     }
     return true;
 }
 
-void release_decoder(Decoder& d) {
-    avcodec_free_context(&d.mft);
-    av_frame_free(&d.frame);
-    av_packet_free(&d.packet);
-}
-
-// Pulls every picture the decoder has ready and delivers it (NV12 into the game's buffer).
-void drain(ppc::Context& ctx, uint8_t* base, Decoder& d) {
-    while (avcodec_receive_frame(d.mft, d.frame) == 0) {
-        auto it = d.pending.begin();  // decode order: the oldest pending access unit
-        if (it == d.pending.end()) {
+// Pulls every picture a decoder has ready and delivers those still pending (NV12 into the game's buffer).
+void drain(ppc::Context& ctx, uint8_t* base, Decoder& d, AVCodecContext* codec) {
+    while (avcodec_receive_frame(codec, d.frame) == 0) {
+        const int64_t pts = d.frame->pts != AV_NOPTS_VALUE ? d.frame->pts : d.frame->best_effort_timestamp;
+        std::unique_lock g(g_m);
+        auto it = d.pending.find(pts);
+        if (it == d.pending.end()) {  // delivered by the other decoder
             av_frame_unref(d.frame);
             continue;
         }
         const Pending p = it->second;
         d.pending.erase(it);
+        g.unlock();
         const AVFrame* f = d.frame;
         const auto w = static_cast<uint32_t>(f->width), h = static_cast<uint32_t>(f->height), pitch = (w + 0xFF) & ~0xFFu;
         const bool yuv420 = f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVJ420P;
@@ -442,9 +460,9 @@ void skip_hrd(BitReader& r) {
     r.bits(20);
 }
 
-// RBSP (without the NAL header byte) of an SPS -> the same SPS with bitstream_restriction saying no reordering.
-// Returns empty if the SPS could not be parsed.
-std::vector<uint8_t> sps_no_reorder(const std::vector<uint8_t>& rbsp) {
+// RBSP (without the NAL header byte) of an SPS -> the same SPS with bitstream_restriction saying `reorder` frames of
+// reordering (0 for the decoders that must output in decode order). Returns empty if the SPS could not be parsed.
+std::vector<uint8_t> sps_with_reorder(const std::vector<uint8_t>& rbsp, uint32_t reorder) {
     BitReader r(rbsp);
     const uint32_t profile = r.bits(8);
     r.bits(16);  // constraint flags, level
@@ -532,15 +550,15 @@ std::vector<uint8_t> sps_no_reorder(const std::vector<uint8_t>& rbsp) {
     w.ue(1);   // max_bits_per_mb_denom
     w.ue(16);  // log2_max_mv_length_horizontal
     w.ue(16);  // log2_max_mv_length_vertical
-    w.ue(0);   // max_num_reorder_frames
-    w.ue(std::max(refs, 1u));  // max_dec_frame_buffering
+    w.ue(reorder);  // max_num_reorder_frames
+    w.ue(std::max({refs, reorder, 1u}));  // max_dec_frame_buffering
     w.bit(1);  // rbsp_stop_one_bit
     while (w.n_ & 7) w.bit(0);
     return w.d_;
 }
 
-// Replaces every SPS NAL in an Annex B buffer with its no-reorder version.
-void rewrite_sps(std::vector<uint8_t>& au) {
+// Replaces every SPS NAL in an Annex B buffer with a version allowing `reorder` frames of reordering.
+void rewrite_sps(std::vector<uint8_t>& au, uint32_t reorder = 0) {
     std::vector<size_t> starts;  // offsets of NAL headers (after start codes)
     for (size_t i = 0; i + 3 <= au.size(); ++i)
         if (au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1) starts.push_back(i + 3);
@@ -550,7 +568,7 @@ void rewrite_sps(std::vector<uint8_t>& au) {
         size_t e = k + 1 < starts.size() ? starts[k + 1] - 3 : au.size();
         while (e > s && au[e - 1] == 0) --e;  // a 4-byte start code's leading zero
         const std::vector<uint8_t> rbsp = unescape(au.data() + s + 1, e - s - 1);
-        const std::vector<uint8_t> fixed = sps_no_reorder(rbsp);
+        const std::vector<uint8_t> fixed = sps_with_reorder(rbsp, reorder);
         if (fixed.empty()) continue;
         std::vector<uint8_t> nal{au[s]};
         const std::vector<uint8_t> esc = escape(fixed);
@@ -638,6 +656,7 @@ HLE_FUNC(h264, H264DECBegin) {
         d->mft->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
 #else
         avcodec_flush_buffers(d->mft);
+        avcodec_flush_buffers(d->reorder);
 #endif
         d->pending.clear();
     }
@@ -677,15 +696,36 @@ HLE_FUNC(h264, H264DECExecute) {
 #ifndef _WIN32
     const int64_t time = d->next_time++;
     d->pending[time] = p;
-    d->packet->data = const_cast<uint8_t*>(au.data());
-    d->packet->size = static_cast<int>(au.size());
-    d->packet->pts = d->packet->dts = time;
-    const bool accepted = avcodec_send_packet(d->mft, d->packet) >= 0;
-    d->packet->data = nullptr;
-    d->packet->size = 0;
+    std::vector<uint8_t> au_reorder = au;
+    if (d->per_frame) rewrite_sps(au_reorder, 1);
+    bool accepted = false;
+    for (AVCodecContext* c : {d->mft, d->reorder}) {
+        const std::vector<uint8_t>& data = c == d->mft ? au : au_reorder;
+        d->packet->data = const_cast<uint8_t*>(data.data());
+        d->packet->size = static_cast<int>(data.size());
+        d->packet->pts = d->packet->dts = time;
+        accepted = avcodec_send_packet(c, d->packet) >= 0 || accepted;
+        d->packet->data = nullptr;
+        d->packet->size = 0;
+    }
     if (!accepted) d->pending.erase(time);
     g.unlock();
-    drain(ctx, base, *d);  // the output callback runs without our lock (it may call back into h264)
+    // the output callback runs without our lock (it may call back into h264)
+    drain(ctx, base, *d, d->mft);
+    drain(ctx, base, *d, d->reorder);
+    g.lock();
+    const bool missing = d->per_frame && d->pending.count(time) != 0;
+    if (missing) d->pending.erase(time);
+    g.unlock();
+    if (missing) {
+        // neither decoder gave this unit's picture (a damaged unit): the game waits for it, so it gets a black one
+        if (rt().trace_imports)
+            std::fprintf(stderr, "  h264: no picture for unit %lld, black\n", static_cast<long long>(time));
+        deliver_black(ctx, base, *d, p);
+    }
+    if (rt().trace_imports && d->next_time <= 8)
+        std::fprintf(stderr, "  H264DECExecute #%lld: %u bytes, %u pictures out\n", static_cast<long long>(d->next_time),
+                     d->length, d->frames_out);
     ret(ctx, kExecuteOk);
 #else
     IMFSample* sample = nullptr;
@@ -746,9 +786,11 @@ HLE_FUNC(h264, H264DECEnd) {
         d->mft->ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0);
         drain(ctx, base, *d);
 #else
-        avcodec_send_packet(d->mft, nullptr);  // drain mode
-        drain(ctx, base, *d);
-        avcodec_flush_buffers(d->mft);  // and ready for another stream
+        for (AVCodecContext* c : {d->mft, d->reorder}) {
+            avcodec_send_packet(c, nullptr);  // drain mode
+            drain(ctx, base, *d, c);
+            avcodec_flush_buffers(c);  // and ready for another stream
+        }
 #endif
         d->pending.clear();
     }

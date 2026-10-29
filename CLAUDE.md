@@ -1,7 +1,7 @@
 # CLAUDE.md – working guide for Cha-Cha, the MH3U PC port
 
-Read this first every session, then `docs/ROADMAP.md` (what phase we're in) and the tail of
-`docs/research-log.md` (what was learned last).
+Read this first every session, then `docs/HANDOFF.md` (state of play, how to publish), `docs/ROADMAP.md` (what
+phase we're in) and the tail of `docs/research-log.md` (what was learned last).
 
 ## Goal
 Native PC (Windows first) port of Monster Hunter 3 Ultimate (Wii U, MT Framework engine) via
@@ -31,6 +31,10 @@ equivalence, not byte-matching (GHS compiler unavailable).
 - C++ build: CMake with the Visual Studio 2026 generator into `build/cmake` (see README "Building the
   runtime"). CMake/ctest live in VS's `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin` (not on PATH
   outside the Developer shell). C++20, MSVC `/W4` must stay warning-free.
+- Linux build: WSL2 `Ubuntu-22.04` with `scripts/build-linux.sh` (build tree `~/cha-cha-build`), AppImage with
+  `scripts/package-appimage.sh` (`docs/linux.md`). Code that is Windows-only stays behind `#ifdef _WIN32` with a
+  POSIX version; MSVC CRT calls on Linux come from `runtime/core/win_compat.h` (force-included). Run WSL commands
+  from a script file, not inline (quoting).
 - Ghidra 12.0 is installed at `D:\Projects\Tools\Ghidra - 12.0` (since 2026-10-26).
 - Ghidra headless: always `scripts/ghidra-headless.ps1` with an absolute path (the shell's cwd drifts);
   add `-readOnly -noanalysis` unless the project is meant to change. Backup before writable runs.
@@ -75,13 +79,19 @@ Cafe OS replacement (os, gfx, audio, input, fs, net) · `src/` decompiled game c
 headers · `assets/` format tools · `docs/` plans & notes · `build/` output.
 
 ## Open decisions (ask the user, don't assume)
-- None right now.
+- A UI font to bundle in the Linux AppImage (Bahnschrift is Windows' own; for now a system sans is used).
 
 ## Decided
 - Releases: ship the exe as a zip on GitHub Releases, Yakumo-style (`scripts/package-release.ps1`; the exe contains
   the recompiled game code, no game files). First release **0.1.0** (user decision 2026-10-28).
-- License: **GPL-3.0** (`LICENSE`, user decision 2026-10-28). The public GitHub history starts from a fresh
-  single commit (branch `github`), so the briefly vendored Cemu code of 2026-10-23 is not published.
+- License: **GPL-3.0** (`LICENSE`, user decision 2026-10-28). Public at <https://github.com/BoyClinton/Cha-Cha> since
+  0.1.0 (2026-10-28). The public history is the orphan branch `github` (tracks `origin/main`), so the briefly vendored
+  Cemu code of 2026-10-23 in local `main` is never published: **never push `main`**; ask before every push / release
+  (procedure in `docs/HANDOFF.md`). User-facing pages (README, release notes) name no emulator.
+- Platforms: Windows and Linux (AppImage), both in every release (user decision 2026-10-28).
+- Quest maker: built into the game; every quest made is shared as a generated code (copy / paste), not as packs from
+  an external tool (user decision 2026-10-29; plan in `docs/ROADMAP.md` § Phase 6).
+- Gameplay changes (item sets, hold to gather, HP scaling) are always on, no MODS switches (user decision 2026-10-28).
 - Project name: **Cha-Cha** (user decision 2026-10-27); user-facing text and the exe use it, internal names (`mh3u` target, `MH3U_*` env) stay.
 - Canonical target: US release (`0005000010118300`), update v32.
 - Graphics/platform: Vulkan + SDL3.
