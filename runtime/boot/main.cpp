@@ -280,12 +280,11 @@ void timed_actions(gfx::Presenter& p, const boot::AppPaths& paths) {
 void on_event(const void* e) {
     input::handle_event(e);
     if (!g_launcher) return;
-    // the settings over the game: F1, or a controller's Home / guide (PS, Xbox) or misc (mic, capture) button - none of
-    // them is bound to a game button
+    // the settings over the game: F1, or a controller's touchpad click (PlayStation), Home / guide or misc (mic, Share,
+    // Capture) button - none of them is bound to a game button
     const SDL_Event& ev = *static_cast<const SDL_Event*>(e);
     if ((ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) ||
-        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
-         (ev.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE || ev.gbutton.button == SDL_GAMEPAD_BUTTON_MISC1))) {
+        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && input::is_settings_button(ev.gbutton.button))) {
         g_launcher->toggle_settings();
         return;
     }

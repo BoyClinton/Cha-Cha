@@ -69,7 +69,8 @@ std::vector<uint32_t> compile_glsl(const std::string& source, Stage stage, const
         shaderc_compile_options_t opt = make(shaderc_optimization_level_performance), plain = make(shaderc_optimization_level_zero);
         static shaderc_compile_options_t make(shaderc_optimization_level level) {
             shaderc_compile_options_t opts = shaderc_compile_options_initialize();
-            shaderc_compile_options_set_target_env(opts, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+            // Vulkan 1.2 (SPIR-V 1.5): older GPUs' drivers stop at 1.2; demote comes from SPV_EXT_demote_to_helper_invocation
+            shaderc_compile_options_set_target_env(opts, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
             shaderc_compile_options_set_optimization_level(opts, level);
             return opts;
         }

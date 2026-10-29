@@ -1,6 +1,7 @@
 #include "presenter.h"
 
 #include "gx2.h"
+#include "vk_compat.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -76,6 +77,7 @@ Presenter::~Presenter() {
             if (d.acquired[i]) vkDestroySemaphore(d.device, d.acquired[i], nullptr);
         }
         if (d.pool) vkDestroyCommandPool(d.device, d.pool, nullptr);
+        vkc::shutdown();
         vkDestroyDevice(d.device, nullptr);
     }
     if (d.surface) vkDestroySurfaceKHR(d.instance, d.surface, nullptr);
@@ -116,7 +118,10 @@ void Presenter::set_window_size(int width, int height) {
 void Presenter::Impl::destroy_swapchain() {
     for (VkSemaphore s : render_done) vkDestroySemaphore(device, s, nullptr);
     render_done.clear();
-    for (VkImageView v : views) vkDestroyImageView(device, v, nullptr);
+    for (VkImageView v : views) {
+        vkc::forget_view(v);
+        vkDestroyImageView(device, v, nullptr);
+    }
     views.clear();
     images.clear();
     if (swapchain) vkDestroySwapchainKHR(device, swapchain, nullptr);
@@ -282,23 +287,78 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
     };
     std::vector<const char*> dev_ext;
     if (!headless) dev_ext.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-    if (!has(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) return fail("device lacks VK_KHR_push_descriptor");
-    dev_ext.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-    VkPhysicalDeviceDepthClipControlFeaturesEXT clip{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT};
+    // Vulkan 1.3 has dynamic rendering, synchronization2 and shader demote in core. Older drivers (Vulkan 1.1 / 1.2,
+    // e.g. AMD's last Windows driver for GCN 1 Radeons) get them from extensions; dynamic rendering and
+    // synchronization2 are emulated where missing (vk_compat.h). Shader demote is required: the translated pixel
+    // shaders' alpha test and kill use it. MH3U_VK_LEGACY=1 takes the old-driver path on a new GPU (no dynamic
+    // rendering, no synchronization2) for testing.
+    char* legacy_env = nullptr;
+    size_t legacy_len = 0;
+    const bool legacy = _dupenv_s(&legacy_env, &legacy_len, "MH3U_VK_LEGACY") == 0 && legacy_env;
+    std::free(legacy_env);
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(d.phys, &props);
+    d.ctx.api_version = props.apiVersion;
+    if (props.apiVersion < VK_API_VERSION_1_1) return fail("device supports only Vulkan 1.0 (Cha-Cha needs 1.1 or newer)");
+    const bool core13 = props.apiVersion >= VK_API_VERSION_1_3 && !legacy;
+    void* chain = nullptr;
+    const auto link = [&](auto& feature) {
+        feature.pNext = chain;
+        chain = &feature;
+    };
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    f13.dynamicRendering = VK_TRUE;
-    f13.shaderDemoteToHelperInvocation = VK_TRUE;
-    f13.synchronization2 = VK_TRUE;
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR dyn{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR};
+    VkPhysicalDeviceSynchronization2FeaturesKHR sync2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR};
+    VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT demote{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT};
+    bool dynamic_rendering = true;
+    if (core13) {
+        f13.dynamicRendering = VK_TRUE;
+        f13.shaderDemoteToHelperInvocation = VK_TRUE;
+        f13.synchronization2 = VK_TRUE;
+        link(f13);
+    } else {
+        if (has(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)) {
+            dev_ext.push_back(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME);
+            demote.shaderDemoteToHelperInvocation = VK_TRUE;
+            link(demote);
+        } else if (props.apiVersion >= VK_API_VERSION_1_3) {  // MH3U_VK_LEGACY on a driver without the extension
+            f13.shaderDemoteToHelperInvocation = VK_TRUE;
+            link(f13);
+        } else {
+            return fail("device lacks VK_EXT_shader_demote_to_helper_invocation");
+        }
+        dynamic_rendering = !legacy && has(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+        if (dynamic_rendering) {
+            if (props.apiVersion < VK_API_VERSION_1_2) {  // its dependencies are core in 1.2
+                for (const char* e : {VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME})
+                    dynamic_rendering = dynamic_rendering && has(e);
+                if (dynamic_rendering)
+                    dev_ext.insert(dev_ext.end(), {VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME});
+            }
+            if (dynamic_rendering) {
+                dev_ext.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+                dyn.dynamicRendering = VK_TRUE;
+                link(dyn);
+            }
+        }
+        if (!legacy && has(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)) {
+            dev_ext.push_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+            sync2.synchronization2 = VK_TRUE;
+            link(sync2);
+        }
+    }
+    VkPhysicalDeviceDepthClipControlFeaturesEXT clip{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT};
     if (has(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME)) {
         dev_ext.push_back(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
         clip.depthClipControl = VK_TRUE;
-        f13.pNext = &clip;
+        link(clip);
         d.ctx.depth_clip_control = true;
     }
     VkPhysicalDeviceFeatures supported{};
     vkGetPhysicalDeviceFeatures(d.phys, &supported);
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-    f2.pNext = &f13;
+    f2.pNext = chain;
     f2.features.geometryShader = supported.geometryShader;
     f2.features.largePoints = supported.largePoints;
     f2.features.independentBlend = supported.independentBlend;
@@ -315,6 +375,12 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
     dci.enabledExtensionCount = static_cast<uint32_t>(dev_ext.size());
     dci.ppEnabledExtensionNames = dev_ext.data();
     if (vkCreateDevice(d.phys, &dci, nullptr, &d.device) != VK_SUCCESS) return fail("vkCreateDevice failed");
+    vkc::init(d.device, core13, dynamic_rendering);
+    if (!core13)
+        std::fprintf(stderr, "Vulkan %u.%u device%s: %s, %s\n", VK_API_VERSION_MAJOR(props.apiVersion),
+                     VK_API_VERSION_MINOR(props.apiVersion), legacy ? " (MH3U_VK_LEGACY)" : "",
+                     dynamic_rendering ? "dynamic rendering" : "render passes",
+                     sync2.synchronization2 ? "synchronization2" : "classic barriers");
     vkGetDeviceQueue(d.device, d.queue_family, 0, &d.queue);
     d.ctx.instance = d.instance;
     d.ctx.phys = d.phys;
@@ -559,9 +625,9 @@ void Presenter::present(const uint8_t* rgba, VkImage image, uint32_t width, uint
         ri.layerCount = 1;
         ri.colorAttachmentCount = 1;
         ri.pColorAttachments = &ca;
-        vkCmdBeginRendering(cmd, &ri);
+        vkc::cmd_begin_rendering(cmd, ri, &d.format);
         d.overlay(cmd, d.extent);
-        vkCmdEndRendering(cmd);
+        vkc::cmd_end_rendering(cmd);
     }
     const bool drew = layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     // capture(): the finished frame (overlay included) into a host buffer

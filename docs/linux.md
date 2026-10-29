@@ -11,7 +11,14 @@ exist (user decision 2026-10-28).
 - Headless boot from the checkout's `extracted/` dump: 668 shaders translated (25.6 s), the game runs to the title's
   start menu (4,051 frames in 90 s on llvmpipe, WSL's software Vulkan); the write tracking works (945 written pages
   caught).
-- Not yet seen: a window (WSLg or a real Linux desktop), movies through libavcodec, sound, a controller.
+- Not yet seen: a window (WSLg or a real Linux desktop), sound, a controller.
+- Movies through libavcodec (2026-10-29, issue #2): the 0.1.0 AppImage froze on the intro's first frame; fixed with
+  two decoders (`docs/runtime.md` § Movies). Headless in WSL the intro plays to its end (3,673 units, one picture
+  each), an A press skips to the title and the attract movie loops.
+- Save loading crashed (2026-10-29, issue #3: "new game, crash", "continue, crash"): a race in the write tracking left
+  a page read-only without its tracked mark, and the next write ended in "guest memory fault ... (uncommitted)". Fixed
+  in `guest_memory_posix.inc`; headless in WSL both New Game -> character creation and Continue -> Moga Village run
+  300 s without a fault, and a walk into the player's house and back out (a copy of the user's save) runs clean.
 - `scripts/package-appimage.sh` builds `Cha-Cha-<version>-x86_64.AppImage` (72 MB) with linuxdeploy (downloaded on
   first use, user OK 2026-10-28); the Vulkan loader is left to the system. The AppImage boots headless to the title
   in WSL (`APPIMAGE_EXTRACT_AND_RUN=1`).

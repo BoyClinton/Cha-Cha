@@ -191,8 +191,7 @@ void default_pad(Config& c) {
              {SDL_GAMEPAD_BUTTON_START, kMinus},         {SDL_GAMEPAD_BUTTON_BACK, kPlus},
              {SDL_GAMEPAD_BUTTON_LEFT_STICK, kStickL},   {SDL_GAMEPAD_BUTTON_RIGHT_STICK, kStickR},
              {SDL_GAMEPAD_BUTTON_DPAD_UP, kUp},          {SDL_GAMEPAD_BUTTON_DPAD_DOWN, kDown},
-             {SDL_GAMEPAD_BUTTON_DPAD_LEFT, kLeft},      {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, kRight},
-             {SDL_GAMEPAD_BUTTON_TOUCHPAD, kTV}};
+             {SDL_GAMEPAD_BUTTON_DPAD_LEFT, kLeft},      {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, kRight}};
     c.pad_set = true;
 }
 
@@ -271,7 +270,8 @@ void load_ini(const std::filesystem::path& path, Config& c) {
             const int src = parse_pad_source(key);
             Target t;
             ok = src >= 0 && parse_target(value, t) && t.axis < 0;
-            if (ok && t.mask) c.pad[src] = t.mask;
+            if (ok && is_settings_button(src)) c.pad.erase(src);  // an older input.ini's "touchpad = tv"
+            else if (ok && t.mask) c.pad[src] = t.mask;
             else if (ok) c.pad.erase(src);
         } else ok = false;
         if (!ok) std::fprintf(stderr, "%s:%d: ignored \"%s\"\n", path.string().c_str(), n, line.c_str());
@@ -804,9 +804,7 @@ bool bind_from_event(const std::string& target, bool pad, const void* ev) {
                 : e.button.button == SDL_BUTTON_MIDDLE ? kMouseMiddle : e.button.button == SDL_BUTTON_X1 ? kMouseX1 : kMouseX2;
         else if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0) src = e.wheel.y > 0 ? kWheelUp : kWheelDown;
     } else if (t.axis < 0) {
-        if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button != SDL_GAMEPAD_BUTTON_GUIDE &&
-            e.gbutton.button != SDL_GAMEPAD_BUTTON_MISC1)  // those open the settings
-            src = e.gbutton.button;
+        if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && !is_settings_button(e.gbutton.button)) src = e.gbutton.button;
         else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && e.gaxis.value > 16384 &&
                  (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER))
             src = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? kPadLeftTrigger : kPadRightTrigger;
@@ -841,6 +839,10 @@ uint32_t pad_buttons_for(int sdl_gamepad_button) {
     std::lock_guard g(g_m);
     const auto it = g_cfg.pad.find(sdl_gamepad_button);
     return it == g_cfg.pad.end() ? 0 : it->second;
+}
+
+bool is_settings_button(int b) {
+    return b == SDL_GAMEPAD_BUTTON_TOUCHPAD || b == SDL_GAMEPAD_BUTTON_GUIDE || b == SDL_GAMEPAD_BUTTON_MISC1;
 }
 
 std::string pad_prompt(const std::string& target) {

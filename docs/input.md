@@ -11,8 +11,11 @@ Code: `runtime/input/host_input.*` (SDL3, host main thread) → `runtime/os/inpu
 Settings: `input.ini` in the data folder (not in git), written by the launcher's **Settings > Controls** page.
 
 ## Rebinding in the launcher
-**F1** (or a controller's **Home / PS / Xbox** button, or the DualSense mic / Switch capture button) opens the
-settings over the running game; again, or Esc / B, returns to it. Neither is bound to a game button. **F2** opens
+**F1** (or a controller's **touchpad click** on PlayStation pads, **Home / PS / Xbox** button, or the DualSense mic /
+Xbox Share / Switch capture button) opens the settings over the running game; again, or Esc / B, returns to it. None
+of them is bound to a game button (`input::is_settings_button`; an older `input.ini`'s `touchpad = tv` is ignored).
+Changed settings are applied with the confirm button (A / Enter) on any value row – left / right change the value –
+or with + / Ctrl+Enter / the Apply button. **F2** opens
 MODS (quests, gameplay) the same way; F3 cycles the GamePad view.
 **Settings > Controls** lists every game button and stick direction with its keyboard / mouse and controller
 bindings. Choose a cell and press the key, mouse button, wheel direction, controller button or trigger for it
@@ -32,8 +35,8 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
   `layout = xbox` maps by Xbox label – A / Cross confirms as Wii U A, B / Circle is Wii U B.
 - LB/RB = L/R, LT/RT = ZL/ZR (> 50 %), Back/Share = +, Start = −, stick clicks, d-pad. Radial deadzone (0.15),
   rescaled so the stick still reaches full deflection.
-- **DualShock 4 / DualSense touchpad** → GamePad touch screen (finger 0, scaled to 854x480); touchpad click = TV
-  button.
+- **DualShock 4 / DualSense touchpad** → GamePad touch screen (finger 0, scaled to 854x480); touchpad click = the
+  settings.
 - Rumble: `VPADControlMotor` patterns rumble every connected controller (applied on the main thread).
 
 ## Keyboard + mouse

@@ -84,8 +84,8 @@ These are part of the game and always on.
 - **Effects the original never had:** global illumination, ambient occlusion, an enhanced depth of field and a
   vignette, each optional. The game's own bloom and depth of field can be switched off.
 - **Texture packs** and texture dumping for making them.
-- **A real launcher:** PLAY / SETTINGS / MODS / QUIT over the game's own title screen. **F1** opens the settings
-  over the game, **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only).
+- **A real launcher:** PLAY / SETTINGS / MODS / QUIT over the game's own title screen. **F1** (or the PlayStation
+  touchpad / Home button) opens the settings over the game, **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only).
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller.
   Every button can be rebound, and the settings show which button does what, for your bindings and your
   controller (Xbox, PlayStation or Nintendo names).
@@ -97,7 +97,7 @@ These are part of the game and always on.
 |---|---|---|
 | **Download** | `Cha-Cha-<version>-windows-x64.zip` from [Releases](../../releases/latest) | `Cha-Cha-<version>-x86_64.AppImage` from [Releases](../../releases/latest) |
 | **Needs** | Windows 10 / 11 x64 | x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, Steam Deck…) |
-| **Graphics** | a Vulkan 1.3 driver | a Vulkan 1.3 driver (Mesa or your GPU vendor's) |
+| **Graphics** | a Vulkan 1.2 driver | a Vulkan 1.2 driver (Mesa or your GPU vendor's) |
 | **Run** | extract the zip anywhere you can write to, run `Cha-Cha.exe` | `chmod +x Cha-Cha-*.AppImage`, then run it |
 
 1. **Start Cha-Cha.** On the first start a setup screen asks for your game.
@@ -163,7 +163,8 @@ Packs made for the 3DS version don't match the Wii U textures and won't load. De
 - **Local network play:** hunt together with players on the same network.
 - **Online play:** Cha-Cha's own lobby server in place of Nintendo's retired service
   ([docs/online.md](docs/online.md)), with HP scaling then using the real number of hunters.
-- **Quest maker:** build your own quests and share them as packs for the MODS → Quests library.
+- **Quest maker:** build your own quests in the game and share them with a code: copy it, send it, and anyone who
+  pastes it gets the same quest.
 
 ## Building from source
 
