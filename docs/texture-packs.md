@@ -50,7 +50,6 @@ does the same, and `MH3U_DUMP_TEXTURES=<folder>` writes somewhere else.
 
 ## 3DS packs
 
-Packs made for Monster Hunter 3 Ultimate on 3DS, such as NGRP for Citra / Azahar, don't load. Their file names are
-hashes of 3DS texture data, which never match the Wii U textures. Their art could be carried over by a converter that
-matches files to Wii U textures by folder and image similarity (see `docs/ROADMAP.md`). Packs are game art: keep them
+Packs made for Monster Hunter 3 Ultimate on 3DS don't load. Their file names are hashes of 3DS texture data, which
+never match the Wii U textures, and Cha-Cha has no converter for them and won't get one. Packs are game art: keep them
 out of git (`texture_replacements/` and `texture_dump/` are ignored).

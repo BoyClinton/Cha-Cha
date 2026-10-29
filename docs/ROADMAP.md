@@ -194,8 +194,8 @@ reachable than a pure decomp.
      on/off in VIDEO, live (`docs/texture-packs.md`)
    - [x] DUMP TEXTURES in VIDEO (live, not saved): writes the textures the game uses to `texture_dump` under those
      names, with toasts (folder, running count) over the game; MH3U_DUMP_TEXTURES for runs
-   - [ ] Packs made for the 3DS release (Citra/Azahar names: hashes of 3DS texture data, e.g. NGRP) - would need a
-     converter matching them to Wii U textures by folder + image similarity; not started (user decision 2026-10-27)
+   - Packs made for the 3DS release are not supported and won't be converted (user decision 2026-10-29, after
+     issue #5)
 8. Mods panel (requested 2026-10-27)
    - [x] MODS from the title menu and over the game (F2; F1 switches to the settings, F3 now cycles the GamePad view),
      tabs QUESTS and GAMEPLAY

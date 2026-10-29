@@ -496,11 +496,8 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   scrambled. It now detiles level 0 into a guest buffer (rows of `pitch` elements) and retiles it at Free. Found
   with MH3U_WATCH_READ on a word of the texture (RelWithDebInfo names); headless fresh-save run to the Skin Tone
   page: the skin stays as chosen and follows the cursor. MH3U_INPUT_SCRIPT also takes LSTICK_LEFT/RIGHT/UP/DOWN now.
-- **Texture packs (2026-10-27).** The NGRP pack (v1.2.1.2) is a Citra/Azahar pack for the 3DS release:
-  `tex1_<w>x<h>_<hash>_<fmt>_mip<n>.dds`, the hash over 3DS texture data, fmt 12/13 = ETC1/ETC1A4, every file BC7
-  (DXGI 98) at 4x the 3DS size, one level per file. Its folders follow the game's resource paths (ainpc/ai00/mod ->
-  Wii U `ainpc\ai00\mod\ai00_BM`, 256x256 there vs 128x128 on 3DS), but only 910 of 7,399 level-0 files are
-  unambiguous by folder + aspect ratio, so using it needs image matching; left for later. Our own scheme keys a
+- **Texture packs (2026-10-27).** Packs made for the 3DS release are keyed on hashes of 3DS texture data, so they
+  never match Wii U textures; 3DS packs are not supported and won't be converted (2026-10-29). Our own scheme keys a
   replacement on the CRC32 of the texture's level 0 as it sits in guest memory (tiled) plus its size: no game hook,
   and MH3U uploads .tex data as stored, so the key is stable across runs. Headless village run: 67 textures dumped
   (the rest are video planes, render targets or CPU-animated); 59 of those swapped for 64x64 magenta DDS files gave
