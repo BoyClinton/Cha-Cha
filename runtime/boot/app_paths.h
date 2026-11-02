@@ -2,6 +2,8 @@
 //
 // Data folder (settings, saves, shader/pipeline caches; never game files):
 //   --data-dir <dir>                  explicit
+//   Cha-Cha.ini next to Cha-Cha       -> the program's own folder (folder install: Cha-Cha.ini holds the settings,
+//                                        mods/, cache/, save/, quests/ and the game in game/ sit beside it)
 //   portable.txt next to Cha-Cha.exe  -> <exe dir>/data      (portable install, e.g. on a USB drive)
 //   run inside the source checkout  -> the checkout        (save/, input.ini, cache/ are gitignored)
 //   otherwise                       -> %APPDATA%\Cha-Cha
@@ -20,7 +22,9 @@ struct AppPaths {
     std::filesystem::path exe_dir;
     std::filesystem::path data;   // see above
     std::filesystem::path repo;   // the source checkout, if running from one (empty otherwise)
-    std::filesystem::path config() const { return data / "config.ini"; }
+    std::filesystem::path config_file;  // folder install: <exe dir>/Cha-Cha.ini
+    bool folder_install = false;
+    std::filesystem::path config() const { return config_file.empty() ? data / "config.ini" : config_file; }
     std::filesystem::path saves() const { return data / "save"; }
     std::filesystem::path cache() const { return data / "cache"; }
 };
@@ -51,7 +55,8 @@ struct Settings {
 Settings load_settings(const AppPaths& p);
 bool save_settings(const AppPaths& p, const Settings& s);
 
-// Dump locations inside a source checkout (extracted/, game/*.wua), for development runs.
+// Dump locations inside a source checkout (extracted/, game/*.wua), for development runs, or a folder install's game/
+// folder (the game and update folders, or a .wua, put there).
 std::vector<std::filesystem::path> repo_game_sources(const AppPaths& p);
 
 }  // namespace mh3u::boot

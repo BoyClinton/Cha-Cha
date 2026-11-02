@@ -72,6 +72,8 @@ GuestFunction find_indirect(uint32_t guest_addr);
 // replacement registered with set_override, or the original when there is none. Register before guest code runs.
 GuestFunction* override_slot(uint32_t guest_addr);  // stable address; null until set_override
 void set_override(uint32_t guest_addr, GuestFunction fn);
+// The translation (<name>__orig) of a function listed in config/overrides.txt, or null for any other address.
+GuestFunction override_original(uint32_t guest_addr);
 // Called on every import call when tracing is enabled (set by the runtime).
 extern void (*import_trace_hook)(const char* qualified_name);
 

@@ -82,6 +82,24 @@ int main(int argc, char** argv) {
     auto rpx = fs.open("/vol/code/MH3G_Cafe_US.rpx");
     CHECK(rpx && rpx->size() == stdfs::file_size(update / "code/MH3G_Cafe_US.rpx"));
 
+    {  // mods: a content folder prepended over the game replaces one file and adds another, the rest stays
+        const stdfs::path mod = stdfs::temp_directory_path() / "mh3u_fs_test_mod";
+        stdfs::remove_all(mod);
+        stdfs::create_directories(mod / "nativeCafe/arc/ID");
+        std::ofstream(mod / "nativeCafe/arc/ID/ID_com_eng.arc") << "mod";
+        std::ofstream(mod / "nativeCafe/arc/ID/mod_only.arc") << "new";
+        OverlayFs mfs = make_title_fs(host_tree(base), host_tree(update), save);
+        mfs.prepend("/vol/content", {host_tree(mod)});
+        CHECK(mfs.layer_of("/vol/content/nativeCafe/arc/ID/ID_com_eng.arc") == 0u);
+        auto f = mfs.open("/vol/content/nativeCafe/arc/ID/ID_com_eng.arc");
+        CHECK(f && f->size() == 3);
+        CHECK(mfs.layer_of("/vol/content/nativeCafe/arc/ID/mod_only.arc") == 0u);
+        CHECK(mfs.layer_of("/vol/content/nativeCafe/arc/ID/ID_cock_tu2_eng.arc") == 1u);  // the update
+        CHECK(mfs.layer_of("/vol/content/nativeCafe/arc/ainpc/ainpc.arc") == 2u);          // the base
+        CHECK(mfs.layer_of("/vol/code/MH3G_Cafe_US.rpx") == 0u);                           // code untouched
+        stdfs::remove_all(mod);
+    }
+
     // Path forms: backslashes, doubled separators, "." and ".." are normalised.
     CHECK(fs.layer_of("/vol/content/nativeCafe\\arc//ID/./ID_com_eng.arc") == 0u);
     CHECK(fs.layer_of("/vol/content/nativeCafe/arc/../arc/ainpc/ainpc.arc") == 1u);

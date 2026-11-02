@@ -2,6 +2,8 @@
 // presenter. Mouse, keyboard and controllers all navigate it.
 #include "setup.h"
 
+#include "plugins.h"
+
 #include "filters.h"
 #include "gx2.h"
 #include "host_input.h"
@@ -131,6 +133,24 @@ stdfs::path windows_font(const char* file) {
     return stdfs::exists(p, ec) ? p : stdfs::path{};
 }
 #endif
+
+// A bold sans for mods' HUD text (damage numbers...): system fonts only, as for the launcher.
+stdfs::path hud_font() {
+    std::error_code ec;
+#ifdef _WIN32
+    for (const char* f : {"segoeuib.ttf", "arialbd.ttf", "bahnschrift.ttf"})
+        if (const stdfs::path p = windows_font(f); !p.empty()) return p;
+    return {};
+#else
+    for (const char* f : {"/usr/share/fonts/google-noto/NotoSans-Bold.ttf", "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+                          "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", "/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf",
+                          "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+                          "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+                          "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"})
+        if (stdfs::exists(f, ec)) return f;
+    return windows_font("");
+#endif
+}
 
 struct Fonts {
     ImFont *body = nullptr, *menu = nullptr, *note = nullptr;
@@ -556,7 +576,7 @@ struct Launcher::Impl {
     enum class Mode { Title, Hidden, InGame } mode = Mode::Title;
     enum class Panel { None, Settings, Mods } panel = Panel::None;
     enum class Tab { General, Video, Input } tab = Tab::General;
-    enum class ModsTab { Quests } mods_tab = ModsTab::Quests;  // item sets, HP scaling, hold to carve: always on (no tab)
+    enum class ModsTab { Quests, Mods } mods_tab = ModsTab::Quests;  // item sets, HP scaling, hold to carve: always on (no tab)
     // MODS -> QUESTS: the library (<data>/quests), pack modes (<data>/mods.ini) and what the save has installed; re-read
     // (and packs applied) at start and whenever the panel opens or changes something
     quests::Library quest_library;
@@ -579,6 +599,8 @@ struct Launcher::Impl {
     std::set<stdfs::path> bad_images;
     const LauncherImage* image(const stdfs::path& file);
     void draw_tab_quests(PanelLayout& p);
+    void draw_tab_mods(PanelLayout& p);
+    bool hud() const { return booted && plugins::has_hud(); }  // mods draw over the game
     bool show_menu = true, booted = false, translating = false, refocus = true;
     ShaderJob job;
     DialogResult dialog;
@@ -762,6 +784,7 @@ Launcher::Launcher(const AppPaths& paths, gfx::Presenter& presenter, std::vector
     if (_dupenv_s(&open, &open_len, "MH3U_LAUNCHER_OPEN") == 0 && open) {
         const std::string o = open;
         d.panel = o.rfind("mods", 0) == 0 ? Impl::Panel::Mods : Impl::Panel::Settings;
+        if (o.find(":mods") != std::string::npos) d.mods_tab = Impl::ModsTab::Mods;
         d.tab = o.find("video") != std::string::npos ? Impl::Tab::Video : o.find("input") != std::string::npos ? Impl::Tab::Input : Impl::Tab::General;
     }
     std::free(open);
@@ -770,6 +793,7 @@ Launcher::Launcher(const AppPaths& paths, gfx::Presenter& presenter, std::vector
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(vk.device, &sci, nullptr, &d.image_sampler);
+    plugins::ensure_scanned(paths.data);  // MODS -> Mods before the game boots
     d.refresh_quests();  // quest packs set to All install themselves (the official DLC by default)
     presenter.set_overlay([&d](VkCommandBuffer cmd, VkExtent2D) { d.record(cmd); });
 }
@@ -923,7 +947,7 @@ bool Launcher::frame(const LaunchState& st) {
             d.dumps_shown = n;
             d.toast("Dumped " + std::to_string(n - d.dump_base) + " textures to " + d.dump_folder());
         }
-    if (d.mode == Impl::Mode::Hidden && !d.keyboard && !d.toasting()) {
+    if (d.mode == Impl::Mode::Hidden && !d.keyboard && !d.toasting() && !d.hud()) {
         if (d.toast_drawn) {  // the last toast faded: nothing of the overlay stays on screen
             d.toast_drawn = false;
             std::lock_guard g(d.snap_m);
@@ -932,7 +956,8 @@ bool Launcher::frame(const LaunchState& st) {
         return true;
     }
     const auto now = std::chrono::steady_clock::now();
-    if (now - d.last < std::chrono::milliseconds(15)) return true;
+    // over the game a mod's HUD moves with it: drawn up to ~150 times a second, the menus ~60
+    if (now - d.last < std::chrono::milliseconds(d.mode == Impl::Mode::Hidden && d.hud() ? 6 : 15)) return true;
     d.last = now;
     // --play: straight into the game once it can be played
     if (!d.show_menu && d.mode == Impl::Mode::Title && st.game_running && st.pipelines_ready) {
@@ -970,6 +995,19 @@ bool Launcher::Impl::draw(const LaunchState& st) {
         std::printf("shaders: %d/%d ready in %.1f s\n", job.result.compiled, job.result.shaders, job.seconds());
     }
     bool quit = false, play = false;
+    if (booted && plugins::fonts_pending()) {  // fonts the mods asked for (and the HUD's): the atlas is built again
+        plugins::add_pending_fonts(hud_font());
+        {
+            std::lock_guard g(snap_m);
+            snap.reset();  // its draw lists use the old font texture
+        }
+        {
+            std::lock_guard g(*presenter.vk().queue_mutex);
+            vkDeviceWaitIdle(presenter.vk().device);
+        }
+        ImGui_ImplVulkan_DestroyFontsTexture();
+        ImGui_ImplVulkan_CreateFontsTexture();
+    }
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;  // fed by handle_event (the backend clears it in manual mode)
@@ -981,6 +1019,7 @@ bool Launcher::Impl::draw(const LaunchState& st) {
     ImGui::Begin("launcher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                           ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
     layout(size);
+    if (hud() && st.game_frames) plugins::draw_hud(ImGui::GetBackgroundDrawList(), size.x, size.y);  // under the menus
     if (keyboard && (mode == Mode::Hidden || mode == Mode::InGame)) {
         draw_keyboard(size);
     } else if (mode != Mode::Hidden) {
@@ -1004,7 +1043,7 @@ bool Launcher::Impl::draw(const LaunchState& st) {
     ImGui::End();
     ImGui::Render();
     // closed during this frame (the panel's close button / Esc / B in game): nothing of it may stay on screen
-    auto next = (mode == Mode::Hidden && !keyboard && !toast_drawn) || play ? nullptr : snapshot(*ImGui::GetDrawData());
+    auto next = (mode == Mode::Hidden && !keyboard && !toast_drawn && !hud()) || play ? nullptr : snapshot(*ImGui::GetDrawData());
     {
         std::lock_guard g(snap_m);
         snap = std::move(next);
@@ -1151,10 +1190,10 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
         const char* name;
     };
     static const TabDef kSettingsTabs[] = {{Tab::General, "General"}, {Tab::Video, "Video"}, {Tab::Input, "Input"}};
-    static const char* const kModsTabs[] = {"Quests"};
+    static const char* const kModsTabs[] = {"Quests", "Mods"};
     const bool mods = panel == Panel::Mods;
     if (mods && quests_stale) refresh_quests();  // also applies the pack modes
-    const int ntabs = mods ? 1 : 3;
+    const int ntabs = mods ? 2 : 3;
     const float header_h = 72 * s, seg_h = 38 * s, seg_pad = 24 * s;
     float seg_total = 0;
     for (int i = 0; i < ntabs; ++i)
@@ -1197,6 +1236,10 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1) || ImGui::IsKeyPressed(ImGuiKey_E, false)) step = 1;
         if (step && !mods) {
             tab = static_cast<Tab>((static_cast<int>(tab) + step + 3) % 3);
+            g_sound.play(Sfx::Tab);
+            refocus = true;
+        } else if (step) {
+            mods_tab = static_cast<ModsTab>((static_cast<int>(mods_tab) + step + 2) % 2);
             g_sound.play(Sfx::Tab);
             refocus = true;
         }
@@ -1249,7 +1292,9 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
         ImGui::SetKeyboardFocusHere();
         refocus = false;
     }
-    if (mods) {
+    if (mods && mods_tab == ModsTab::Mods) {
+        draw_tab_mods(p);
+    } else if (mods) {
         draw_tab_quests(p);
     } else if (tab == Tab::General) {
         draw_tab_general(p);
@@ -1508,8 +1553,15 @@ void Launcher::Impl::load_pack_modes() {
 }
 
 void Launcher::Impl::save_pack_modes() const {
+    std::vector<std::string> keep;  // the MODS tab's mod.<folder> = on | off lines
+    {
+        std::ifstream in(paths.data / "mods.ini");
+        for (std::string l; std::getline(in, l);)
+            if (l.rfind("mod.", 0) == 0) keep.push_back(l);
+    }
     std::ofstream f(paths.data / "mods.ini", std::ios::trunc);
-    f << "# Cha-Cha mods. pack.<folder in quests> = all | choose | off\n";
+    f << "# Cha-Cha mods. pack.<folder in quests> = all | choose | off; mod.<folder in mods> = on | off\n";
+    for (const auto& l : keep) f << l << '\n';
     for (const auto& [k, m] : pack_modes) f << "pack." << k << '=' << quests::mode_name(m) << '\n';
 }
 
@@ -1725,6 +1777,68 @@ void Launcher::Impl::draw_tab_quests(PanelLayout& p) {
 // INPUT: layout and mouse options, then one row per game button / stick direction with what the keyboard + mouse and
 // the controller have bound to it. Choosing a cell waits for the next press (Esc cancels, Delete clears); every change
 // is saved to input.ini at once and used by the game straight away.
+// MODS -> Mods: the folders in <data>/mods (plugins.h, docs/modding.md), each with its switch (next start), what
+// it brings, and its plugins' own settings rows.
+void Launcher::Impl::draw_tab_mods(PanelLayout& p) {
+    const auto u = plugins::mods_dir(paths.data).u8string();
+    const std::string folder(u.begin(), u.end());
+    static std::string folder_desc;
+    folder_desc = "Each mod is a folder here. A mod's content folder replaces or adds game files (the same paths as the "
+                  "game's content folder); its plugins folder holds native plugins (.dll on Windows, .so on Linux) "
+                  "that can draw over the game and add settings here. A mod.ini (name, author, version, description) "
+                  "describes it.\n\nMods switched on or off apply on the next start.\n\n" + folder;
+    std::vector<plugins::Mod>& mods = plugins::mods();
+    group_begin(p, "Library");
+    if (button_row(p, "Mods folder", folder_desc.c_str(), true, "Open")) {
+        std::string url = "file:///" + folder;
+        std::replace(url.begin(), url.end(), '\\', '/');
+        SDL_OpenURL(url.c_str());
+    }
+    if (mods.empty()) info_row(p, "No mods in the folder yet", "", folder_desc.c_str());
+    group_end(p);
+    static std::vector<std::string> descs;  // the description pane points into these until the next frame
+    descs.resize(mods.size() * 2);
+    for (size_t i = 0; i < mods.size(); ++i) {
+        plugins::Mod& m = mods[i];
+        ImGui::PushID(m.folder.c_str());
+        std::string& d = descs[i * 2];
+        d = m.description.empty() ? std::string() : m.description + "\n\n";
+        if (!m.author.empty()) d += "By " + m.author + (m.version.empty() ? "" : ", version " + m.version) + ".\n";
+        else if (!m.version.empty()) d += "Version " + m.version + ".\n";
+        if (m.has_content) d += std::to_string(m.content_files) + " game files replaced or added.\n";
+        if (!m.plugin_files.empty()) d += std::to_string(m.plugin_files.size()) + (m.plugin_files.size() == 1 ? " plugin.\n" : " plugins.\n");
+        d += "\nFolder: " + m.folder;
+        if (booted && m.enabled != m.active) d += "\n\nApplies on the next start.";
+        group_begin(p, m.name.c_str());
+        bool on = m.enabled;
+        if (switch_row(p, "Enabled", on, d.c_str())) {
+            plugins::set_enabled(i, on);
+            toast(m.name + (on ? " on" : " off") + (booted ? " from the next start" : ""));
+        }
+        for (const plugins::PluginState& ps : m.plugins) {
+            std::string& pd = descs[i * 2 + 1];
+            pd = ps.loaded ? ps.name + (ps.version.empty() ? "" : " " + ps.version) + " is running." : "Not loaded: " + ps.error;
+            info_row(p, ps.file.c_str(), ps.loaded ? "Running" : "Not loaded", pd.c_str());
+        }
+        group_end(p);
+        if (m.active && plugins::has_settings(i)) {
+            plugins::SettingsUi ui;
+            ui.group = [&](const char* t) { group_begin(p, t); };
+            ui.end_group = [&] { group_end(p); };
+            ui.toggle = [&](const char* l, bool& v, const char* desc) { return switch_row(p, l, v, desc); };
+            ui.value = [&](const char* l, const std::string& v, const char* desc) {
+                const int step = value_row(p, l, v, desc);
+                if (step) g_sound.play(Sfx::Move);
+                return step;
+            };
+            ui.button = [&](const char* l, const char* desc, const std::string& v) { return button_row(p, l, desc, true, v); };
+            ui.info = [&](const char* l, const std::string& v, const char* desc) { info_row(p, l, v, desc); };
+            plugins::draw_settings(i, ui);
+        }
+        ImGui::PopID();
+    }
+}
+
 void Launcher::Impl::draw_tab_input(PanelLayout& p, float table_w) {
     input::ControlOptions o = input::control_options();
     static const std::vector<float> kSens = {0.025f, 0.05f, 0.08f, 0.12f};
@@ -1736,8 +1850,15 @@ void Launcher::Impl::draw_tab_input(PanelLayout& p, float table_w) {
     bool changed = cycle(value_row(p, "Controller layout", layout ? "Nintendo (by position)" : "Xbox (A / Cross confirms)", nullptr), layout, 2);
     changed |= cycle(value_row(p, "Mouse sensitivity", kSensNames[static_cast<size_t>(sens)], nullptr), sens, 4);
     changed |= switch_row(p, "Invert camera Y", o.invert_y, nullptr);
+    // camera speed: 30% .. 100% of the game's own turn rate (keyboard, mouse and controller)
+    int speed = std::clamp(static_cast<int>(std::lround(o.camera_speed * 10.0f)) - 3, 0, 7);
+    changed |= cycle(value_row(p, "Camera speed", std::to_string((speed + 3) * 10) + "%",
+                               "How fast the camera turns, for the controller's right stick, the camera keys and the mouse. "
+                               "100% is the game's own speed."),
+                     speed, 8);
     group_end(p);
     if (changed) {
+        o.camera_speed = static_cast<float>(speed + 3) / 10.0f;
         o.nintendo_layout = layout == 1;
         o.mouse_sensitivity = kSens[static_cast<size_t>(sens)];
         input::set_control_options(o);

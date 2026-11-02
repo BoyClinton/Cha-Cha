@@ -20,6 +20,7 @@
   <a href="#getting-started">Getting started</a> ·
   <a href="#whats-new-compared-to-the-original">What's new</a> ·
   <a href="#dlc-event-and-challenge-quests">DLC quests</a> ·
+  <a href="#mods">Mods</a> ·
   <a href="#texture-packs-and-texture-dumping">Texture packs</a> ·
   <a href="#whats-next">What's next</a> ·
   <a href="#building-from-source">Building</a>
@@ -95,10 +96,10 @@ These are part of the game and always on.
 
 | | Windows | Linux |
 |---|---|---|
-| **Download** | `Cha-Cha-<version>-windows-x64.zip` from [Releases](../../releases/latest) | `Cha-Cha-<version>-x86_64.AppImage` from [Releases](../../releases/latest) |
+| **Download** | `Cha-Cha-<version>-windows-x64.zip` from [Releases](../../releases/latest) | `Cha-Cha-<version>-x86_64.AppImage`, or the folder `Cha-Cha-<version>-linux-x86_64.tar.gz`, from [Releases](../../releases/latest) |
 | **Needs** | Windows 10 / 11 x64 | x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, Steam Deck…) |
 | **Graphics** | a Vulkan 1.2 driver | a Vulkan 1.2 driver (Mesa or your GPU vendor's) |
-| **Run** | extract the zip anywhere you can write to, run `Cha-Cha.exe` | `chmod +x Cha-Cha-*.AppImage`, then run it |
+| **Run** | extract the zip anywhere you can write to, run `Cha-Cha.exe` | `chmod +x Cha-Cha-*.AppImage`, then run it; or extract the folder and run `./Cha-Cha` |
 
 1. **Start Cha-Cha.** On the first start a setup screen asks for your game.
 2. **Point it at your dump:** a `.wua` archive, or the game and update folders (`code`, `content`, `meta`). Cha-Cha
@@ -113,7 +114,33 @@ Your **data folder** keeps settings, saves, caches, quests and texture packs:
 | Linux | `~/.local/share/Cha-Cha` (or `$XDG_DATA_HOME/Cha-Cha`) |
 | Portable | `data/` next to the program, when a file named `portable.txt` sits beside it (the Windows zip ships with one) |
 
+| Folder | the program's own folder, when `Cha-Cha.ini` sits beside it (the Linux folder release ships with one) |
+
 Saves live in `<data folder>/save`. To skip the setup screen, start it with `--install <path to your dump>`.
+
+### The folder release
+
+Everything in one folder, like other recomps: unpack it anywhere you can write to.
+
+```
+Cha-Cha-<version>/
+├── Cha-Cha                 the program
+├── Cha-Cha.ini             settings (makes this folder Cha-Cha's data folder)
+├── game/                   your dump: the game and update folders, or a .wua (found by itself)
+├── mods/                   mods, one folder each (Damage Numbers included)
+│   └── damage-numbers/
+├── licenses/               Cha-Cha's GPL-3.0 and the bundled libraries' licences
+├── README.txt
+│   made on the first start:
+├── cache/                  translated shaders and pipelines
+├── save/                   your saves
+├── quests/                 event and challenge quests
+├── texture_replacements/   texture packs
+└── log.txt                 the log (when not started from a terminal)
+```
+
+It needs FFmpeg's `libavcodec` from your distribution (for the movies). On another distribution than it was built on,
+use the AppImage.
 
 ### Default controls
 
@@ -125,8 +152,9 @@ Saves live in `<data folder>/save`. To skip the setup screen, start it with `--i
 | + / − | Tab / M | Back / Start |
 | D-pad | arrow keys, mouse wheel | d-pad |
 
-Settings → Input switches the controller to the Xbox layout (A / Cross confirms) and rebinds anything. Bindings are
-saved in `<data folder>/input.ini` ([docs/input.md](docs/input.md)).
+Settings → Input switches the controller to the Xbox layout (A / Cross confirms) and rebinds anything. **Camera
+speed** there slows the camera down (30% to 100% of the game's own turn rate, for the stick, the camera keys and the
+mouse). Bindings and options are saved in `<data folder>/input.ini` ([docs/input.md](docs/input.md)).
 
 ## DLC: event and challenge quests
 
@@ -141,6 +169,19 @@ Capcom's download service for MH3U is gone. Cha-Cha installs the quests from fil
 3. The quests appear at the **Port Tanzia Gathering Hall** with the event and challenge quests.
 
 Pack format and options: [docs/mods.md](docs/mods.md). Quest files are game data, so Cha-Cha ships none.
+
+## Mods
+
+Put mods in `<data folder>/mods`, one folder each. **MODS → Mods** (F2 in game) lists them, switches each on or off
+(from the next start) and shows their settings.
+
+- **Content mods** carry a `content/` folder whose files replace or add to the game's own (same paths as the game's
+  `content` folder). Nothing in your dump is changed.
+- **Plugins** (`plugins/*.dll` on Windows, `plugins/*.so` on Linux) are native code: they can hook game functions,
+  draw over the game and add settings rows. The API is a single C header, [`include/chacha_plugin.h`](include/chacha_plugin.h).
+
+Included as an example: **Damage Numbers** ([mods/damage-numbers](mods/damage-numbers/README.md)), the damage of
+every hit over the monster in the Wilds, Rise or Classic style. Making mods: [docs/modding.md](docs/modding.md).
 
 ## Texture packs and texture dumping
 
@@ -187,6 +228,17 @@ The build translates **your own dump's** executable into C++, so put a dump in p
    `libavcodec-dev` and SDL3's build dependencies. `scripts/build-linux.sh` builds it, `scripts/package-appimage.sh`
    makes the AppImage ([docs/linux.md](docs/linux.md)).
 
+   On a Linux desktop with the distribution's SDL3 (Fedora: `SDL3-devel`, `libshaderc-devel`, `vulkan-loader-devel`,
+   `libavcodec-free-devel`), configure with `-DMH3U_SYSTEM_SDL3=ON`. An SDL3 built from source without the PipeWire /
+   PulseAudio / ALSA headers has no sound:
+
+   ```
+   cmake -S . -B ~/cha-cha-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMH3U_SYSTEM_SDL3=ON \
+         -DMH3U_RECOMP_OUT=$HOME/cha-cha-build/recomp-out
+   cmake --build ~/cha-cha-build --target mh3u damage_numbers
+   scripts/package-folder.sh ~/cha-cha-build <version>      # the folder release, in build/release/
+   ```
+
 Inside the checkout Cha-Cha finds `extracted/` by itself and uses the checkout as its data folder (all of it
 gitignored). The release packages never contain game files, but the program itself contains the recompiled game
 code, translated from your executable at build time.
@@ -201,8 +253,10 @@ code, translated from your executable at build time.
 | `recomp/` | The recompiler; `recomp/out/` is the generated C++ | source only |
 | `runtime/` | The PC layer replacing the Wii U system: `os`, `gfx` (GX2 on Vulkan), `audio`, `input`, `fs`, `boot` | yes |
 | `src/` | Hand-written game code: item sets, hold to gather, HP scaling… | yes |
+| `include/` | `chacha_plugin.h`, the plugin API for mods | yes |
+| `mods/` | Mods built with the tree: Damage Numbers | yes |
 | `tools/`, `scripts/`, `ghidra/` | Shader translator, helper scripts, reverse-engineering scripts | yes |
-| `docs/` | Roadmap, research log, formats, mods, input, Linux, online notes | yes |
+| `docs/` | Roadmap, research log, formats, mods, modding, input, Linux, online notes | yes |
 | `build/` | Build output | no |
 
 How the port works and what was learned: [docs/runtime.md](docs/runtime.md), [docs/engine.md](docs/engine.md),

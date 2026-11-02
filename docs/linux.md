@@ -66,3 +66,10 @@ glibc 2.35 and newer. The source stays on `D:` (`/mnt/d/...`); the build tree li
 3. Build and run headless in WSL until the game boots to the title (`--headless`, `MH3U_EXIT_AFTER_SECONDS`).
 4. A windowed look through WSLg, then a real Linux machine or a Steam Deck.
 5. `scripts/package-appimage.sh`; release 0.1.0 with the zip and the AppImage.
+
+## Building on a Linux desktop (no sound?)
+
+SDL3 is built from source by default (for the AppImage). That build only gets the audio backends whose development
+headers are installed (`pipewire-devel` / `libpipewire-0.3-dev`, PulseAudio, ALSA); without them it has only the
+"disk" and "dummy" drivers and the game is silent. Either install those headers before configuring, or configure
+with `-DMH3U_SYSTEM_SDL3=ON` to use the distribution's SDL3 (`SDL3-devel` on Fedora), as on Fedora 44 (2026-11-02).

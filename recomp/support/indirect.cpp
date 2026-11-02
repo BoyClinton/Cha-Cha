@@ -12,6 +12,8 @@ extern const mh3u::ppc::FunctionEntry kFunctionTable[];
 extern const size_t kFunctionCount;
 extern const mh3u::ppc::FunctionEntry kImportTable[];
 extern const size_t kImportCount;
+extern const mh3u::ppc::FunctionEntry kOverrideOriginals[];
+extern const size_t kOverrideOriginalCount;
 
 namespace mh3u::ppc {
 namespace {
@@ -47,6 +49,8 @@ const DirectTable& direct() {
 }
 
 }  // namespace
+
+GuestFunction override_original(uint32_t guest_addr) { return find(kOverrideOriginals, kOverrideOriginalCount, guest_addr); }
 
 thread_local uint32_t t_indirect_target = 0;
 

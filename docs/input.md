@@ -45,6 +45,9 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
   since the game's previous `VPADRead` becomes right-stick deflection (`sensitivity` per pixel, averaged over two
   reads to smooth spikes, added to any stick input and clamped). A very fast flick saturates at full stick speed.
   `invert_y` flips vertical look.
+- Camera speed (`[camera] speed`, Settings → Input → Camera speed, 0.3–1.0): the merged right stick is scaled by it
+  after the stick-as-button emulation, so the camera turns slower for the controller, the camera keys and the mouse
+  alike, while menus moved by the right stick still respond.
 - Defaults (all rebindable): WASD = left stick, IJKL = right stick, arrows = d-pad, Space/Backspace = B, Return/F = A,
   E = Y, Left Shift = R, Q = L, Z/C = ZL/ZR, Tab = +, M = −, V = left-stick click; left mouse = X, right mouse = A,
   middle = right-stick click, mouse 4/5 = ZL/ZR, wheel = d-pad left/right (a notch holds the button for 3 frames).

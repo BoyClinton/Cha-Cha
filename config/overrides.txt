@@ -21,3 +21,5 @@
 0x02687D38 uIDLobbyMaki::drawBoxMenu? # src/game/item_sets.cpp: Item Sets' sub-list pop-up placed at row 3
 0x02AE1E40 cGUIInstAnimation::updateTransforms? # src/game/item_sets.cpp: box menu with Item Sets - the separator and the scroll's lower part one row down (object PosY before the transforms are redone)
 0x020ECA2C sCockpit::obtainItem? # src/game/carving.cpp: hold to gather - after an item is obtained the held button keeps repeating
+0x025CB37C uEnemy::damageCheck? # mod hook point (runtime/boot/plugins.cpp): per-frame damage check; per-part damage int16[8] at state+0x8EC, HP at state+0x8B8 (state = *(uEnemy+0x1BE0)); damage-numbers mod
+0x0227EDE8 uGameCamera::move? # mod hook point (runtime/boot/plugins.cpp): uGameCamera vtable slot 8 per frame; uCamera fields +0x30..+0x6C give the live camera for world_to_screen

@@ -54,6 +54,10 @@ AppPaths find_paths(const stdfs::path& exe, const stdfs::path& data_override) {
         }
     if (!data_override.empty()) {
         p.data = stdfs::absolute(data_override, ec);
+    } else if (stdfs::exists(p.exe_dir / "Cha-Cha.ini", ec)) {
+        p.data = p.exe_dir;
+        p.config_file = p.exe_dir / "Cha-Cha.ini";
+        p.folder_install = true;
     } else if (stdfs::exists(p.exe_dir / "portable.txt", ec)) {
         p.data = p.exe_dir / "data";
     } else if (!p.repo.empty()) {
@@ -151,8 +155,18 @@ bool save_settings(const AppPaths& p, const Settings& s) {
 
 std::vector<stdfs::path> repo_game_sources(const AppPaths& p) {
     std::vector<stdfs::path> out;
-    if (p.repo.empty()) return out;
     std::error_code ec;
+    if (p.folder_install) {  // game/: whatever was put there (folders with code / content / meta, or a .wua)
+        const stdfs::path g = p.data / "game";
+        bool any = false;
+        for (const auto& e : stdfs::directory_iterator(g, ec)) {
+            if (e.path().extension() == ".wua") out.push_back(e.path());
+            else if (e.is_directory(ec)) any = true;
+        }
+        if (out.empty() && any) out.push_back(g);
+        return out;
+    }
+    if (p.repo.empty()) return out;
     if (stdfs::exists(p.repo / "extracted" / "0005000e10118300_v32", ec)) out.push_back(p.repo / "extracted");
     else
         for (const auto& e : stdfs::directory_iterator(p.repo / "game", ec))

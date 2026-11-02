@@ -664,3 +664,36 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   + A, back out (stick holds scaled to WSL's ~12 fps: the game moves by wall time). In WSL: house loaded at frame
   3170, inside at 3250, village again at 3750, no fault through 420 s. The unfixed build never got that far (the save
   load itself faulted, 2 of 2 runs).
+
+
+## 2026-11-02 - Mod support and damage numbers (Linux, Fedora 44)
+
+Found by reading the translated code (the disassembly kept as comments in recomp-out), RPX strings read directly:
+
+- **Monster HP**: state = *(uEnemy + 0x1BE0); state+0x8B8 int32 current HP, +0x8BC max HP (setMaxHp 0x0259FB84 writes
+  it), +0x8C8 float cap factor. FUN_025C6EE0 adds a delta to the HP (clamped 0..max*cap); FUN_025C6F74 calls it
+  with cap = max HP; FUN_025C7030 sets the HP (clamped).
+- **uEnemy::damageCheck? 0x025CB37C** (r3 = uEnemy): loops r23 = 0..7 over the parts, summing
+  `lha 0x8ec(state + 2*i)` into r25, then `FUN_025C6F74(enemy, -r25)` (0x025CBBD8) and separately
+  `FUN_025C6F74(enemy, -(int16)state+0xAB4)`. So state+0x8EC is int16[8], the frame's damage per part (cleared by
+  FUN_025C7A38 from the enemy update FUN_025A60D4, together with int16[8][3] at +0x8FC and int16[5] at +0x932).
+  Part records at state+0x978 + 8*i; the selected part's index byte at +0xAEC.
+- **uCamera properties** (uCamera::createProperty 0x02A040F0, vtable 0x10098770 slot 3): mFarPlane +0x30,
+  mNearPlane +0x34, mAspect +0x38, mFov +0x3C (degrees: 50.0 on the title camera), mCameraPos +0x40, mCameraUp
+  +0x50, mTargetPos +0x60. mAspect reads 1.0 on uGameCamera: the projection takes the viewport's aspect.
+- **uCoord properties** (0x02A057FC): mpParent +0x30, mParentNo +0x34, mPos +0x40, mQuat +0x50, mScale +0x60.
+  **uBaseModel** (0x02A009D4): mBoundaryScale +0x158, mBoundaryCenter +0x15C.
+- **uGameCamera vtable 0x10029D7C slot 8 = 0x0227EDE8**: per-frame move (sets +0x8E4 from +0x1C, then 0x0227EB7C and
+  0x0227D058). Seen running on the title screen with one camera, 0x2FE01FC0 in that run.
+- sGameCamera singleton pointer at 0x10313E58 (written by its ctor 0x0212027C).
+- FUN_021283EC (sHitCheck area) writes status values (+0x746, +0x728, ... +0x8EC) into *(r28 + 0xE30): a
+  monster's attack applying status to a hunter, not enemy damage.
+
+Mod support built on this: plugins hook functions listed in config/overrides.txt (the two above added); the emitter
+now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto Cha-Cha's own replacements
+(docs/modding.md).
+
+- **Projection checked (2026-11-02, title camera eye (0,0,100) -> target 0):** sCamera (*0x103D2F38) +0xE0 holds a
+  right-handed view matrix (row vectors, translation in the last row: (0,0,-100)), +0x120 a GL-style perspective:
+  1/tan(25 deg) = 2.1445, 2.1445 / (16/9) = 1.2063, -1 in [2][3], -16.0003 in [3][2]. A second pair follows at +0x160 /
+  +0x1A0 (another viewport). So: vertical FOV in degrees, screen right = cross(forward, up), aspect 16:9 (not mAspect).

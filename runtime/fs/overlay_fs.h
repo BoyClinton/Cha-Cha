@@ -25,6 +25,8 @@ public:
     // layers[0] has the highest priority. guest_prefix like "/vol/content".
     void mount(std::string guest_prefix, std::vector<std::shared_ptr<Tree>> layers);
     void mount_writable(std::string guest_prefix, std::filesystem::path host_dir);
+    // Puts layers above an existing read-only mount's (layers[0] highest), e.g. mods' content folders over the game.
+    void prepend(std::string_view guest_prefix, std::vector<std::shared_ptr<Tree>> layers);
 
     // File or directory at a guest path, or nullopt if no layer has it, the path is outside every mount, or ".."
     // climbs above "/". ".." is resolved on the guest path before mount lookup, so access never leaves a mount.

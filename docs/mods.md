@@ -1,7 +1,8 @@
 # Mods
 
 **MODS** is on the title menu, and **F2** opens it over the game. F1 switches to the settings, and F2 again or Esc / B
-closes it. It has one tab, QUESTS; the gameplay changes below are always on.
+closes it. It has two tabs: QUESTS (below) and MODS, the mods in `<data folder>/mods` (content mods and plugins,
+[modding.md](modding.md)). The gameplay changes below are always on.
 
 ## QUESTS: event and challenge quests
 

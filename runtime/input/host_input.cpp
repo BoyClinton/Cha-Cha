@@ -75,6 +75,7 @@ struct Config {
     float deadzone = 0.15f;
     float mouse_sensitivity = 0.05f;  // stick deflection per pixel moved between two game reads
     bool invert_y = false;
+    float camera_speed = 1.0f;  // [camera] speed: the right stick's deflection is scaled by it
     int wheel_frames = 3;  // reads a wheel notch holds its button
 };
 
@@ -256,6 +257,7 @@ void load_ini(const std::filesystem::path& path, Config& c) {
         else if (section == "gamepad" && key == "deadzone") c.deadzone = std::stof(value);
         else if (section == "mouse" && key == "sensitivity") c.mouse_sensitivity = std::stof(value);
         else if (section == "mouse" && key == "invert_y") c.invert_y = value == "1" || value == "true";
+        else if (section == "camera" && key == "speed") c.camera_speed = std::clamp(std::stof(value), 0.1f, 1.0f);
         else if (section == "mouse" && key == "wheel_frames") c.wheel_frames = std::stoi(value);
         else if ((section == "bindings" || section == "controller") && key == "clear") {
             if (section == "bindings") c.bindings.clear();
@@ -604,6 +606,10 @@ PadState read() {
     };
     emulate(s.lx, s.ly, kLStickLeft, kLStickRight, kLStickUp, kLStickDown);
     emulate(s.rx, s.ry, kRStickLeft, kRStickRight, kRStickUp, kRStickDown);
+    // camera speed: the game turns the camera at a rate set by the stick's deflection (after the stick buttons above,
+    // so menus moved by the right stick are unchanged)
+    s.rx *= g_cfg.camera_speed;
+    s.ry *= g_cfg.camera_speed;
     g_masked &= s.buttons;  // released since the overlay closed: no longer masked
     s.buttons &= ~g_masked;
     // hold to gather: the held button let go for 2 reads of every 8 while repeat_held's time lasts
@@ -883,7 +889,7 @@ std::string pad_prompt(const std::string& target) {
 
 ControlOptions control_options() {
     std::lock_guard g(g_m);
-    return {g_cfg.nintendo_layout, g_cfg.mouse_sensitivity, g_cfg.invert_y};
+    return {g_cfg.nintendo_layout, g_cfg.mouse_sensitivity, g_cfg.invert_y, g_cfg.camera_speed};
 }
 
 void set_control_options(const ControlOptions& o) {
@@ -892,6 +898,7 @@ void set_control_options(const ControlOptions& o) {
     g_cfg.nintendo_layout = o.nintendo_layout;
     g_cfg.mouse_sensitivity = o.mouse_sensitivity;
     g_cfg.invert_y = o.invert_y;
+    g_cfg.camera_speed = std::clamp(o.camera_speed, 0.1f, 1.0f);
     if (relayout) default_pad(g_cfg);  // the controller defaults follow the layout
 }
 
@@ -909,7 +916,8 @@ bool save_bindings() {
     f << "# Cha-Cha controls, written by the launcher (Settings > Controls). See docs/input.md.\n"
       << "[gamepad]\nlayout = " << (g_cfg.nintendo_layout ? "nintendo" : "xbox") << "\ndeadzone = " << g_cfg.deadzone << "\n\n"
       << "[mouse]\nsensitivity = " << g_cfg.mouse_sensitivity << "\ninvert_y = " << (g_cfg.invert_y ? 1 : 0)
-      << "\nwheel_frames = " << g_cfg.wheel_frames << "\n\n[bindings]\nclear = 1\n";
+      << "\nwheel_frames = " << g_cfg.wheel_frames << "\n\n[camera]\nspeed = " << g_cfg.camera_speed
+      << "\n\n[bindings]\nclear = 1\n";
     for (const auto& [src, t] : g_cfg.bindings) f << key_source_name(src) << " = " << target_name(t) << '\n';
     f << "\n[controller]\nclear = 1\n";
     for (const auto& [src, mask] : g_cfg.pad) {

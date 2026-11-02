@@ -15,7 +15,7 @@ find_package(Vulkan REQUIRED)
 target_link_libraries(mh3u_imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
 
 # The game executable: recompiled code + HLE runtime.
-add_executable(mh3u WIN32 main.cpp profiler.cpp read_watch.cpp read_watch.h app_paths.cpp app_paths.h launcher_image.cpp launcher_image.h quests.cpp quests.h setup.cpp setup.h)
+add_executable(mh3u WIN32 main.cpp plugins.cpp plugins.h profiler.cpp read_watch.cpp read_watch.h app_paths.cpp app_paths.h launcher_image.cpp launcher_image.h quests.cpp quests.h setup.cpp setup.h)
 if(WIN32)
   # GUI subsystem (no console window for players) with the standard main(); output: setup_output() in main.cpp
   target_link_options(mh3u PRIVATE /ENTRY:mainCRTStartup)
@@ -33,6 +33,7 @@ set_target_properties(mh3u PROPERTIES OUTPUT_NAME "Cha-Cha")
 if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/icon/icon.ico")
   target_sources(mh3u PRIVATE mh3u.rc)
 endif()
+target_include_directories(mh3u PRIVATE ${CMAKE_SOURCE_DIR}/include)  # chacha_plugin.h (the mod API)
 target_link_libraries(mh3u PRIVATE mh3u_recomp_game mh3u_recomp_core mh3u_os mh3u_gfx mh3u_audio mh3u_core mh3u_fs mh3u_latte mh3u_imgui mh3u_game_src)
 if(WIN32)
   target_link_libraries(mh3u PRIVATE shell32 windowscodecs ole32)

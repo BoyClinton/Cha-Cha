@@ -27,11 +27,15 @@
 #include "ax.h"
 #include "gx2.h"
 #include "overlay_fs.h"
+#include "plugins.h"
 #include "presenter.h"
 #include "profiler.h"
 #include "read_watch.h"
 
 #include <SDL3/SDL.h>
+#ifndef _WIN32
+#include <unistd.h>  // isatty
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -148,9 +152,14 @@ struct Args {
 // the pipe/file the parent gave us (scripts, tests), else the console of the terminal it was started from, else a
 // new console (--console), else <data>/log.txt.
 void setup_output(const boot::AppPaths& paths, bool new_console) {
-#ifndef _WIN32  // started from a terminal or a launcher: stdout / stderr are already where they should go
-    (void)paths;
+#ifndef _WIN32
+    // started from a terminal: stdout / stderr stay there; a folder install started otherwise (a file manager, a
+    // launcher) writes log.txt next to the program
     (void)new_console;
+    if (paths.folder_install && !isatty(1)) {
+        const std::string log = (paths.data / "log.txt").string();
+        if (std::freopen(log.c_str(), "w", stdout)) std::freopen(log.c_str(), "a", stderr);
+    }
 #else
     const auto usable = [](DWORD which) {
         const HANDLE h = GetStdHandle(which);
@@ -416,6 +425,13 @@ int main(int argc, char** argv) {
     os::register_nn_act(r);
     // files: /vol/content and /vol/code = update over base from the user's dump, /vol/save = <data>/save
     fs::OverlayFs vfs = game->make_fs(paths.saves());
+    {  // mods: each enabled mod's content/ folder over the game's files (<data>/mods, docs/modding.md)
+        std::vector<std::shared_ptr<fs::Tree>> layers;
+        plugins::ensure_scanned(paths.data);
+        for (const plugins::Mod& m : plugins::mods())
+            if (m.enabled && m.has_content) layers.push_back(fs::host_tree(m.dir / "content"));
+        vfs.prepend("/vol/content", std::move(layers));
+    }
     r.vfs = &vfs;
     os::register_coreinit_fs(r);
     os::register_nn_save(r);
@@ -436,6 +452,11 @@ int main(int argc, char** argv) {
         if (g_launcher) g_launcher->post_toast(msg);  // shown over the game
     });
     game::set_frame_capture(&gfx::dump_next_frame);
+    // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
+    plugins::set_toast([](const std::string& msg) {
+        if (g_launcher) g_launcher->post_toast(msg);
+    });
+    plugins::load(paths.data, mem.base(), game->rpx_sha1);
     os::register_coreinit_misc(r);
     os::register_h264(r);
     // Static initialisers exported by system libraries (e.g. nn_uds.__sti___11_uds_Api_cpp_...) are called from the
@@ -569,6 +590,7 @@ int main(int argc, char** argv) {
             mh3u::gfx::save_gx2_caches();
             if (os::rt().trace_imports) os::dump_threads();
             peek_objects(mem);
+            plugins::shutdown();
             std::fflush(stdout);
             std::_Exit(0);  // guest threads are not cancellable
         }
@@ -577,6 +599,7 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     guest.join();
+    plugins::shutdown();
     mh3u::gfx::save_gx2_caches();
     print_import_summary();
     return code;

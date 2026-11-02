@@ -73,6 +73,7 @@ struct ControlOptions {
     bool nintendo_layout = true;  // face buttons by position (the default; changing it resets the controller bindings)
     float mouse_sensitivity = 0.05f;
     bool invert_y = false;
+    float camera_speed = 1.0f;  // right stick (camera) scaled by this, 0.3 .. 1.0: a slower camera turn
 };
 ControlOptions control_options();
 void set_control_options(const ControlOptions& options);
