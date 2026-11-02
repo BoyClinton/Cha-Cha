@@ -91,7 +91,8 @@ headers · `assets/` format tools · `docs/` plans & notes · `build/` output.
 - Platforms: Windows and Linux (AppImage), both in every release (user decision 2026-10-28).
 - Quest maker: built into the game; every quest made is shared as a generated code (copy / paste), not as packs from
   an external tool (user decision 2026-10-29; plan in `docs/ROADMAP.md` § Phase 6).
-- Gameplay changes (item sets, hold to gather, HP scaling) are always on, no MODS switches (user decision 2026-10-28).
+- Gameplay changes (item sets, hold to gather) are always on, no MODS switches (user decision 2026-10-28). Monster HP
+  scaling became optional on 2026-11-02 (Settings → General → Monster HP scaling, `monster_hp_scaling` in config.ini).
 - Project name: **Cha-Cha** (user decision 2026-10-27); user-facing text and the exe use it, internal names (`mh3u` target, `MH3U_*` env) stay.
 - Canonical target: US release (`0005000010118300`), update v32.
 - Graphics/platform: Vulkan + SDL3.

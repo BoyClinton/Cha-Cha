@@ -43,6 +43,14 @@ if best is None:
     sys.exit('icon.ico has no PNG image')
 open(sys.argv[2], 'wb').write(best[1])
 PY
+# mods that come with Cha-Cha (<build>/mods/<mod>: mod.ini + plugins/): copied into <data>/mods on the first start
+mkdir -p "$app/usr/share/cha-cha/mods"
+for mod in "$build"/mods/*/; do
+    m="$(basename "$mod")"
+    [ -f "$mod/mod.ini" ] || continue
+    cp -r "$mod" "$app/usr/share/cha-cha/mods/$m"
+    [ -f "$src/mods/$m/README.md" ] && cp "$src/mods/$m/README.md" "$app/usr/share/cha-cha/mods/$m/"
+done
 for f in LICENSE input.example.ini docs/release/THIRD_PARTY_NOTICES.md; do cp "$src/$f" "$app/usr/share/doc/cha-cha/"; done
 sed "s/{VERSION}/$version/" "$src/docs/release/README.txt" > "$app/usr/share/doc/cha-cha/README.txt"
 

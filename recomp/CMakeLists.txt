@@ -33,6 +33,7 @@ target_link_libraries(loader_check PRIVATE mh3u_recomp_core)
 add_test(NAME recomp_loader COMMAND loader_check "${MH3U_REPO_ROOT}")
 set_tests_properties(recomp_loader PROPERTIES SKIP_RETURN_CODE 77)
 
+if(NOT CMAKE_CROSSCOMPILING)  # the generator runs at build time: not on a cross build
 # Emitter self-test: hand-encoded functions -> C++ at build time -> compiled and executed.
 add_executable(emit_selftest_gen tests/emit_selftest_gen.cpp)
 target_link_libraries(emit_selftest_gen PRIVATE mh3u_recomp_core)
@@ -45,6 +46,7 @@ add_executable(emit_selftest tests/emit_selftest.cpp ${CMAKE_CURRENT_BINARY_DIR}
 target_include_directories(emit_selftest PRIVATE tests)
 target_link_libraries(emit_selftest PRIVATE mh3u_ppc_context mh3u_recomp_support)
 add_test(NAME emit_selftest COMMAND emit_selftest)
+endif()
 
 # Real game code: recomp_emit writes recomp/out (emitted functions, stubs for the rest, import stubs, function
 # table); everything is compiled into mh3u_recomp_game and linked by link_check. Empty without the user's dump.
@@ -65,11 +67,19 @@ foreach(i RANGE ${last})
 endforeach()
 add_executable(recomp_emit tools/recomp_emit.cpp)
 target_link_libraries(recomp_emit PRIVATE mh3u_recomp_core)
+if(CMAKE_CROSSCOMPILING)
+  # a cross build (Windows from Linux) cannot run recomp_emit: MH3U_RECOMP_OUT must already hold the generated code
+  # of a native build from the same config/ (the C++ is the same for every platform)
+  if(NOT EXISTS ${MH3U_RECOMP_OUT}/functions.h)
+    message(FATAL_ERROR "cross build: no generated game code in ${MH3U_RECOMP_OUT} - build natively first")
+  endif()
+else()
 add_custom_command(
   OUTPUT ${game_sources} ${MH3U_RECOMP_OUT}/functions.h
   COMMAND recomp_emit ${MH3U_REPO_ROOT} ${MH3U_RECOMP_OUT} ${MH3U_RECOMP_FILES}
   DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt
   COMMENT "Recompiling the game into recomp/out")
+endif()
 add_library(mh3u_recomp_game STATIC ${game_sources})
 target_include_directories(mh3u_recomp_game PUBLIC ${MH3U_RECOMP_OUT})
 target_link_libraries(mh3u_recomp_game PUBLIC mh3u_ppc_context mh3u_recomp_support)

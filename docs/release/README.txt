@@ -15,14 +15,19 @@ caches are kept in the data folder next to Cha-Cha.exe. Delete portable.txt to u
 Command line: Cha-Cha --install <dump>  records the dump without the setup screen;
               Cha-Cha --game <dump>     plays a dump without recording it.
 
-In game: F1 opens the settings, F2 the mods (DLC quests), F3 cycles the GamePad
-screen view.
+In game: F1 opens the settings, F2 the mods (DLC quests and mods), F3 cycles the
+GamePad screen view. Settings > Input > Camera speed slows the camera down;
+Settings > General > Monster HP scaling switches the Port Tanzia HP scaling off.
+
+Mods: one folder each in the mods folder of the data folder (data\mods here).
+Damage Numbers comes with Cha-Cha (the damage of every hit over the monster);
+switch mods on or off and change their settings in MODS > Mods (F2).
 
 Controls: keyboard + mouse or any controller SDL supports (played as a Wii U Pro
 Controller). Key bindings: input.ini in the data folder (see input.example.ini).
 
-Requirements: Windows 10/11 x64 and a Vulkan 1.3 graphics driver. SDL3 and the
-Microsoft Visual C++ runtime DLLs are included.
+Requirements: Windows 10/11 x64 and a Vulkan 1.3 graphics driver. SDL3 is
+included; nothing else needs installing.
 
 This archive contains no game assets, disc image, game executable or saves.
 Only the US release with update v32 works: the recompiled code is specific to

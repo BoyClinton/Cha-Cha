@@ -111,5 +111,6 @@ item (the spot is used up). It works for every gatherable. Code: `src/game/carvi
 
 ### In development
 
-- **Monster HP scaling**: monster health follows the number of hunters on the quest (1-4).
+- **Monster HP scaling**: monster health follows the number of hunters on the quest (1-4). Optional: Settings →
+  General → Monster HP scaling (`monster_hp_scaling=0` in config.ini switches it off).
 

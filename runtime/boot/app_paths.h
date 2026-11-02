@@ -50,6 +50,7 @@ struct Settings {
     std::string look = "original";  // "original" (MH3U) or "tri" (Wii-style grade)
     int fps_limit = 0;              // 0 = display refresh rate, -1 = unlimited, else frames per second
     bool vsync = false;             // FIFO presentation (no tearing, waits for the display)
+    bool monster_hp_scaling = true; // Port Tanzia monsters' HP follows the hunters on the quest (src/game/monster_hp.cpp)
     bool operator==(const Settings&) const = default;
 };
 Settings load_settings(const AppPaths& p);

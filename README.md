@@ -10,13 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/BoyClinton/Cha-Cha?label=release&color=ecb254" alt="Latest release"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/SilversRayGA/Cha-Cha-modsupport?label=release&color=ecb254" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-3b332a" alt="Windows and Linux">
   <img src="https://img.shields.io/badge/graphics-Vulkan-3b332a" alt="Vulkan">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-3b332a" alt="GPL-3.0"></a>
 </p>
 
 <p align="center">
+  <a href="#how-to-install">Install</a> ·
   <a href="#getting-started">Getting started</a> ·
   <a href="#whats-new-compared-to-the-original">What's new</a> ·
   <a href="#dlc-event-and-challenge-quests">DLC quests</a> ·
@@ -36,9 +37,29 @@ not an emulator, and there is no emulator code in it.
 > **No game files are included.** You need your own copy of **Monster Hunter 3 Ultimate (US) with update v32**.
 > Cha-Cha is a fan project, not affiliated with or endorsed by Capcom or Nintendo.
 
+## How to install
+
+You need your own **Monster Hunter 3 Ultimate (US) with update v32** (a `.wua` file, or the game and update folders).
+
+**Windows**
+1. Download `Cha-Cha-<version>-windows-x64.zip` from [Releases](../../releases/latest).
+2. Extract it to a folder you can write to (not Program Files).
+3. Run `Cha-Cha.exe` and choose your game on the setup screen.
+
+**Linux / Steam Deck**
+1. Download `Cha-Cha-<version>-x86_64.AppImage` from [Releases](../../releases/latest).
+2. Make it executable: `chmod +x Cha-Cha-*.AppImage` (or Properties → Allow executing as program).
+3. Run it and choose your game on the setup screen.
+
+The first start translates the game's shaders (a few seconds, once). Then press **PLAY**. **F1** opens the settings,
+**F2** the mods. **Damage Numbers** comes included: switch it on or off in MODS → Mods.
+
+**Adding mods:** put each mod's folder into the `mods` folder of your data folder (`data\mods` next to
+`Cha-Cha.exe` on Windows, `~/.local/share/Cha-Cha/mods` on Linux) and restart Cha-Cha.
+
 ## What's new compared to the original
 
-These are part of the game and always on.
+These are part of the game. Monster HP scaling can be switched off in Settings → General.
 
 <table>
   <tr>
@@ -63,7 +84,8 @@ These are part of the game and always on.
         <tr><td>3</td><td>90%</td></tr>
         <tr><td>4</td><td>100%</td></tr>
       </table>
-      At every rank: Low, High and G. Moga Village quests are unchanged.
+      At every rank: Low, High and G. Moga Village quests are unchanged. Settings → General → <b>Monster HP
+      scaling</b> switches it off (the game's own HP).
     </td>
     <td width="33%" valign="top">
       <h3>Hold to gather</h3>
@@ -113,7 +135,6 @@ Your **data folder** keeps settings, saves, caches, quests and texture packs:
 | Windows | `%APPDATA%\Cha-Cha` |
 | Linux | `~/.local/share/Cha-Cha` (or `$XDG_DATA_HOME/Cha-Cha`) |
 | Portable | `data/` next to the program, when a file named `portable.txt` sits beside it (the Windows zip ships with one) |
-
 | Folder | the program's own folder, when `Cha-Cha.ini` sits beside it (the Linux folder release ships with one) |
 
 Saves live in `<data folder>/save`. To skip the setup screen, start it with `--install <path to your dump>`.

@@ -446,7 +446,7 @@ int main(int argc, char** argv) {
     game::register_filters(settings.bloom, settings.depth_of_field != "off");
     game::register_frame_limit(!headless);  // windowed runs pace frames themselves (FRAME RATE LIMIT)
     game::register_text_trace();  // MH3U_TRACE_TEXT: who asks for which text
-    game::register_monster_hp();  // logs each monster's max HP (monster HP scaling, in development)
+    game::register_monster_hp(settings.monster_hp_scaling);  // Port Tanzia HP for the number of hunters (a setting)
     game::register_carving([] { input::repeat_held(input::kA, 3000); });  // hold to gather: A repeats while held
     game::register_item_sets(paths.data / "save" / "80000001", [](const std::string& msg) {
         if (g_launcher) g_launcher->post_toast(msg);  // shown over the game

@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -457,7 +458,22 @@ std::vector<Mod> scan(const stdfs::path& data) {
     std::vector<Mod> out;
     const stdfs::path root = mods_dir(data);
     std::error_code ec;
+    const bool fresh = !stdfs::exists(root, ec);
     stdfs::create_directories(root, ec);
+#ifndef _WIN32
+    // the AppImage carries mods (usr/share/cha-cha/mods) it cannot run from (read-only): copied once, when the mods
+    // folder is made
+    if (const char* appdir = std::getenv("APPDIR"); fresh && appdir && *appdir) {
+        const stdfs::path bundled = stdfs::path(appdir) / "usr" / "share" / "cha-cha" / "mods";
+        for (const auto& e : stdfs::directory_iterator(bundled, ec))
+            if (e.is_directory(ec)) {
+                stdfs::copy(e.path(), root / e.path().filename(), stdfs::copy_options::recursive, ec);
+                std::printf("mods: installed %s (comes with Cha-Cha)\n", utf8(e.path().filename()).c_str());
+            }
+    }
+#else
+    (void)fresh;
+#endif
     const auto states = read_ini(data / "mods.ini");
 #ifdef _WIN32
     const char* ext = ".dll";

@@ -2,6 +2,7 @@
 // presenter. Mouse, keyboard and controllers all navigate it.
 #include "setup.h"
 
+#include "monster_hp.h"
 #include "plugins.h"
 
 #include "filters.h"
@@ -623,6 +624,7 @@ struct Launcher::Impl {
         settings = draft;
         save_settings(paths, settings);
         apply_live();
+        game::set_monster_hp_scaling(settings.monster_hp_scaling);
     }
     float scale = 1.0f;
     Fonts fonts;
@@ -1453,6 +1455,12 @@ void Launcher::Impl::draw_tab_general(PanelLayout& p) {
     group_begin(p, "Startup");
     switch_row(p, "Skip boot notices", draft.skip_boot_notices,
                "Answers the controller notice and the create-save prompts before the title screen by itself.");
+    group_end(p);
+    group_begin(p, "Gameplay");
+    switch_row(p, "Monster HP scaling", draft.monster_hp_scaling,
+               "Port Tanzia quests are made for four hunters. On: with fewer hunters monsters have less HP (1 hunter 65%, "
+               "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
+               "Takes effect for monsters that appear after the change.");
     group_end(p);
 }
 
