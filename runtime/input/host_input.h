@@ -89,6 +89,17 @@ PadState read();
 // sees it released for 2 reads out of every 8 - pressed again and again, as when mashing it - until `ms` after this
 // call. Any thread.
 void repeat_held(uint32_t button, uint32_t ms);
+// Guest thread, once a frame (src/game/menu_mouse.cpp): whether one of the game's menus is open. While one is, the
+// mouse is a pointer (a cursor in the game's style; right click = B, wheel = up / down) and left clicks are queued for
+// the game side (take_clicks), which decides what they hit.
+void set_menu_open(bool open);
+// The pointer on the TV image, 0..1 across and down (the image is fitted into the window, centred); false when the
+// mouse is not a pointer now or is outside the image.
+bool pointer_position(float& u, float& v);
+// Left clicks in pointer mode since the last call.
+int take_clicks();
+// Presses buttons (VPAD bits) for the next 3 reads, as a click does.
+void tap(uint32_t buttons);
 // VPADControlMotor: rumble on every connected gamepad.
 void rumble(float strength, uint32_t ms);
 

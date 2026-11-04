@@ -111,12 +111,14 @@ Every 3 ms AX frame (96 samples at 32 kHz) each playing voice is decoded (DSP AD
 and loop context; PCM16 big-endian; PCM8) through linear sample-rate conversion (16.16 ratio), scaled by its VE
 envelope (volume + per-sample delta), low-passed if enabled, and mixed into the TV main bus by its device mix
 (`AXSetVoiceDeviceMix`: 6 channels L R SL SR C LFE x 4 buses of {u16 volume 1.15, s16 delta}); the game sends each
-voice to a single channel. Voices with no TV mix but a GamePad (DRC 0) mix play through their DRC L/R volumes. The
+voice to a single channel. The game plays its sounds twice, to the TV and to the GamePad speaker (same sample, the GamePad copy louder); a voice
+with only a GamePad (DRC 0) mix plays through its DRC L/R volumes only while no TV voice plays the same sample. The
 bus is downmixed to stereo (C and surrounds at -3 dB, LFE dropped) and queued on an SDL3 audio stream; frames are
 produced whenever fewer than ~40 ms are queued, so AX time follows the audio clock. State and offsets are mirrored
 into the guest structs, then the game's frame callback runs on its own guest stack.
 - Not done: AUX buses / AXFX reverb (callbacks registered, never run), biquad, final-mix callbacks, 5.1 output.
 - `--headless` or `MH3U_AUDIO=0`: no device, a steady 3 ms clock. `MH3U_AUDIO_WAV=<file>` records the stereo output.
+  `MH3U_AX_LOG=1` prints each voice as it stops: sample address, envelope, TV / AUX / GamePad mix and loudest sample.
 - Checked by recording the boot (music and effects at the expected times, tonal rather than noise) and by ear:
   intro, title music and menu effects sound right.
 
@@ -132,6 +134,14 @@ so uncapping does not speed the game up (at ~147 FPS the delta reads 0.41).
 - Presenting never waits for vsync on top of that: MAILBOX, else IMMEDIATE; `MH3U_VSYNC=1` forces FIFO. Two presents
   in flight.
 - The window title shows the FPS (game swaps per second), updated twice a second.
+- Not every step of the game scales by the frame time. The game camera's stick turn, auto-turn behind the hunter and
+  angle ease ran once a frame (camera too fast above 30 FPS, issues #2 / #6 / #7); `src/game/camera_speed.cpp`
+  scales them by the camera's frame time (`uGameCamera+0x8E4`, 1.0 at 30 FPS). `MH3U_CAMERA_LOG=1` prints the
+  camera's updates, frame time and yaw once a second (field and quests; the village camera is fixed).
+  The same holds for the windpress push (`src/game/windpress.cpp`) and the grab escape gauge, where each wiggle added
+  the frame time (`src/game/grab_escape.cpp`). `MH3U_PLAY_LOG=<file>` logs the hunter, the first monster, the sticks
+  and every unit joining / leaving / changing state, per frame (`src/game/play_log.cpp`); `MH3U_PLAY_WATCH=1` adds
+  who writes the hunter's position (`read_watch`, RelWithDebInfo).
 
 Moga Village, headless, RTX 3060 (`MH3U_FPS=max`): 12–16 FPS → ~155 FPS after the October 2026 work (research log);
 GPU ~2 ms per frame; the game thread's remaining cost is the game's own update (~6 ms at 30 FPS) plus our draw

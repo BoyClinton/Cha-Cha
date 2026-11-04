@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -18,7 +19,8 @@
 namespace mh3u::input {
 namespace {
 
-// A binding target: a GamePad button (mask) or one direction of a stick axis (0 lx, 1 ly, 2 rx, 3 ry).
+// A binding target: GamePad button(s) (mask; two or more for a key that presses them together, "x+a") or one
+// direction of a stick axis (0 lx, 1 ly, 2 rx, 3 ry).
 struct Target {
     uint32_t mask = 0;
     int axis = -1;
@@ -36,8 +38,12 @@ const std::map<std::string, std::pair<int, float>> kAxisTargets = {
 // input.ini name of a target (lower case), "none" for an empty one
 std::string target_name(const Target& t) {
     std::string n = "NONE";
-    for (const auto& [name, mask] : kButtonTargets)
-        if (t.axis < 0 && t.mask == mask) n = name;
+    if (t.axis < 0 && t.mask) {  // buttons together: their names joined with '+'
+        std::string all;
+        for (const auto& [name, mask] : kButtonTargets)
+            if ((t.mask & mask) == mask) all += (all.empty() ? "" : "+") + name;
+        n = all;
+    }
     for (const auto& [name, a] : kAxisTargets)
         if (t.axis == a.first && t.dir == a.second) n = name;
     for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -52,6 +58,16 @@ bool parse_target(std::string name, Target& t) {
     if (name == "NONE") return true;
     if (auto b = buttons.find(name); b != buttons.end()) {
         t.mask = b->second;
+        return true;
+    }
+    if (name.find('+') != std::string::npos) {  // buttons together ("X+A")
+        for (size_t from = 0; from <= name.size();) {
+            const size_t to = std::min(name.find('+', from), name.size());
+            const auto b = buttons.find(name.substr(from, to - from));
+            if (b == buttons.end()) return t = {}, false;
+            t.mask |= b->second;
+            from = to + 1;
+        }
         return true;
     }
     if (auto a = axes.find(name); a != axes.end()) {
@@ -98,6 +114,7 @@ bool g_captured = false;
 std::set<int> g_down;  // held keys / mouse buttons
 std::map<int, int> g_pulses;  // wheel: source -> reads left
 float g_mouse_dx = 0, g_mouse_dy = 0, g_prev_rx = 0, g_prev_ry = 0;
+bool g_cursor_hidden = false;
 std::map<SDL_JoystickID, Pad> g_pads;
 float g_rumble = 0;
 uint32_t g_rumble_ms = 0;
@@ -111,6 +128,17 @@ std::string g_base_title, g_title_status;  // window title at set_window, and se
 bool g_suspended = false;
 bool g_soft_keyboard = false;  // set_soft_keyboard: the launcher's keyboard takes the controller and the title
 uint32_t g_masked = 0;
+// Menu pointer (set_menu_open): while a game menu is open the mouse is a pointer - not captured, no mouse look; left
+// click = A, right click = B, wheel = up / down. Switched on the main thread (update()); the capture comes back when the
+// menu closes if the mouse was captured when it opened.
+bool g_menu_open = false, g_pointer = false, g_recapture = false;
+std::set<int> g_pointer_down;  // mouse buttons held in pointer mode (pointer_button gives their game buttons)
+float g_ptr_x = -1, g_ptr_y = -1;  // the pointer in window coordinates
+int g_win_w = 0, g_win_h = 0;        // the window's size in the same units (for pointer_position)
+int g_clicks = 0;                    // left clicks queued for take_clicks
+std::map<uint32_t, int> g_taps;      // tap: buttons -> reads left
+SDL_Cursor* g_cursor = nullptr;  // the pointer's cursor (make_cursor), for this window height
+int g_cursor_h = 0;
 
 std::string utf8(const std::u16string& s) {
     std::string out;
@@ -148,14 +176,19 @@ void set_defaults(Config& c) {
         parse_target(target, t);
         c.bindings[src] = t;
     };
+    // Laid out after Monster Hunter: World's PC defaults (Type 1), mapped onto MH3U's buttons (X attack, A special,
+    // B roll, Y item, R dash / sheathe / guard, L camera, A talk / gather; user 2026-11-03): WASD move, O K L ; camera,
+    // Shift dash, Space roll, left / right mouse the two attacks, mouse 4 both together, mouse 5 guard / weapon action,
+    // E use item, F interact, Q and Ctrl the camera, wheel through the items. Kept from before: arrows = d-pad,
+    // Return / Backspace confirm / back, Z / C = ZL / ZR, Tab = +, M = -, V and the middle button the stick clicks.
     bind(SDL_SCANCODE_W, "lstick_up");
     bind(SDL_SCANCODE_S, "lstick_down");
     bind(SDL_SCANCODE_A, "lstick_left");
     bind(SDL_SCANCODE_D, "lstick_right");
-    bind(SDL_SCANCODE_I, "rstick_up");
-    bind(SDL_SCANCODE_K, "rstick_down");
-    bind(SDL_SCANCODE_J, "rstick_left");
-    bind(SDL_SCANCODE_L, "rstick_right");
+    bind(SDL_SCANCODE_O, "rstick_up");
+    bind(SDL_SCANCODE_L, "rstick_down");
+    bind(SDL_SCANCODE_K, "rstick_left");
+    bind(SDL_SCANCODE_SEMICOLON, "rstick_right");
     bind(SDL_SCANCODE_UP, "up");
     bind(SDL_SCANCODE_DOWN, "down");
     bind(SDL_SCANCODE_LEFT, "left");
@@ -167,6 +200,7 @@ void set_defaults(Config& c) {
     bind(SDL_SCANCODE_E, "y");
     bind(SDL_SCANCODE_LSHIFT, "r");
     bind(SDL_SCANCODE_Q, "l");
+    bind(SDL_SCANCODE_LCTRL, "l");
     bind(SDL_SCANCODE_Z, "zl");
     bind(SDL_SCANCODE_C, "zr");
     bind(SDL_SCANCODE_TAB, "plus");
@@ -175,8 +209,8 @@ void set_defaults(Config& c) {
     bind(kMouseLeft, "x");
     bind(kMouseRight, "a");
     bind(kMouseMiddle, "rstick");
-    bind(kMouseX1, "zl");
-    bind(kMouseX2, "zr");
+    bind(kMouseX1, "a+x");
+    bind(kMouseX2, "r");
     bind(kWheelUp, "left");
     bind(kWheelDown, "right");
 }
@@ -226,6 +260,7 @@ int parse_source(const std::string& name) {
                                                      {"mouse_x2", kMouseX2}, {"wheel_up", kWheelUp},
                                                      {"wheel_down", kWheelDown}};
     if (auto m = mouse.find(n); m != mouse.end()) return m->second;
+    if (n.rfind("scancode_", 0) == 0) return std::atoi(n.c_str() + 9);  // a key whose name the file cannot hold
     const SDL_Scancode sc = SDL_GetScancodeFromName(name.c_str());
     return sc == SDL_SCANCODE_UNKNOWN ? -1 : static_cast<int>(sc);
 }
@@ -313,6 +348,79 @@ void refresh(Pad& p) {
     p.ry = -axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTY));
     deadzone(p.lx, p.ly, g_cfg.deadzone);
     deadzone(p.rx, p.ry, g_cfg.deadzone);
+}
+
+// Pointer mode's fixed mouse buttons: right = B; the wheel moves the menu cursor up / down. Left clicks are queued
+// (take_clicks): what they hit is the game side's to decide.
+uint32_t pointer_button(int src) {
+    return src == kMouseRight ? kB : src == kWheelUp ? kUp : src == kWheelDown ? kDown : 0;
+}
+
+// Called with g_m held: mouse buttons held across a mode change are dropped, so the click that closes a menu does not
+// reach the game as a gameplay binding (or the other way round).
+void drop_mouse_buttons() {
+    for (int src = kMouseLeft; src <= kWheelDown; ++src) g_down.erase(src), g_pulses.erase(src);
+    g_pointer_down.clear();
+    g_clicks = 0;
+}
+
+// The menu pointer's cursor, drawn here in the style of the game's menus (no game art): an arrow with a dark brown
+// outline, a thin gold rim, a cream fill shading to tan, and a soft shadow. 32 px tall at 1080 lines.
+SDL_Cursor* make_cursor(int window_h) {
+    const int size = std::clamp(window_h * 32 / 1080, 20, 96);
+    const float s = static_cast<float>(size);
+    // the arrow, in pixels (tip at the hot spot)
+    const float pts[][2] = {{0.00f, 0.00f}, {0.00f, 0.80f}, {0.20f, 0.63f}, {0.33f, 0.93f}, {0.46f, 0.87f},
+                            {0.33f, 0.58f}, {0.58f, 0.58f}};
+    constexpr int n = 7;
+    const float pad = std::max(2.0f, s / 12.0f);
+    float px[n], py[n];
+    for (int i = 0; i < n; ++i) px[i] = pad + pts[i][0] * s, py[i] = pad + pts[i][1] * s * 0.95f;
+    const int w = static_cast<int>(pad * 2 + 0.6f * s) + 2, h = static_cast<int>(pad * 2 + s) + 2;
+    // signed distance to the arrow (negative inside)
+    const auto dist = [&](float x, float y) {
+        float d = 1e9f;
+        bool inside = false;
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            const float ax = px[j], ay = py[j], bx = px[i], by = py[i];
+            const float ex = bx - ax, ey = by - ay;
+            const float t = std::clamp(((x - ax) * ex + (y - ay) * ey) / (ex * ex + ey * ey), 0.0f, 1.0f);
+            const float dx = x - (ax + ex * t), dy = y - (ay + ey * t);
+            d = std::min(d, std::sqrt(dx * dx + dy * dy));
+            if ((ay > y) != (by > y) && x < ax + (y - ay) * ex / ey) inside = !inside;
+        }
+        return inside ? -d : d;
+    };
+    SDL_Surface* surf = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) return nullptr;
+    const float outline = std::max(1.5f, s / 14.0f), rim = std::max(1.0f, s / 24.0f), shadow = std::max(1.0f, s / 16.0f);
+    const auto cover = [](float d) { return std::clamp(0.5f - d, 0.0f, 1.0f); };  // 1 px anti-aliasing
+    for (int y = 0; y < h; ++y) {
+        auto* row = static_cast<uint8_t*>(surf->pixels) + y * surf->pitch;
+        for (int x = 0; x < w; ++x) {
+            const float fx = x + 0.5f, fy = y + 0.5f;
+            const float d = dist(fx, fy);
+            // shadow, then outline (dark brown), rim (gold), fill (cream -> tan, top to bottom)
+            float r = 0, g = 0, b = 0, a = 0.35f * cover(dist(fx - shadow, fy - shadow) - outline);
+            const auto over = [&](float cr, float cg, float cb, float ca) {
+                const float oa = ca + a * (1 - ca);
+                if (oa <= 0) return;
+                r = (cr * ca + r * a * (1 - ca)) / oa, g = (cg * ca + g * a * (1 - ca)) / oa, b = (cb * ca + b * a * (1 - ca)) / oa;
+                a = oa;
+            };
+            over(0.23f, 0.14f, 0.06f, cover(d - outline));
+            over(0.78f, 0.60f, 0.24f, cover(d + outline * 0.15f));
+            const float t = std::clamp((fy - pad) / s, 0.0f, 1.0f);
+            over(0.95f - 0.10f * t, 0.90f - 0.15f * t, 0.77f - 0.24f * t, cover(d + outline * 0.15f + rim));
+            row[x * 4 + 0] = static_cast<uint8_t>(r * 255.0f + 0.5f);
+            row[x * 4 + 1] = static_cast<uint8_t>(g * 255.0f + 0.5f);
+            row[x * 4 + 2] = static_cast<uint8_t>(b * 255.0f + 0.5f);
+            row[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+        }
+    }
+    SDL_Cursor* c = SDL_CreateColorCursor(surf, static_cast<int>(px[0]), static_cast<int>(py[0]));
+    SDL_DestroySurface(surf);
+    return c;
 }
 
 void capture(bool on) {
@@ -439,6 +547,7 @@ void handle_event(const void* ev) {
             if (e.key.repeat) break;
             if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
                 if (e.type == SDL_EVENT_KEY_DOWN && g_captured) capture(false);
+                if (e.type == SDL_EVENT_KEY_DOWN) g_recapture = false;  // released on purpose: stays free after the menu
                 break;
             }
             press(e.key.scancode, e.type == SDL_EVENT_KEY_DOWN);
@@ -446,6 +555,18 @@ void handle_event(const void* ev) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP: {
             const bool down = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            if (g_pointer) {
+                const int src = e.button.button == SDL_BUTTON_LEFT ? kMouseLeft : e.button.button == SDL_BUTTON_RIGHT ? kMouseRight : -1;
+                if (src < 0) break;
+                g_ptr_x = e.button.x, g_ptr_y = e.button.y;
+                if (src == kMouseLeft) {
+                    if (down) ++g_clicks;
+                    break;
+                }
+                if (down) g_pointer_down.insert(src);
+                else g_pointer_down.erase(src);
+                break;
+            }
             if (down && !g_captured && e.button.button == SDL_BUTTON_LEFT) {
                 capture(true);  // the click that captures the mouse is not passed to the game
                 break;
@@ -458,13 +579,14 @@ void handle_event(const void* ev) {
             break;
         }
         case SDL_EVENT_MOUSE_MOTION:
+            g_ptr_x = e.motion.x, g_ptr_y = e.motion.y;
             if (g_captured) {
                 g_mouse_dx += e.motion.xrel;
                 g_mouse_dy += e.motion.yrel;
             }
             break;
         case SDL_EVENT_MOUSE_WHEEL:
-            if (g_captured && e.wheel.y != 0) g_pulses[e.wheel.y > 0 ? kWheelUp : kWheelDown] = g_cfg.wheel_frames;
+            if ((g_captured || g_pointer) && e.wheel.y != 0) g_pulses[e.wheel.y > 0 ? kWheelUp : kWheelDown] = g_cfg.wheel_frames;
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             g_down.clear();
@@ -501,6 +623,41 @@ void handle_event(const void* ev) {
 
 void update() {
     std::lock_guard g(g_m);
+    if (g_window) SDL_GetWindowSize(g_window, &g_win_w, &g_win_h);
+    if (g_window && g_menu_open != g_pointer && !g_suspended && !g_text.active) {
+        g_pointer = g_menu_open;
+        drop_mouse_buttons();
+        if (g_pointer) {
+            int ww = 0, wh = 0;
+            SDL_GetWindowSize(g_window, &ww, &wh);
+            if (!g_cursor || wh != g_cursor_h) {
+                if (g_cursor) SDL_DestroyCursor(g_cursor);
+                g_cursor = make_cursor(wh);
+                g_cursor_h = wh;
+            }
+            g_recapture = g_captured;
+            const bool was = g_captured;
+            capture(false);
+            if (was) {  // the pointer starts in the middle of the window
+                int w = 0, h = 0;
+                SDL_GetWindowSize(g_window, &w, &h);
+                SDL_WarpMouseInWindow(g_window, w * 0.5f, h * 0.5f);
+            }
+        } else {
+            SDL_SetCursor(SDL_GetDefaultCursor());
+            if (g_recapture && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS)) capture(true);
+        }
+    }
+    // no menu, no overlay, no text entry: the mouse is not a pointer, so no cursor over the game (user 2026-11-03)
+    const bool hide = g_window && !g_pointer && !g_suspended && !g_text.active &&
+                      (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS);
+    if (hide != g_cursor_hidden) {
+        if (hide) SDL_HideCursor();
+        else SDL_ShowCursor();
+        g_cursor_hidden = hide;
+    }
+    // the pointer's cursor (again after the launcher overlay, whose UI sets its own)
+    if (g_window && g_pointer && !g_suspended && g_cursor && SDL_GetCursor() != g_cursor) SDL_SetCursor(g_cursor);
     if (g_window) {
         if (g_text_start) {
             g_text_start = false;
@@ -555,8 +712,14 @@ PadState read() {
         if (it->second.axis >= 0) axes[it->second.axis] += it->second.dir;
         else s.buttons |= it->second.mask;
     }
+    for (int src : g_pointer_down) s.buttons |= pointer_button(src);
+    for (auto it = g_taps.begin(); it != g_taps.end();) {
+        s.buttons |= it->first;
+        it = --it->second <= 0 ? g_taps.erase(it) : std::next(it);
+    }
     for (auto it = g_pulses.begin(); it != g_pulses.end();) {
-        if (auto b = g_cfg.bindings.find(it->first); b != g_cfg.bindings.end()) {
+        if (g_pointer) s.buttons |= pointer_button(it->first);
+        else if (auto b = g_cfg.bindings.find(it->first); b != g_cfg.bindings.end()) {
             if (b->second.axis >= 0) axes[b->second.axis] += b->second.dir;
             else s.buttons |= b->second.mask;
         }
@@ -625,6 +788,34 @@ void repeat_held(uint32_t button, uint32_t ms) {
     std::lock_guard g(g_m);
     g_repeat_button = button;
     g_repeat_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+}
+
+void set_menu_open(bool open) {
+    std::lock_guard g(g_m);
+    g_menu_open = open;
+}
+
+bool pointer_position(float& u, float& v) {
+    std::lock_guard g(g_m);
+    if (!g_pointer || g_win_w <= 0 || g_win_h <= 0 || g_ptr_x < 0) return false;
+    // as the presenter places the TV image: 16:9 fitted inside the window, centred
+    const float scale = std::min(g_win_w / 16.0f, g_win_h / 9.0f);
+    const float w = 16.0f * scale, h = 9.0f * scale;
+    u = (g_ptr_x - (g_win_w - w) * 0.5f) / w;
+    v = (g_ptr_y - (g_win_h - h) * 0.5f) / h;
+    return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+}
+
+int take_clicks() {
+    std::lock_guard g(g_m);
+    const int n = g_clicks;
+    g_clicks = 0;
+    return n;
+}
+
+void tap(uint32_t buttons) {
+    std::lock_guard g(g_m);
+    g_taps[buttons] = 3;
 }
 
 void begin_text(const std::u16string& initial, size_t max_len) {
@@ -707,11 +898,14 @@ const char* kMouseLabels[] = {"Left click", "Right click", "Middle click", "Mous
 std::string key_source_name(int src) {  // input.ini name
     if (src >= kMouseLeft && src <= kWheelDown) return kMouseNames[src - kMouseLeft];
     const char* n = SDL_GetScancodeName(static_cast<SDL_Scancode>(src));
+    // ';' and '#' start a comment in input.ini and '=' splits its lines: such keys go by number
+    if (n && std::strpbrk(n, ";#=")) return "scancode_" + std::to_string(src);
     return n ? n : "";
 }
 std::string key_source_label(int src) {
     if (src >= kMouseLeft && src <= kWheelDown) return kMouseLabels[src - kMouseLeft];
-    return key_source_name(src);
+    const char* n = SDL_GetScancodeName(static_cast<SDL_Scancode>(src));  // the key's own name, ';' included
+    return n ? n : "";
 }
 // controller buttons by their usual labels (Xbox / PlayStation)
 std::string pad_source_label(int src) {
@@ -755,6 +949,7 @@ const std::vector<BindingRow>& binding_rows() {
         {"b", "B", true},
         {"x", "X", true},
         {"y", "Y", true},
+        {"a+x", "X + A together", true},
         {"l", "L", true},
         {"r", "R", true},
         {"zl", "ZL", true},

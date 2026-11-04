@@ -40,19 +40,34 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
 - Rumble: `VPADControlMotor` patterns rumble every connected controller (applied on the main thread).
 
 ## Keyboard + mouse
+- **Cursor.** While no game menu, launcher overlay or text entry is up and the window has focus, the system cursor
+  is hidden over the window (user 2026-11-03: shown only where it is needed).
 - **Mouse look.** Click in the window to capture the mouse (that click is not sent to the game); Esc releases it,
   as does losing focus. MH3U turns the camera with the right stick at a speed set by its deflection, so mouse movement
   since the game's previous `VPADRead` becomes right-stick deflection (`sensitivity` per pixel, averaged over two
   reads to smooth spikes, added to any stick input and clamped). A very fast flick saturates at full stick speed.
   `invert_y` flips vertical look.
-- Camera speed (`[camera] speed`, Settings → Input → Camera speed, 0.3–1.0): the merged right stick is scaled by it
-  after the stick-as-button emulation, so the camera turns slower for the controller, the camera keys and the mouse
-  alike, while menus moved by the right stick still respond.
-- Defaults (all rebindable): WASD = left stick, IJKL = right stick, arrows = d-pad, Space/Backspace = B, Return/F = A,
-  E = Y, Left Shift = R, Q = L, Z/C = ZL/ZR, Tab = +, M = −, V = left-stick click; left mouse = X, right mouse = A,
-  middle = right-stick click, mouse 4/5 = ZL/ZR, wheel = d-pad left/right (a notch holds the button for 3 frames).
-  The default action assignment follows the Wii U layout as far as known (X attack, A special, B roll, R dash,
-  L camera) and has to be checked in game.
+- **Menu pointer.** While one of the game's menus is open the mouse is a free pointer with a cursor in the style of
+  the game's menus (drawn by `make_cursor` in host_input, no game art; 32 px tall at 1080 lines): no mouse look, right
+  click = B, wheel = d-pad up / down (fixed; the mouse bindings apply only outside menus). Left click: in a menu with
+  hover (the whole start menu - Main Menu, Character Select, Character Creation with its type grids, colour swatches and gradients, the Skin Tone slider, Features and its prompts, Touch Panel Settings, the save slots, the Options list and pages - the Yes / No prompts met there, the field menu (− : both tabs, a click on a tab switches to it) and the screens it opens - Item Pouch, Combine, Combo List, Gestures, Hunter's Notes, Equipment, Guild Card, Options - with what those open: an item's Discard / Swap and the place to swap to, Hunter Info's lists, Monster List, Guild Card List, an Options value being changed - the item box options; and in the lobby (0.1.2): every facility's option scroll, the item box grid and Store Items list, Market buy list, Smithy / Armory equipment list, Quest Counter level plaques and quest list, Canteen ingredients, the house menus, furnishing list and furnishing position picker (Place and Remove; spot positions measured for the Moga Village house), Farm (menu, Name List, Felyne tabs, Cultivate settings, Sources, Crop Box) and Stockpile, the Ferry's Destination list, the stacked Yes / No prompts, the save prompt, Abandon Quest's prompt and the quest Supply Box; 0.1.2hf: the solo quest results - Quest Rewards menu, Reward Box grid, the summary pages with their arrows) the option under the pointer is highlighted as it moves and a click on it
+  chooses it, a click beside the options does nothing; in other menus a click is A. On settings rows a click on the value side changes it (left / right half; on the volume bars, the bar clicked); on the Effect page a click on a card selects it. On a colour gradient or the Skin Tone slider the pointer moves the knob (the colour follows) and a click keeps it. Controller Settings is disabled for now (its choice cannot change: picking the GamePad there leaves no working input; a page of our own replaces it later). A captured mouse is
+  released when a menu opens, with the pointer in the middle of the window, and captured again when it closes (unless
+  Esc released it meanwhile). Mouse buttons held across the switch are dropped, so the right click that closes a menu
+  is not an A press in the field. "A menu is open" comes from the game (`src/game/menu_mouse.cpp`): the start-menu
+  screens, the field menu, the prompts, and every lobby menu that reads the shared menu directions or has its own hover
+  hook. The lobby hooks write the menu's own cursor (each list's step wrapped in `menu_mouse.cpp`, its cursor field
+  and screen geometry in the comment above it; found with `MH3U_MENU_LEARN`, `MH3U_MENU_HUNT_LIVE` and Ghidra). The pointer's place on the
+  TV image follows the presenter (16:9 fitted into the window, centred) and is handed to the game as TV pixels
+  (1920 x 1080).
+- Defaults (all rebindable; after Monster Hunter: World's PC layout, Type 1, adapted to MH3U's buttons - user
+  2026-11-03): WASD = left stick, O K L ; = right stick (as World's camera keys), arrows = d-pad, Space/Backspace = B
+  (roll), Return/F = A (talk, gather), E = Y (use item), Left Shift = R (dash, sheathe), Q / Left Ctrl = L (camera),
+  Z/C = ZL/ZR, Tab = +, M = −, V = left-stick click; left mouse = X (attack), right mouse = A (special attack), mouse 4
+  = X + A together, mouse 5 = R (guard / weapon action), middle = right-stick click, wheel = d-pad left/right (through
+  the items; a notch holds the button for 3 frames). A binding may press buttons together (`x+a`); keys whose name
+  has `;`, `#` or `=` are written `scancode_<n>` in input.ini. The action assignment follows the Wii U layout as far
+  as known (X attack, A special, B roll, R dash, L camera) and has to be checked in game.
 - Keys use SDL scancodes, so WASD stays in place on AZERTY etc.
 
 ## VPADStatus as written
@@ -94,6 +109,10 @@ and its change callback called from `SwkbdCalc` on the game thread). The game on
 `SwkbdInitLearnDic` succeeds (an empty "NJDC" learning dictionary) and `SwkbdCreate` takes ~1 s (as Cemu notes).
 
 ## Testing headless
-`MH3U_INPUT_SCRIPT="frame[+frames]:BUTTON[|BUTTON];..."` presses buttons at given swap counts (6 frames by default),
+`MH3U_INPUT_SCRIPT="frame[+frames]:BUTTON[|BUTTON];..."` presses buttons at given swap counts (6 frames by default; `LSTICK_*` / `RSTICK_*` + `LEFT` / `RIGHT` / `UP` / `DOWN`
+push a stick fully),
 e.g. `700:A;1000:A|R`. With A presses the boot gets past the "Wii U GamePad has been detected" notice to the
 "extended data save settings" Yes/No prompt. Boot timing varies run to run, so scripts need slack.
+`MH3U_POINTER_SCRIPT="frame:x,y[,click];..."` puts the menu pointer at TV pixel x, y (1920 x 1080) from that pad
+update on, with a left click there if `,click` is given; `MH3U_MENU_PROBE=1` logs the menu state, `MH3U_MENU_SNAP=<file>`
+appends uIDStartMenu snapshots for finding cursor fields (src/game/menu_mouse.cpp).

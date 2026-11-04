@@ -2626,8 +2626,12 @@
 0x0227DFC8 uGameCamera::createProperty func # overrides MtObject slot 3 gen:vf
 0x0227E088 uGameCamera::vf5 func # overrides cUnit slot 5 gen:vf
 0x0227EDE8 uGameCamera::vf8 func # overrides cUnit slot 8 gen:vf
+0x0227FFC0 cameraEase? func # (s16)(target - current) >> shift, per-frame camera angle ease; camera_speed.cpp
 0x0227FFEC uGameCamera::MyDTI::newInstance func # gen:dti
 0x02280020 uGameCamera::MyDTI::~MyDTI func # overrides MtDTI slot 0 gen:vf
+0x02286890 cameraPitchInput? func # camera up / down input -> target pitch (block +0x90); camera_speed.cpp
+0x02286DE8 cameraAutoTurn? func # s16 step swinging the camera behind the hunter; camera_speed.cpp
+0x02286F18 cameraTurnInput? func # camera left / right input (pad +0x1C8 bits 6 / 8) -> target yaw (block +0x94); camera_speed.cpp
 0x0228C558 uID::vf6 func # overrides cUnit slot 6 gen:vf
 0x0228C564 uID::vf7 func # overrides cUnit slot 7 gen:vf
 0x0228C5AC uID::vf2 func # overrides MtObject slot 2 gen:vf
@@ -12745,8 +12749,12 @@
 0x02848D1C uPlayer::vf34 func # overrides uCharacter slot 34 gen:vf
 0x02848D8C uPlayer::MyDTI::newInstance func # gen:dti
 0x02848DC0 uPlayer::MyDTI::~MyDTI func # overrides MtDTI slot 0 gen:vf
+0x0286C37C playerStickWiggle? func # true when a stick wiggle counts toward escaping a grab (from FUN_028B0F70)
 0x0286CBE8 uPlayer::vf37 func # overrides uCharacter slot 37 gen:vf
 0x0286D604 uPlayer::vf39 func # overrides uCharacter slot 39 gen:vf
+0x028A6960 playerAirPhysics? func # velocity / gravity integration in frame-time sub-steps (pad +0x140 / +0x150)
+0x028ABC3C playerWindpress? func # windpress reaction, phase pad +7; per-frame push in phase 1; windpress.cpp
+0x028B0F70 playerEscapeGauge? func # grab escape gauge pad +0x6B4, + *(pad +0x6BC) per wiggle; grab_escape.cpp
 0x028ED378 uPlayerEquip::vf6 func # overrides cUnit slot 6 gen:vf
 0x028ED384 uPlayerEquip::vf7 func # overrides cUnit slot 7 gen:vf
 0x028ED3A0 uPlayerEquip::vf2 func # overrides MtObject slot 2 gen:vf

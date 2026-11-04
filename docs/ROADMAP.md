@@ -82,6 +82,22 @@ reachable than a pure decomp.
 - [x] Second screen (GamePad touch UI) → composited/secondary window or overlay → decided against: the port plays on the TV with a Pro Controller and no GamePad (default); the GamePad image is still available as an optional inset / full view (F2, `MH3U_GAMEPAD_VIEW`) for debugging
 - [x] Text entry → PC keyboard instead of the Wii U software keyboard (swkbd HLE; Enter/A confirm, Esc/B cancel); character naming works
 - [ ] Mouse: hovering highlights menu options on keyboard + mouse (needs the game's GUI/menu system mapped)
+  - [x] Menu pointer: while a game menu is open the mouse is a free pointer (left = A, right = B, wheel = up /
+    down), mouse look again when it closes (src/game/menu_mouse.cpp; window check of the lobby menus open)
+  - [x] Cursor in the game's menu style while the pointer is on (drawn in code)
+  - [ ] Hover / click per menu: item rows from the widget's cGUIInstance tree -> its cursor field. Item box options:
+    written (src/game/item_sets.cpp box_hover), row geometry to be checked in a window; sub-lists, other menus to do.
+    Start menu: Main Menu, Character Select (+ its Yes / No), Character Creation (grid, type grids, swatches,
+    Features, cancel prompt), Touch Panel, save slot (+ overwrite prompt), Options list and pages, DLC prompt - done
+    (menu_mouse.cpp screens(), checked headless). Field menu (both tabs) and the screens it opens: done. Creation's
+    colour gradients and Skin Tone slider, Monster List, Guild Card List: done. Lobby (0.1.2, checked in a window by
+    the user 2026-11-03): option scrolls, item box, Market, Smithy / Armory, Quest Counter, Canteen, house and
+    furnishing picker (Moga house spots measured), Farm, Stockpile, Ferry, prompts, Abandon Quest, Supply Box - the
+    menu's own cursor written, no d-pad presses. Still open: the start / field menu screens move their cursor with
+    d-pad taps (screen_hover) - to convert to direct writes; furnishing rooms 5-7 in the spot tables (unknown, maybe
+    unused; not measured); the online quest results (FUN_020E8DD4; the solo results are done in 0.1.2hf); the
+    Canteen's quest board (Phase 6)
+  - [ ] Controller Settings: disabled for now (option_page masks its left / right); our own controller page to come
 - [x] Saves load/write → a new character (Character Creation → Touch Panel Settings → Character Select slot 1) is written to `save/80000001/user1` (35,364 bytes) with `system` updated; after a fresh boot, Continue lists it (name, gender, play time, zenny, HR) and "Use this character? → Yes" loads it back into Moga Village
 - [x] Milestone: in game – Moga Village renders (opening Village Chief scene, NPCs, player in starting gear)
 - [ ] Hunt in a quest end-to-end; compare with Cemu
@@ -275,6 +291,11 @@ model for adding to a game menu; MH3U_TRACE_TEXT finds a menu's code from its la
 - [ ] First start without ImGui: the system folder picker chooses the dump; shader / pipeline preparation on the
   game's loading screen (above); then every start is the game straight away
 - [ ] Dear ImGui removed from the build (setup.cpp launcher, settings panel, MODS panel, toasts)
+- [ ] Modernize the camera (user 2026-11-03): a camera that feels like a modern PC game with the mouse. Today mouse
+  look is a right-stick deflection, so it goes through the game's turn speed, ramp and ease. A first try that added
+  the mouse straight to the camera yaw (block +0x94 / +0x9C, `src/game/camera_speed.cpp`) was reverted: the user
+  did not like it. To work out with the user first: what should feel different (free vertical look, speed, no ease,
+  recentring), then build it
 
 ### Phase 6 – Online and quest maker (last phase; user decision 2026-10-28)
 - [ ] Online play, option B of `docs/online.md`: replace the game's NEX backend with Cha-Cha's own - a backend behind
@@ -299,6 +320,7 @@ model for adding to a game menu; MH3U_TRACE_TEXT finds a menu's code from its la
     tampered codes are rejected with a message, never a crash
   - [ ] Made and received quests land in the MODS > QUESTS library (a "Shared quests" pack), quest numbers
     assigned locally; folder packs keep working for DLC and hand-made `.quest` files
+- [ ] Mouse hover for the Canteen's quest board (user 2026-11-03: belongs with this phase)
 
 ## Risks
 - ~~Paired-singles + GQR quantized loads are heavily used~~ – not in this game: only `ps_merge10` save/restore (Phase 2 finding).

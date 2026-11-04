@@ -23,3 +23,43 @@
 0x020ECA2C sCockpit::obtainItem? # src/game/carving.cpp: hold to gather - after an item is obtained the held button keeps repeating
 0x025CB37C uEnemy::damageCheck? # mod hook point (runtime/boot/plugins.cpp): per-frame damage check; per-part damage int16[8] at state+0x8EC, HP at state+0x8B8 (state = *(uEnemy+0x1BE0)); damage-numbers mod
 0x0227EDE8 uGameCamera::move? # mod hook point (runtime/boot/plugins.cpp): uGameCamera vtable slot 8 per frame; uCamera fields +0x30..+0x6C give the live camera for world_to_screen
+0x020E0CFC sAppPad::vf6 # src/game/menu_mouse.cpp: pad per-frame update; afterwards the menu state decides whether the mouse is a pointer
+0x0221A430 sLobby::menuDirections? # src/game/menu_mouse.cpp: lobby menus key-repeat directions (1 up 2 down 4 left 8 right); wrapped: a call means a lobby menu is open
+0x0275BD84 uIDOption::stepPage? # src/game/menu_mouse.cpp: one Options page step (r4 = page 8/18-24); wrapped to know the page and its object for hover
+0x020435B4 menuTwoChoice? # src/game/menu_mouse.cpp: the game's Yes / No step (&cursor 0 Yes 1 No, buttons 0x10 decide 0x20 cancel); hover sets the cursor, a click decides
+0x0261C0FC messageBoxChoice? # src/game/menu_mouse.cpp: the message box draws its Yes / No pair (cursor sMenu+0x204); wrapped for hover / click
+0x0275412C uIDMakeCharacter::step? # src/game/menu_mouse.cpp: Character Creation step (r3 = uIDMakeCharacter, cursor +0x884); wrapped to know the object for hover
+0x0268E7DC uIDLobbyCardList::step? # src/game/menu_mouse.cpp: Guild Card List step (r3 = the list, row +0x3D4, page +0x3D8, state +0x3D2); wrapped to know the object for hover
+0x0221C614 sLobby::optionListStep? # src/game/menu_mouse.cpp: a facility's option scroll (r4 = list: +4 cursor, +0xE count, +8 greyed bits; buttons 0x10 decide); hover sets the cursor, a click decides
+0x020431F8 menuCursorStep? # src/game/menu_mouse.cpp: cursor step helper (cursor, count, direction bits); wrapped only with MH3U_MENU_LEARN to log its callers
+0x020432BC menuCursorStepWrap? # src/game/menu_mouse.cpp: cursor step helper (wrapping); wrapped only with MH3U_MENU_LEARN to log its callers
+0x020432C8 menuCursorStep2? # src/game/menu_mouse.cpp: cursor step helper; wrapped only with MH3U_MENU_LEARN to log its callers
+0x0227FFC0 cameraEase? # src/game/camera_speed.cpp: (s16)(target - current) >> shift, the camera's per-frame angle ease; scaled by the frame time
+0x02286DE8 cameraAutoTurn? # src/game/camera_speed.cpp: step that swings the camera behind the hunter; scaled by the frame time
+0x02286F18 cameraTurnInput? # src/game/camera_speed.cpp: camera left / right input -> target yaw (block +0x94) per frame; scaled by the frame time
+0x02286890 cameraPitchInput? # src/game/camera_speed.cpp: camera up / down -> target pitch (block +0x90; per frame under water); scaled by the frame time
+0x0227E138 cameraPadCopy? # src/game/play_log.cpp: copies pad buttons / right stick into the camera block once a frame (hunter at block +0x690); wrapped only with MH3U_PLAY_LOG
+0x025F2810 uIDCockpitAbovehead::vf63 # src/game/play_log.cpp: places the above-head display, picks its animation; wrapped only with MH3U_PLAY_LOG
+0x028ABC3C playerWindpress? # src/game/windpress.cpp: windpress reaction (phase pad +7); its per-frame push in phase 1 scaled by the frame time
+0x02217F10 sLobby::shopListStep? # src/game/menu_mouse.cpp: Market buy list (r3 = sLobby: row +0x5558, count +0x5564, page +0x555A, state +0x5551); hover sets the row
+0x021F1140 sLobby::boxGridStep? # src/game/menu_mouse.cpp: item box grid (r4 = box: column +0xC, row +0xE, 10 x 10, page +2); hover sets the cell
+0x021E3978 sLobby::questListStep? # src/game/menu_mouse.cpp: Quest Counter list (r4 = list: row +0x16, count +0x18, page +0x2C, state +1); hover sets the row
+0x028B0F70 playerEscapeGauge? # src/game/grab_escape.cpp: grab escape gauge (pad +0x6B4); each wiggle counts 1.0 instead of the frame time
+0x02C0E43C sUnit::vf11 # src/game/play_log.cpp: updates the units of one move line; wrapped only with MH3U_PLAY_LOG to log units joining / leaving and state changes
+0x021F1B00 sLobby::storeListStep? # src/game/menu_mouse.cpp: item box Store Items pouch list (r4 = list: row +0x14 of 8, page +0x16, state +1); hover sets the row
+0x021CE834 sLobby::smithyListStep? # src/game/menu_mouse.cpp: Smithy / Armory equipment list (r3 = sLobby: row +0x5944, count +0x5950, page +0x594A, state +0x5829); hover sets the row and refreshes the comparison
+0x021E55A8 sLobby::questLevelStep? # src/game/menu_mouse.cpp: Quest Counter level plaques (r4 = list: row +0x38, count +0x3A); hover sets the row
+0x021EF1A8 sLobby::furnishingListStep? # src/game/menu_mouse.cpp: house furnishing list (r3 = sLobby: row u8 +0x6EB9, count +0x6EC4, state +0x6EB8; r4 buttons); hover sets the row, a click decides
+0x021D8C8C sLobby::canteenIngredientStep? # src/game/menu_mouse.cpp: Canteen ingredient list (r4 = list: row +0x1E, count +0x28, page +0x2A); hover sets the row
+0x02863258 questSupplyBoxStep? # src/game/menu_mouse.cpp: quest Supply Box (r4 = state, open while +0xBAE; cursor byte +0x6BF of FUN_02166A14(sQuest), 8 x 5); hover sets the cell
+0x026ACF64 uIDLobbyOnline::choiceStep? # src/game/menu_mouse.cpp: three-choice step (cursor +0x408, copy +0x404, locks +0x42C); logged with MH3U_MENU_PROBE to map the Ferry
+0x022101F4 sLobby::farmNameStep? # src/game/menu_mouse.cpp: Farm Name List, lobby mode 22 (r3 = sLobby: row +0x7FC2 of +0x7FCA, state +0x7FC0); hover sets the row
+0x021D431C sLobby::farmStatsStep? # src/game/menu_mouse.cpp: Farm Stats facility (r4 = view: +0x38 of sUserData+0x5E78); hover sets it and redraws (FUN_021D3E1C)
+0x02043308 menuYesNoStacked? # src/game/menu_mouse.cpp: the lobby's stacked Yes / No (r3 = &cursor u32 0 Yes 1 No, r4 buttons 0x10 decide); hover / click
+0x021D4420 sLobby::farmCultivateStep? # src/game/menu_mouse.cpp: Farm Cultivate (r4 = view: state +1, settings row +0x3A: Source, Enrich, Cycles); hover sets the row
+0x021EFA70 sLobby::cropBoxStep? # src/game/menu_mouse.cpp: Farm Crop Box / Stockpile (r3 = sLobby: state +0x693C; menu u8 +0x693E; grid column u8 +0x693D of +0x6974, row +0x694E of +0x6976, cell +0x694C)
+0x026AD984 uIDLobbyOnline::destinationStep? # src/game/menu_mouse.cpp: Ferry Destination list, state 9 (cursor +0x408 / +0x404, drawn +0x40C, locks +0x400, entries +0x2E4); hover sets and redraws
+0x021C3DCC sLobby::furnishingPickerStep? # src/game/menu_mouse.cpp: house furnishing position picker (r4 = pick: state +2, cursor +0xCA of +0xC4, spots +0xB3[]); hover by measured spot positions, MH3U_MENU_PICKER_CAL to measure
+0x021C4304 sLobby::furnishingRemoveStep? # src/game/menu_mouse.cpp: house furnishing Remove (r4 = pick: state +2; state 1 the occupied-spot picker like Place, removable bit 2 of +0xBB[]); hover as the Place picker
+0x020E8DD4 questResultStep? # src/game/menu_mouse.cpp: quest results (r4 = res: state +0 / +1, hunter +0x20 of +0x21, view +0x2F, detail cursors +0x29 / +0x2A / +0x2C / +0x2D / +0x44); pointer kept on, learn screenshots per view
+0x02180870 sResult::rewardStep? # src/game/menu_mouse.cpp: solo quest results / rewards (r4 = res: state +0x2FF4, sub +2, cursor +0x3066 of +0x3067, grid +0x3073 / +0x3075, Yes / No +0x3084); pointer kept on, learn screenshots per state

@@ -112,6 +112,9 @@ These are part of the game. Monster HP scaling can be switched off in Settings â
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller.
   Every button can be rebound, and the settings show which button does what, for your bindings and your
   controller (Xbox, PlayStation or Nintendo names).
+- **Menus you can point at:** in the game's menus the mouse becomes a pointer; the option under it is selected and a
+  click picks it - the start and pause menus, item box, shops, Smithy, Quest Counter, Canteen, house, Farm, Ferry,
+  Supply Box and their prompts.
 - **A PC keyboard** for names and chat instead of the Wii U software keyboard.
 
 ## Getting started
@@ -167,9 +170,10 @@ use the AppImage.
 
 | Wii U Pro Controller | Keyboard and mouse | Controller |
 |---|---|---|
-| Left stick / right stick | WASD / IJKL (or the mouse: click in the window, Esc releases) | sticks |
+| Left stick / right stick | WASD / O K L ; (or the mouse: click in the window, Esc releases) | sticks |
 | A / B / X / Y | F, Return or right click / Space or Backspace / left click / E | the face buttons by position, as on the Wii U |
-| L / R / ZL / ZR | Q / Left Shift / Z or mouse 4 / C or mouse 5 | LB / RB / LT / RT |
+| X + A together | mouse 4 | |
+| L / R / ZL / ZR | Q or Left Ctrl / Left Shift or mouse 5 / Z / C | LB / RB / LT / RT |
 | + / âˆ’ | Tab / M | Back / Start |
 | D-pad | arrow keys, mouse wheel | d-pad |
 

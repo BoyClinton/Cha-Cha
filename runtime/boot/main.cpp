@@ -13,10 +13,15 @@
 #include "app_paths.h"
 #include "boot_prompts.h"
 #include "filters.h"
+#include "camera_speed.h"
+#include "play_log.h"
+#include "windpress.h"
+#include "grab_escape.h"
 #include "frame_limit.h"
 #include "monster_hp.h"
 #include "carving.h"
 #include "item_sets.h"
+#include "menu_mouse.h"
 #include "text_trace.h"
 #include "setup.h"
 #include "game_image.h"
@@ -445,12 +450,24 @@ int main(int argc, char** argv) {
     game::register_boot_prompts(settings.skip_boot_notices);
     game::register_filters(settings.bloom, settings.depth_of_field != "off");
     game::register_frame_limit(!headless);  // windowed runs pace frames themselves (FRAME RATE LIMIT)
+    game::register_camera_speed();  // camera turns and eases by the frame time, not per frame
+    game::register_windpress();     // the windpress push by the frame time, not per frame
+    game::register_grab_escape();   // each wiggle out of a grab counts as on the console
+    // MH3U_PLAY_LOG: per-frame hunter / marker log (frame-rate bugs); MH3U_PLAY_WATCH=1 adds who writes the position
+    std::function<void(uint32_t)> play_watch;
+    if (char* w = nullptr; _dupenv_s(&w, &frames_len, "MH3U_PLAY_WATCH") == 0 && w) {
+        if (std::string(w) == "1")
+            play_watch = [base = mem.base()](uint32_t guest) { read_watch::watch(base, guest, true); };
+        std::free(w);
+    }
+    game::register_play_log(play_watch);
     game::register_text_trace();  // MH3U_TRACE_TEXT: who asks for which text
     game::register_monster_hp(settings.monster_hp_scaling);  // Port Tanzia HP for the number of hunters (a setting)
     game::register_carving([] { input::repeat_held(input::kA, 3000); });  // hold to gather: A repeats while held
     game::register_item_sets(paths.data / "save" / "80000001", [](const std::string& msg) {
         if (g_launcher) g_launcher->post_toast(msg);  // shown over the game
     });
+    game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
     // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
     plugins::set_toast([](const std::string& msg) {

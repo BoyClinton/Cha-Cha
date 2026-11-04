@@ -5,6 +5,11 @@ at the end of the session that shipped 0.1.0.
 
 ## Where things stand
 
+- **0.1.2 released 2026-11-03** (<https://github.com/BoyClinton/Cha-Cha/releases/tag/v0.1.2>, public `main`
+  25593c9): lobby menus with real mouse hover, World-style keyboard defaults, frame rate fixes (camera, windpress,
+  grab escape), doubled GamePad sounds removed. Issues #2, #6, #7 answered; #7's fast red markers still open. Full
+  MSVC Release build warning-free, ctest 12/12, AppImage boots headless in WSL. Open from the menu work: start / field
+  menu screens still step their cursor with taps (screen_hover), quest results.
 - **Released.** Cha-Cha 0.1.0 is public: <https://github.com/BoyClinton/Cha-Cha>, release
   <https://github.com/BoyClinton/Cha-Cha/releases/tag/v0.1.0> with `Cha-Cha-0.1.0-windows-x64.zip` (24 MB) and
   `Cha-Cha-0.1.0-x86_64.AppImage` (72 MB). GPL-3.0. README rewritten for GitHub (no emulator named in user-facing
@@ -48,6 +53,9 @@ at the end of the session that shipped 0.1.0.
 - Release files: `scripts/package-release.ps1 -Version x.y.z` (Windows zip from `build/clang`) and, in WSL,
   `scripts/build-linux.sh` then `scripts/package-appimage.sh ~/cha-cha-build x.y.z`. Bump the version in
   `runtime/boot/mh3u.rc` too. `gh release create vX.Y.Z <zip> <AppImage> --repo BoyClinton/Cha-Cha`.
+- The user plays the release, installed at `E:\Recomps\Cha-Cha` (desktop shortcut `Cha-Cha.lnk`; portable, data in
+  `E:\Recomps\Cha-Cha\data` with their save; dump recorded with `--install`). With every release, replace the
+  program files there with the new zip's contents and leave `data\` alone (user 2026-11-03).
 
 ## What's next (user's priorities)
 
