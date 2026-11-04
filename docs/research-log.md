@@ -828,3 +828,11 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   menu screen keys, a screenshot per new screen), MH3U_MENU_HUNT_LIVE (Down, Down, Up in a window: the bytes that went
   +1, +1, -1). uCamera fields (createProperty): far +0x30, near +0x34, aspect +0x38, fov +0x3C, pos +0x40, up +0x50,
   target +0x60.
+- **Solo quest results and the hidden cursor (2026-11-03, 0.1.2hf).** The results after a solo quest are sResult's
+  FUN_02180870(?, res), not FUN_020E8DD4 (that one runs only with the network results): state res+0x2FF4, sub res+2;
+  state 1 sub 0 the Quest Rewards menu (byte res+0x3066 of res+0x3067), sub 1 the Reward Box grid (FUN_02180690:
+  row res+0x306F of res+0x3072, column res+0x306E of 8), state 5 the summary pages (res+0x3066 of res+0x3067, left /
+  right), A = 0x10 of sAppPad+0x6C read directly. Found by searching sResult's code (0x0217DB70-0x02183130) for the
+  cursor helpers, screens from MH3U_MENU_LEARN keys E1SSSS0B. The system cursor is hidden over the window while the
+  mouse is not a pointer (runtime/input). A direct mouse yaw (adding the mouse to camera block +0x94 / +0x9C) was
+  tried and reverted at the user's request; see ROADMAP Phase 5.5.

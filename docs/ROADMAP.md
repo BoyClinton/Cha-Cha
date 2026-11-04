@@ -94,8 +94,9 @@ reachable than a pure decomp.
     the user 2026-11-03): option scrolls, item box, Market, Smithy / Armory, Quest Counter, Canteen, house and
     furnishing picker (Moga house spots measured), Farm, Stockpile, Ferry, prompts, Abandon Quest, Supply Box - the
     menu's own cursor written, no d-pad presses. Still open: the start / field menu screens move their cursor with
-    d-pad taps (screen_hover) - to convert to direct writes; the Port Tanzia chamber's picker spots (not measured);
-    the quest results screen; the Canteen's quest board (Phase 6)
+    d-pad taps (screen_hover) - to convert to direct writes; furnishing rooms 5-7 in the spot tables (unknown, maybe
+    unused; not measured); the online quest results (FUN_020E8DD4; the solo results are done in 0.1.2hf); the
+    Canteen's quest board (Phase 6)
   - [ ] Controller Settings: disabled for now (option_page masks its left / right); our own controller page to come
 - [x] Saves load/write → a new character (Character Creation → Touch Panel Settings → Character Select slot 1) is written to `save/80000001/user1` (35,364 bytes) with `system` updated; after a fresh boot, Continue lists it (name, gender, play time, zenny, HR) and "Use this character? → Yes" loads it back into Moga Village
 - [x] Milestone: in game – Moga Village renders (opening Village Chief scene, NPCs, player in starting gear)
@@ -290,6 +291,11 @@ model for adding to a game menu; MH3U_TRACE_TEXT finds a menu's code from its la
 - [ ] First start without ImGui: the system folder picker chooses the dump; shader / pipeline preparation on the
   game's loading screen (above); then every start is the game straight away
 - [ ] Dear ImGui removed from the build (setup.cpp launcher, settings panel, MODS panel, toasts)
+- [ ] Modernize the camera (user 2026-11-03): a camera that feels like a modern PC game with the mouse. Today mouse
+  look is a right-stick deflection, so it goes through the game's turn speed, ramp and ease. A first try that added
+  the mouse straight to the camera yaw (block +0x94 / +0x9C, `src/game/camera_speed.cpp`) was reverted: the user
+  did not like it. To work out with the user first: what should feel different (free vertical look, speed, no ease,
+  recentring), then build it
 
 ### Phase 6 – Online and quest maker (last phase; user decision 2026-10-28)
 - [ ] Online play, option B of `docs/online.md`: replace the game's NEX backend with Cha-Cha's own - a backend behind
