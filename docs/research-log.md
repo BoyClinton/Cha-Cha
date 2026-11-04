@@ -856,3 +856,13 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   view+0xE (left / right; Y = map, view+4). Resource Items FUN_021D24BC(?, list): row list+0x8 of list+0x10 on the
   page (up to 8), page list+0xC of list+0xE (FUN_021D2240 fills a page). Farm FUN_021D4420 state 0 ("Assign which
   Felyne"): A goes on to the settings; settings row view+0x3A 3 is OK; states 3 / 5 are FUN_02043308 Yes / No.
+- **Linux display fixes (2026-11-04, 0.1.2hf3, issues #10, #11, #13).** The window had no SDL_WINDOW_HIGH_PIXEL_DENSITY,
+  so on a scaled Wayland desktop the swapchain had the logical size and the compositor stretched it (sharp at 50 %,
+  blurry at 150 / 200 %). With the flag the swapchain has the real pixels; ImGui 1.91.9's SDL3 backend then reports
+  points with a framebuffer scale, while the launcher lays itself out in pixels (SDL_GetWindowDisplayScale), so
+  the launcher draws in pixels 1:1 (DisplaySize x scale, framebuffer scale 1, mouse motion x pixel density). The
+  swapchain format was picked by format only: a compositor listing B8G8R8A8_UNORM again with HDR / extended colour
+  spaces (Steam Deck), or offering only _SRGB formats, showed the picture washed out and too bright. Now only plain
+  sRGB colour space, UNORM formats (B8G8R8A8, then R8G8B8A8 / A8B8G8R8, then 10-bit); the choice is logged
+  ("presenter: swapchain format 44, colour space 0" on Windows / NVIDIA). Settings > General > Session > Quit game
+  over a running game (select twice).

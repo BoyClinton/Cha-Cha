@@ -630,6 +630,7 @@ struct Launcher::Impl {
     std::vector<std::string> posted;
     // DUMP TEXTURES (this session only, not saved): files written since it was switched on
     bool dumping = false;
+    bool quit_armed = false, quit_requested = false;  // General > Quit game over the game: armed by the first press
     uint64_t dump_base = 0, dumps_shown = 0;
     std::string dump_folder() const {
         const auto u = (paths.data / "texture_dump").u8string();
@@ -839,7 +840,14 @@ void Launcher::handle_event(const void* ev) {
         analog(x_axis ? ImGuiKey_GamepadLStickRight : ImGuiKey_GamepadLStickDown, v);
         return;
     }
-    ImGui_ImplSDL3_ProcessEvent(&e);
+    if (e.type == SDL_EVENT_MOUSE_MOTION) {  // the UI works in pixels on a high-density window (see frame)
+        SDL_Event m = e;
+        const float density = d.window ? SDL_GetWindowPixelDensity(d.window) : 1.0f;
+        if (density > 0) m.motion.x *= density, m.motion.y *= density;
+        ImGui_ImplSDL3_ProcessEvent(&m);
+    } else {
+        ImGui_ImplSDL3_ProcessEvent(&e);
+    }
     if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) {
         std::lock_guard g(d.dialog.m);
         d.dialog.picked.push_back(from_utf8(e.drop.data));
@@ -973,6 +981,13 @@ bool Launcher::Impl::draw(const LaunchState& st) {
     bool quit = false, play = false;
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    // a high-density window (scaled desktop, issue #13): the backend gives the size in points and a framebuffer scale;
+    // the launcher is laid out in pixels (fonts and sizes from SDL_GetWindowDisplayScale), so draw in pixels 1:1 (the
+    // mouse positions are scaled in handle_event)
+    if (ImGuiIO& io = ImGui::GetIO(); io.DisplayFramebufferScale.x > 1.0f || io.DisplayFramebufferScale.y > 1.0f) {
+        io.DisplaySize = ImVec2(io.DisplaySize.x * io.DisplayFramebufferScale.x, io.DisplaySize.y * io.DisplayFramebufferScale.y);
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    }
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;  // fed by handle_event (the backend clears it in manual mode)
     ImGui::NewFrame();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1011,6 +1026,8 @@ bool Launcher::Impl::draw(const LaunchState& st) {
         snap = std::move(next);
     }
     if (play) hide();
+    if (quit_requested) quit = true;  // the in-game Quit game row
+    if (mode == Mode::Hidden) quit_armed = false;
     if (quit) save_settings(paths, settings);
     return !quit;
 }
@@ -1410,6 +1427,15 @@ void Launcher::Impl::draw_tab_general(PanelLayout& p) {
     switch_row(p, "Skip boot notices", draft.skip_boot_notices,
                "Answers the controller notice and the create-save prompts before the title screen by itself.");
     group_end(p);
+    if (mode == Mode::InGame) {  // issue #10: no way out but closing the window, which fullscreen hides
+        group_begin(p, "Session");
+        if (button_row(p, quit_armed ? "Quit now" : "Quit game",
+                       "Closes Cha-Cha. Progress since your last save in the game is lost. Select it twice to quit.")) {
+            if (quit_armed) quit_requested = true;
+            quit_armed = true;
+        }
+        group_end(p);
+    }
 }
 
 // Window size and internal resolution are independent: the game renders at its internal resolution and the picture

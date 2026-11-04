@@ -28,6 +28,7 @@ struct Presenter::Impl {
     VkQueue queue = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_B8G8R8A8_UNORM;
+    bool logged_format = false;
     VkExtent2D extent{};
     std::vector<VkImage> images;
     std::vector<VkImageView> views;  // per swapchain image, for the overlay
@@ -147,9 +148,24 @@ bool Presenter::Impl::create_swapchain(std::string& err) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(n);
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, formats.data());
+    // The picture is already gamma-encoded and copied as it is: an 8-bit UNORM format in the plain sRGB colour space.
+    // A compositor may list the same format again for HDR / extended colour spaces, and an _SRGB format would encode
+    // it a second time - both showed it washed out and far too bright (issue #11, Steam Deck).
+    const auto rank = [](const VkSurfaceFormatKHR& f) {
+        if (f.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) return 0;
+        if (f.format == VK_FORMAT_B8G8R8A8_UNORM) return 3;
+        if (f.format == VK_FORMAT_R8G8B8A8_UNORM || f.format == VK_FORMAT_A8B8G8R8_UNORM_PACK32) return 2;
+        if (f.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || f.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32) return 1;
+        return 0;
+    };
     VkSurfaceFormatKHR chosen = formats.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR} : formats[0];
     for (auto& f : formats)
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM) chosen = f;
+        if (rank(f) > rank(chosen)) chosen = f;
+    if (chosen.format != format || !logged_format) {
+        std::printf("presenter: swapchain format %d, colour space %d (%zu offered)\n", static_cast<int>(chosen.format),
+                    static_cast<int>(chosen.colorSpace), formats.size());
+        logged_format = true;
+    }
     format = chosen.format;
     if (caps.currentExtent.width != UINT32_MAX) {
         extent = caps.currentExtent;
@@ -230,7 +246,9 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
         SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");
         SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
         if (!SDL_Init(SDL_INIT_VIDEO)) return fail(std::string("SDL_Init: ") + SDL_GetError());
-        d.window = SDL_CreateWindow(title.c_str(), width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+        // high pixel density: on a scaled desktop (Wayland at 150 % / 200 %) the swapchain has the screen's real pixels;
+        // without it the picture was drawn at the logical size and stretched by the compositor, blurry (issue #13)
+        d.window = SDL_CreateWindow(title.c_str(), width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if (!d.window) return fail(std::string("SDL_CreateWindow: ") + SDL_GetError());
         SDL_SetWindowMinimumSize(d.window, 960, 540);  // the launcher's layout needs at least this much
         ext = SDL_Vulkan_GetInstanceExtensions(&n_ext);
