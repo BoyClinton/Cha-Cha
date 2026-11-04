@@ -5,6 +5,9 @@ at the end of the session that shipped 0.1.0.
 
 ## Where things stand
 
+- **0.1.2hf4 (2026-11-04)**: Fullscreen on Wayland uses desktop fullscreen (#13: hf3 fixed borderless, the
+  emulated exclusive mode was still stretched); swapchain sizes logged. Scaled desktops still untested here (this PC
+  runs at 100 %).
 - **0.1.2hf3 (2026-11-04)**: Linux reports - Quit game over the game (#10), plain sRGB swapchain format (#11, Steam
   Deck too bright; not verified on a Deck), high-density window for scaled desktops (#13; not verified on Wayland).
   Issue #14 (Fishmongress / Argosy menus with the mouse) waits for a save where they open.

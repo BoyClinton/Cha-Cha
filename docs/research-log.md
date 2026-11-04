@@ -866,3 +866,9 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   sRGB colour space, UNORM formats (B8G8R8A8, then R8G8B8A8 / A8B8G8R8, then 10-bit); the choice is logged
   ("presenter: swapchain format 44, colour space 0" on Windows / NVIDIA). Settings > General > Session > Quit game
   over a running game (select twice).
+- **Fullscreen on Wayland (2026-11-04, 0.1.2hf4, issue #13).** After hf3, borderless was sharp on a scaled Wayland
+  desktop but exclusive fullscreen was not: it passed SDL the desktop display mode, which on a scaled desktop has
+  the logical size; Wayland has no real mode changes, so SDL emulates the mode by drawing at that size and stretching
+  it. On Wayland "Fullscreen" now uses desktop fullscreen (null mode); Windows and X11 keep the exclusive mode. Each
+  swapchain logs window points, swapchain pixels and the display scale (Windows 100 %: windowed 1920x1080 / 1920x1080,
+  borderless and fullscreen 2560x1440 / 2560x1440).
