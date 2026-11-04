@@ -326,11 +326,12 @@ struct PipelineDesc {
     uint32_t depth_format = 0, depth_test = 0, depth_write = 0, depth_func = 0;
     uint32_t stencil = 0, stencil_ops[2][4] = {};  // front, back: func, pass, depth_fail, fail
     uint32_t cull_front = 0, cull_back = 0, front_face = 0;
+    uint32_t depth_bias = 0;  // GX2 polygon offset on (values set per draw)
 };
 
 // One field order for both directions: KeyWriter appends the used fields as raw bytes (the pipeline map key and the
 // record in pipelines.bin), KeyReader parses them back. Bump kPipelineListVersion when the order changes.
-constexpr uint32_t kPipelineListVersion = 1;
+constexpr uint32_t kPipelineListVersion = 2;  // 2: depth_bias
 template <class IO>
 bool serialize(IO& io, PipelineDesc& d) {
     for (uint64_t& k : d.shader) io(k);
@@ -361,6 +362,7 @@ bool serialize(IO& io, PipelineDesc& d) {
     io(d.cull_front);
     io(d.cull_back);
     io(d.front_face);
+    io(d.depth_bias);
     return io.ok();
 }
 struct KeyWriter {
@@ -740,7 +742,8 @@ bool VkRenderer::init(std::string* error) {
     char* dbg = nullptr;
     size_t dbg_len = 0;
     if (_dupenv_s(&dbg, &dbg_len, "MH3U_RENDER_DEBUG") == 0 && dbg) debug_ = static_cast<uint32_t>(std::strtoul(dbg, nullptr, 0));
-    std::free(dbg);  // MH3U_RENDER_DEBUG: 1 no alpha test, 2 no blending, 8 only geometry-shader draws, 16 log write watch
+    std::free(dbg);  // MH3U_RENDER_DEBUG: 1 no alpha test, 2 no blending, 8 only geometry-shader draws, 16 log write watch,
+                     // 32 mip level 0 only
     dev_ = vk_.device;
     // pipeline cache next to the shader cache (cache/), seeded from the last run; the driver rejects a blob from
     // another GPU or driver version by itself (header check), so a stale file only costs the rebuild
@@ -1509,6 +1512,7 @@ VkSampler VkRenderer::sampler(const SamplerState& s, bool compare) {
     ci.mipmapMode = mip == 2 ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
     ci.minLod = mip ? static_cast<float>(s.words[1] >> 16) / 256.0f : 0.0f;
     ci.maxLod = mip ? static_cast<float>(s.words[1] & 0xFFFF) / 256.0f : 0.0f;
+    if (debug_ & 32) ci.minLod = ci.maxLod = 0.0f;  // MH3U_RENDER_DEBUG=32: level 0 only (are the smaller mips wrong?)
     float bias;
     std::memcpy(&bias, &s.words[2], 4);
     ci.mipLodBias = std::isfinite(bias) ? bias : 0.0f;
@@ -1658,6 +1662,7 @@ VkPipeline VkRenderer::create_pipeline(const PipelineDesc& d, VkPipelineLayout l
     rs.cullMode = (d.cull_front ? VK_CULL_MODE_FRONT_BIT : 0) | (d.cull_back ? VK_CULL_MODE_BACK_BIT : 0);
     rs.frontFace = d.front_face ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rs.lineWidth = 1.0f;
+    rs.depthBiasEnable = d.depth_bias;  // values: vkCmdSetDepthBias per draw
     VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     const bool depth = d.depth_format != VK_FORMAT_UNDEFINED;
@@ -1697,9 +1702,9 @@ VkPipeline VkRenderer::create_pipeline(const PipelineDesc& d, VkPipelineLayout l
     cb.pAttachments = att;
     const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_BLEND_CONSTANTS,
                                   VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
-                                  VK_DYNAMIC_STATE_STENCIL_REFERENCE};
+                                  VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dy.dynamicStateCount = static_cast<uint32_t>(std::size(dyn));
+    dy.dynamicStateCount = static_cast<uint32_t>(std::size(dyn)) - (d.depth_bias ? 0 : 1);
     dy.pDynamicStates = dyn;
     const auto depth_format = static_cast<VkFormat>(d.depth_format);
     VkPipelineRenderingCreateInfo ri{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
@@ -2168,14 +2173,19 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
                st.depth_bound ? "bound" : "none", st.depth_test, st.depth_write, st.depth_func, st.blend_enable_mask,
                st.cull_front, st.cull_back, st.front_face, st.viewport[0], st.viewport[1], st.viewport[2], st.viewport[3],
                st.viewport[4], st.viewport[5], st.alpha_test, st.alpha_func, st.alpha_ref);
+        if (st.poly_offset_front || st.poly_offset_back)
+            tracef("  polygon offset front %d back %d: %g x %g / %g x %g clamp %g\n", st.poly_offset_front, st.poly_offset_back,
+                   st.poly_offset[0], st.poly_offset[1], st.poly_offset[2], st.poly_offset[3], st.poly_offset[4]);
         ShaderInfo* sh[3] = {vs, ps, gs};
         for (int s = 0; s < 3; ++s) {
             if (!sh[s]) continue;
             for (auto [slot, type] : sh[s]->samplers) {
                 const TextureBinding& tb = st.stage[s].tex[slot];
-                tracef("  %s tex %u (type %u): %s image %08X %ux%u fmt %03X tile %u compsel %08X%s\n", kStageExt[s], slot, type,
-                       tb.bound ? "bound" : "unbound", tb.surf.image, tb.surf.width, tb.surf.height, tb.surf.format, tb.surf.tile,
-                       tb.comp_sel, targets_.count(tb.surf.image) ? " (render target)" : "");
+                const SamplerState& sm = st.stage[s].samp[slot];
+                tracef("  %s tex %u (type %u): %s image %08X %ux%u fmt %03X tile %u compsel %08X sampler %08X %08X%s\n",
+                       kStageExt[s], slot, type, tb.bound ? "bound" : "unbound", tb.surf.image, tb.surf.width, tb.surf.height,
+                       tb.surf.format, tb.surf.tile, tb.comp_sel, sm.words[0], sm.words[1],
+                       targets_.count(tb.surf.image) ? " (render target)" : "");
             }
             for (auto [block, n] : sh[s]->ubos) {
                 const UniformBinding& u = st.stage[s].ubo[block];
@@ -2307,7 +2317,10 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     d.shader[1] = ps->key;
     d.shader[2] = gs ? gs->key : 0;
     d.topology = gs ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : topology(call.mode);
-    d.neg_one = vk_.depth_clip_control && !st.half_z;
+    // GL clip-space depth (-1..1) only together with GX2's -1..1 viewport range (see the viewport below); without
+    // VK_EXT_depth_range_unrestricted (older GPUs) the 0..1 clip space gives the same window z = ndc z, clipping
+    // what is nearer than twice the near plane where Latte clamps it to 0
+    d.neg_one = vk_.depth_clip_control && vk_.depth_range_unrestricted && !st.half_z;
     d.n_loc_v = static_cast<uint32_t>(loc_v.size());
     d.n_loc_i = static_cast<uint32_t>(loc_i.size());
     std::copy(loc_v.begin(), loc_v.end(), d.loc_v);
@@ -2337,6 +2350,13 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     d.cull_front = st.cull_front;
     d.cull_back = st.cull_back;
     d.front_face = st.front_face;
+    // GX2 polygon offset, for layers drawn on a surface without writing depth (the far sea's blended wave layer
+    // z-fought with the sea in diagonal stripes without it, issue #8). MH3U enables an offset (-32..-512) on nearly
+    // every draw, also on its two depth-writing passes of a mesh (base, then lit, LEQUAL) whose offsets differ in
+    // both directions - applied there, either sign blacked out characters or terrain - so those keep none. Vulkan
+    // has one bias: the front faces' unless only the back ones have it.
+    const bool bias_back = st.poly_offset_back && !st.poly_offset_front;
+    d.depth_bias = depth && st.depth_test && !st.depth_write && (st.poly_offset_front || st.poly_offset_back);
     std::string& key = pipe_key_;
     key.clear();
     KeyWriter kw{key};
@@ -2394,8 +2414,15 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
         if (sets[s]) vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, static_cast<uint32_t>(s), 1, &sets[s], 0, nullptr);
     // GX2 viewports are GL-style (y up): flip with a negative height
     // (guest pixels, times the internal resolution scale)
+    // depth range: GX2 maps window z = ndc z * (far - near) / 2 + (far + near) / 2 and clamps to 0..1; MH3U sets -1..1
+    // (window z = ndc z). Clamped to 0..1 here, that became ndc z * 0.5 + 0.5: half the depth precision, and the far
+    // sea's layers z-fought in diagonal stripes (issue #8). With GL clip-space depth (neg_one, only where
+    // VK_EXT_depth_range_unrestricted is there) the range is taken as it is; in 0..1 clip space (half-z draws, older
+    // GPUs) the clamped 0..1 range already gives window z = ndc z.
+    const bool clamp_range = !pipe_desc_.neg_one;
     VkViewport v{st.viewport[0] * scale_, (st.viewport[1] + st.viewport[3]) * scale_, st.viewport[2] * scale_, -st.viewport[3] * scale_,
-                 std::clamp(st.viewport[4], 0.0f, 1.0f), std::clamp(st.viewport[5], 0.0f, 1.0f)};
+                 clamp_range ? std::clamp(st.viewport[4], 0.0f, 1.0f) : st.viewport[4],
+                 clamp_range ? std::clamp(st.viewport[5], 0.0f, 1.0f) : st.viewport[5]};
     if (v.width <= 0.0f) v = {0.0f, static_cast<float>(rh), static_cast<float>(rw), -static_cast<float>(rh), 0.0f, 1.0f};
     vkCmdSetViewport(c, 0, 1, &v);
     VkRect2D sc{{0, 0}, {rw, rh}};
@@ -2413,6 +2440,12 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     vkCmdSetStencilCompareMask(c, VK_STENCIL_FACE_BACK_BIT, sback.compare_mask);
     vkCmdSetStencilWriteMask(c, VK_STENCIL_FACE_BACK_BIT, sback.write_mask);
     vkCmdSetStencilReference(c, VK_STENCIL_FACE_BACK_BIT, sback.ref);
+    // the layer is pulled towards the camera by the offset's size (units of the depth buffer's resolution, as Vulkan's
+    // constant factor; the scale per unit of depth slope likewise - MH3U leaves it 0), so it lies over the surface it is
+    // drawn on. A clamp needs the depthBiasClamp feature.
+    if (pipe_desc_.depth_bias)
+        vkCmdSetDepthBias(c, -std::fabs(st.poly_offset[bias_back ? 2 : 0]),
+                          vk_.depth_bias_clamp ? -std::fabs(st.poly_offset[4]) : 0.0f, -std::fabs(st.poly_offset[bias_back ? 3 : 1]));
     const abi::PixelPushConstants ppc{st.alpha_test && !(debug_ & 1) ? st.alpha_func : 7u, st.alpha_ref};
     vkCmdPushConstants(c, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof ppc, &ppc);
     const abi::VertexPushConstants vpc{st.point_size * scale_};
@@ -2439,7 +2472,8 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
 // to Moga Village, docs/research-log.md 2026-10-27). They run on the scene colour target once a frame, just before the
 // first draw that samples it - in MH3U the bloom downsample, after all 3D and before the HUD - using the scene's depth
 // buffer. The projection is unknown, so view space is rebuilt from depth alone: z' = 1 / (1 - d) is eye depth in
-// units of the near plane (exact for a far plane much farther than the near one), with an assumed vertical FOV.
+// units of the near plane (exact for a far plane much farther than the near one), with an assumed vertical FOV;
+// 2 / (1 - d) since depth is ndc z as on Latte (GX2's -1..1 viewport range, issue #8; it was ndc z * 0.5 + 0.5).
 namespace {
 
 const char* kPostVs = R"(#version 450
@@ -2469,7 +2503,7 @@ layout(push_constant) uniform Params { vec4 a, b; } p;
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 frag;
 const float kTanHalfFov = 0.45;  // assumed: ~48 degrees vertical
-float lin(float d) { return 1.0 / max(1.0 - d, 1.0 / 60000.0); }
+float lin(float d) { return 2.0 / max(1.0 - d, 1.0 / 30000.0); }
 )";
 
 // Ambient occlusion into an R8 image: normal-oriented hemisphere samples in a screen-space disk (12 taps, rotated per

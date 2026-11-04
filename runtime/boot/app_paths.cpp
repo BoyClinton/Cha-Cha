@@ -112,6 +112,7 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "render_scale") s.render_scale = std::clamp(static_cast<float>(std::atof(v.c_str())), 0.25f, 4.0f);
         else if (k == "display_mode") s.display_mode = v == "borderless" || v == "fullscreen" ? v : "windowed";
         else if (k == "window_size") s.window_size = v;
+        else if (k == "scaling") s.sharp_scaling = v == "sharp";
         else if (k == "bloom") s.bloom = on;
         else if (k == "depth_of_field") s.depth_of_field = v == "enhanced" || v == "2" ? "enhanced" : on || v == "original" ? "original" : "off";
         else if (k == "ambient_occlusion") s.ambient_occlusion = on;
@@ -137,6 +138,7 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "render_scale=" << s.render_scale << '\n'
       << "display_mode=" << s.display_mode << '\n'
       << "window_size=" << s.window_size << '\n'
+      << "scaling=" << (s.sharp_scaling ? "sharp" : "smooth") << '\n'
       << "bloom=" << (s.bloom ? 1 : 0) << '\n'
       << "depth_of_field=" << s.depth_of_field << '\n'
       << "ambient_occlusion=" << (s.ambient_occlusion ? 1 : 0) << '\n'

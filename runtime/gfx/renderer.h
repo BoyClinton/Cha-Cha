@@ -95,6 +95,10 @@ struct DrawState {
     float alpha_ref = 0.0f;
     float point_size = 1.0f;
     bool half_z = false;  // GX2SetRasterizerClipControlEx: clip-space z in 0..1 instead of -1..1
+    // GX2SetPolygonControl's offset enables (front / back faces), GX2SetPolygonOffset's values: front offset, front
+    // scale, back offset, back scale, clamp (decal layers drawn on a surface use it against z-fighting, issue #8)
+    bool poly_offset_front = false, poly_offset_back = false;
+    float poly_offset[5] = {};
 };
 
 struct DrawCall {

@@ -23,6 +23,8 @@ void set_texture_dump(bool on);
 uint64_t texture_dumps();
 // Writes build/frame_<n>.bmp (+ _draws.txt) of a frame soon after this call, as MH3U_DUMP_FRAME does; any thread.
 void dump_next_frame();
+// The same for `count` frames, `step` frames apart (a burst, for flicker that comes and goes).
+void dump_frames(int count, int step);
 // GamePad screen on the PC window: 0 hidden (default), 1 picture-in-picture, 2 GamePad only. Initial value from
 // MH3U_GAMEPAD_VIEW (off / pip / only); F3 in the window cycles it (F1 opens the settings, F2 the mods).
 void cycle_gamepad_view();

@@ -836,3 +836,23 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   cursor helpers, screens from MH3U_MENU_LEARN keys E1SSSS0B. The system cursor is hidden over the window while the
   mouse is not a pointer (runtime/input). A direct mouse yaw (adding the mouse to camera block +0x94 / +0x9C) was
   tried and reverted at the user's request; see ROADMAP Phase 5.5.
+- **Far-sea stripes = ignored polygon offset (2026-11-04, 0.1.2hf2, issue #8).** Diagonal stripes on the far sea in
+  Moga Woods, flickering only while the camera turns. Ruled out one by one: shadow map (lookups off), our AO, mip
+  levels (level 0 only, MH3U_RENDER_DEBUG=32), invariant / no-contraction positions, and hiding any one of the 42
+  pixel shaders that draw to the scene. Found with a per-draw readback of full-width bands of the scene (edge energy
+  per 128-pixel segment after each draw, F9 bursts of 6 frames with MH3U_DUMP_KEY=1): the stripes appear with a
+  blended wave layer over the sea (ps 4ee05310e4dbdfa3, LEQUAL, no depth write). MH3U enables GX2 polygon offset
+  (GX2SetPolygonControl args 6 / 7, GX2SetPolygonOffset) on nearly every draw with -32..-512, which we ignored, so the
+  layer z-fought the sea. But the same offsets sit on its two depth-writing passes of a mesh (a base pass, ps
+  9dea153816533696, then the lit pass, both LEQUAL) and differ in both directions (characters -192 -> -32, terrain
+  -32 -> -224, -160 -> -96): applied as Vulkan depth bias with either sign, characters or terrain went black. So the
+  offset is applied only to draws that test but do not write depth, pulled towards the camera by its size (the
+  Latte units / sign for the depth-writing pairs are not understood). Also: GX2's viewport depth range is -1..1
+  (window z = ndc z); clamping it to 0..1 halved the depth precision, now taken as it is with
+  VK_EXT_depth_range_unrestricted, or, without it, in 0..1 clip space (same window z; MH3U_NO_DEPTH_RANGE=1 tests
+  that path). F11 (fullscreen / window) and the cursor shown after Esc / F11, a Scaling setting (smooth / sharp) for
+  the anti-aliasing request.
+- **Stockpile and Farm hover (2026-11-04, 0.1.2hf2).** Moga Forecast FUN_021D2724(?, view): day tab view+0xC of
+  view+0xE (left / right; Y = map, view+4). Resource Items FUN_021D24BC(?, list): row list+0x8 of list+0x10 on the
+  page (up to 8), page list+0xC of list+0xE (FUN_021D2240 fills a page). Farm FUN_021D4420 state 0 ("Assign which
+  Felyne"): A goes on to the settings; settings row view+0x3A 3 is OK; states 3 / 5 are FUN_02043308 Yes / No.

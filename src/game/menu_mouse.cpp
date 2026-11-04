@@ -1119,13 +1119,24 @@ PPC_FUNC(farm_stats) {
 }
 
 // Farm Cultivate settings, FUN_021D4420(sLobby, view): in state view+1 == 1, row view+0x3A (0 Source, 1 Enrich,
-// 2 Cycles; up / down), drawn in the status panel: Source centred at y 420, Enrich 551, Cycles 629, x 1090-1718.
-// Source and Enrich open a list on A; Cycles changes with left / right: a click on its left arrow (x < 1400) or right
-// arrow (x > 1660) is that press. Clicks elsewhere on a row decide.
+// 2 Cycles, 3 OK; up / down), drawn in the status panel: Source centred at y 420, Enrich 551, Cycles 629, x 1090-1718;
+// the OK button at y 754, x 1236-1575 (window session screenshot, 2026-11-04). Source and Enrich open a list on A, OK
+// starts; Cycles changes with left / right: a click on its left arrow (x < 1400) or right arrow (x > 1660) is that
+// press. Clicks elsewhere on a row decide.
 float g_cult_x = -1, g_cult_y = -1;
 
 PPC_FUNC(farm_cultivate) {
     const uint32_t view = static_cast<uint32_t>(ctx.r[4]);
+    // state 0, "Assign which Felyne to the task?": the Felyne tabs hover in farm_stats; A (the Cultivate button below
+    // the status, x 1238-1579, y 505-552 - window session screenshot, 2026-11-04) goes on to the settings
+    if (view && ppc::ld8(base, view + 1) == 0 && g_pointer.tap) {
+        float x = 0, y = 0;
+        if (menu_pointer(x, y) && x >= 1238 && x <= 1579 && y >= 505 && y <= 552) {
+            bool click = false;
+            while (menu_click()) click = true;
+            if (click) menu_confirm();
+        }
+    }
     if (view && ppc::ld8(base, view + 1) == 1 && g_pointer.tap) {
         static constexpr float kRowY[3] = {420, 551, 629};
         float x = 0, y = 0;
@@ -1134,6 +1145,7 @@ PPC_FUNC(farm_cultivate) {
             int item = -1;
             for (int r = 0; r < 3; ++r)
                 if (x >= 1090 && x <= 1718 && std::fabs(y - kRowY[r]) <= 28) item = r;
+            if (x >= 1236 && x <= 1575 && std::fabs(y - 754) <= 26) item = 3;  // OK, below Res Cost
             const bool moved = x != g_cult_x || y != g_cult_y;
             g_cult_x = x, g_cult_y = y;
             bool click = false;
@@ -1151,6 +1163,54 @@ PPC_FUNC(farm_cultivate) {
         }
     }
     sub_021D4420__orig(ctx, base);
+}
+
+// Stockpile, Moga Forecast, FUN_021D2724(?, view): the day tab (Today, Tomorrow, Day After), view+0xC (s16) of
+// view+0xE, left / right; the panel follows the tab each frame. Tabs centred at 1157 / 1411 / 1666, y 221 (window
+// session screenshot, 2026-11-04). A click on a tab picks it; B leaves, Y shows the map (unchanged).
+float g_forecast_x = -1, g_forecast_y = -1;
+
+PPC_FUNC(stock_forecast) {
+    const uint32_t view = static_cast<uint32_t>(ctx.r[4]);
+    if (view) {
+        const int count = static_cast<int16_t>(ppc::ld16(base, view + 0xE));
+        const Hover h = hover_cells({1157, 221, 254.5f, 0, 120, 35, 3, 1}, count, g_forecast_x, g_forecast_y);
+        if (h.item >= 0 && (h.moved || h.click) && h.item != static_cast<int16_t>(ppc::ld16(base, view + 0xC))) {
+            ppc::st16(base, view + 0xC, static_cast<uint16_t>(h.item));
+            cursor_sound(ctx, base);
+        }
+    }
+    sub_021D2724__orig(ctx, base);
+}
+
+// Stockpile, Resource Items, FUN_021D24BC(?, list): row list+0x8 (s16) of list+0x10 on this page (up to 8), page
+// list+0xC of list+0xE, turned with left / right (FUN_021D2240 fills the page). A list to read: a click only points.
+// Rows at x 1190-1770, centred at y 273 + 54 * row; the page arrows at 1603,195 and 1749,195 (window session
+// screenshot, 2026-11-04) - a click on one is that press.
+float g_resources_x = -1, g_resources_y = -1;
+
+PPC_FUNC(stock_resources) {
+    const uint32_t list = static_cast<uint32_t>(ctx.r[4]);
+    if (list && g_pointer.tap) {
+        float x = 0, y = 0;
+        const bool on = menu_pointer(x, y);
+        const bool left = on && std::fabs(x - 1603) < 40 && std::fabs(y - 195) < 30;
+        const bool right = on && std::fabs(x - 1749) < 40 && std::fabs(y - 195) < 30;
+        if (left || right) {
+            g_lobby_menu = true;
+            bool click = false;
+            while (menu_click()) click = true;
+            if (click) g_pointer.tap(left ? kVpadLeft : kVpadRight);
+        } else {
+            const int rows = static_cast<int16_t>(ppc::ld16(base, list + 0x10));
+            const Hover h = hover_cells({1480, 273, 0, 54, 290, 25, 1, 8}, std::min(rows, 8), g_resources_x, g_resources_y);
+            if (h.item >= 0 && (h.moved || h.click) && h.item != static_cast<int16_t>(ppc::ld16(base, list + 0x8))) {
+                ppc::st16(base, list + 0x8, static_cast<uint16_t>(h.item));
+                cursor_sound(ctx, base);
+            }
+        }
+    }
+    sub_021D24BC__orig(ctx, base);
 }
 
 // Crop Box (Farm) and Stockpile, FUN_021EFA70(sLobby): state sLobby+0x693C. State 0: the menu at the left (Take Crops,
@@ -1668,7 +1728,8 @@ void register_menu_mouse(Pointer pointer) {
     ppc::set_override(0x021D431C, &farm_stats);
     ppc::set_override(0x02043308, &stacked_yes_no);
     ppc::set_override(0x021D4420, &farm_cultivate);
-    ppc::set_override(0x021EFA70, &crop_box);
+    ppc::set_override(0x021D2724, &stock_forecast);
+    ppc::set_override(0x021D24BC, &stock_resources);    ppc::set_override(0x021EFA70, &crop_box);
     ppc::set_override(0x026AD984, &ferry_list);
     ppc::set_override(0x021C3DCC, &furnishing_picker);
     ppc::set_override(0x021C4304, &furnishing_remove);

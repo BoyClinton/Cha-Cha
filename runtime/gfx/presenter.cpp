@@ -48,6 +48,8 @@ struct Presenter::Impl {
     std::mutex m;
     VulkanContext ctx;
     std::atomic<uint64_t> frames{0};
+    std::atomic<bool> sharp{false};  // nearest-pixel scaling of the game image (setting "scaling")
+    int mode = 0, fullscreen_mode = 1;  // display mode now, and the one F11 returns to (main thread)
     bool needs_recreate = false;
     // present_image: host staging buffer -> source image -> scaled blit into the swapchain image
     VkBuffer staging = VK_NULL_HANDLE;
@@ -98,6 +100,8 @@ uint64_t Presenter::frames_presented() const { return impl_->frames.load(); }
 void Presenter::set_display_mode(int mode) {
     SDL_Window* w = impl_->window;
     if (!w) return;
+    impl_->mode = mode;
+    if (mode != 0) impl_->fullscreen_mode = mode;
     if (mode == 0) {
         SDL_SetWindowFullscreen(w, false);
         return;
@@ -107,6 +111,14 @@ void Presenter::set_display_mode(int mode) {
     SDL_SetWindowFullscreenMode(w, m);
     SDL_SetWindowFullscreen(w, true);
 }
+
+void Presenter::toggle_fullscreen() {
+    const int back = impl_->fullscreen_mode;
+    set_display_mode(impl_->mode != 0 ? 0 : back);
+    impl_->fullscreen_mode = back;
+}
+
+void Presenter::set_sharp_scaling(bool on) { impl_->sharp = on; }
 
 void Presenter::set_window_size(int width, int height) {
     SDL_Window* w = impl_->window;
@@ -355,6 +367,15 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
         link(clip);
         d.ctx.depth_clip_control = true;
     }
+    // MH3U_NO_DEPTH_RANGE=1: as on a GPU without it (testing the renderer's fallback)
+    char* no_range = nullptr;
+    size_t no_range_len = 0;
+    const bool skip_range = _dupenv_s(&no_range, &no_range_len, "MH3U_NO_DEPTH_RANGE") == 0 && no_range && *no_range == '1';
+    std::free(no_range);
+    if (!skip_range && has(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME)) {  // no feature struct
+        dev_ext.push_back(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
+        d.ctx.depth_range_unrestricted = true;
+    }
     VkPhysicalDeviceFeatures supported{};
     vkGetPhysicalDeviceFeatures(d.phys, &supported);
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -366,6 +387,8 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
     f2.features.logicOp = supported.logicOp;
     f2.features.fillModeNonSolid = supported.fillModeNonSolid;
     f2.features.depthClamp = supported.depthClamp;
+    f2.features.depthBiasClamp = supported.depthBiasClamp;
+    d.ctx.depth_bias_clamp = supported.depthBiasClamp;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
     f2.features.textureCompressionBC = supported.textureCompressionBC;
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -417,6 +440,7 @@ bool Presenter::pump_events() {
     while (SDL_PollEvent(&e)) {
         if (event_hook_) event_hook_(&e);
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F3) cycle_gamepad_view();
+        if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F11) toggle_fullscreen();
         if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) return false;
         if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
             std::lock_guard g(impl_->m);
@@ -607,7 +631,7 @@ void Presenter::present(const uint8_t* rgba, VkImage image, uint32_t width, uint
         blit.dstOffsets[0] = {x0, y0, 0};
         blit.dstOffsets[1] = {x0 + w, y0 + h, 1};
         vkCmdBlitImage(cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target,
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, d.sharp ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
     }
     VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     if (d.overlay) {
