@@ -451,6 +451,7 @@ int main(int argc, char** argv) {
     game::register_filters(settings.bloom, settings.depth_of_field != "off");
     game::register_frame_limit(!headless);  // windowed runs pace frames themselves (FRAME RATE LIMIT)
     game::register_camera_speed();  // camera turns and eases by the frame time, not per frame
+    game::set_camera_speed(input::control_options().camera_speed);  // Settings -> Input -> Camera speed
     game::register_windpress();     // the windpress push by the frame time, not per frame
     game::register_grab_escape();   // each wiggle out of a grab counts as on the console
     // MH3U_PLAY_LOG: per-frame hunter / marker log (frame-rate bugs); MH3U_PLAY_WATCH=1 adds who writes the position
@@ -526,6 +527,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Vulkan init failed (%s): running without a GPU\n", presenter.error().c_str());
         input::init(paths.data, false);
     }
+    if (headless) game::set_camera_speed(input::control_options().camera_speed);
     gfx::register_gx2(r);
     audio::register_ax(r, !headless);
 

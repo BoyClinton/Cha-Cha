@@ -91,7 +91,7 @@ struct Config {
     float deadzone = 0.15f;
     float mouse_sensitivity = 0.05f;  // stick deflection per pixel moved between two game reads
     bool invert_y = false;
-    float camera_speed = 1.0f;  // [camera] speed: the right stick's deflection is scaled by it
+    float camera_speed = 1.0f;  // [camera] speed: applied to the game's camera steps (src/game/camera_speed.cpp)
     int wheel_frames = 3;  // reads a wheel notch holds its button
 };
 
@@ -769,10 +769,6 @@ PadState read() {
     };
     emulate(s.lx, s.ly, kLStickLeft, kLStickRight, kLStickUp, kLStickDown);
     emulate(s.rx, s.ry, kRStickLeft, kRStickRight, kRStickUp, kRStickDown);
-    // camera speed: the game turns the camera at a rate set by the stick's deflection (after the stick buttons above,
-    // so menus moved by the right stick are unchanged)
-    s.rx *= g_cfg.camera_speed;
-    s.ry *= g_cfg.camera_speed;
     g_masked &= s.buttons;  // released since the overlay closed: no longer masked
     s.buttons &= ~g_masked;
     // hold to gather: the held button let go for 2 reads of every 8 while repeat_held's time lasts

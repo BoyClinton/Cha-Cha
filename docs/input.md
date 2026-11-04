@@ -47,6 +47,10 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
   since the game's previous `VPADRead` becomes right-stick deflection (`sensitivity` per pixel, averaged over two
   reads to smooth spikes, added to any stick input and clamped). A very fast flick saturates at full stick speed.
   `invert_y` flips vertical look.
+- Camera speed (`[camera] speed`, Settings → Input → Camera speed, 0.3–1.0): the game turns the camera from digital
+  pad bits (the stick past a threshold), not from the stick's deflection, so the setting scales the game's own steps
+  (`src/game/camera_speed.cpp`): the left / right turn, the under-water pitch and, on land, the ease of the camera's
+  tilt between its levels. It applies at once. (0.2.0 scaled the stick, which only pushed it below the threshold.)
 - **Menu pointer.** While one of the game's menus is open the mouse is a free pointer with a cursor in the style of
   the game's menus (drawn by `make_cursor` in host_input, no game art; 32 px tall at 1080 lines): no mouse look, right
   click = B, wheel = d-pad up / down (fixed; the mouse bindings apply only outside menus). Left click: in a menu with

@@ -2,6 +2,7 @@
 // presenter. Mouse, keyboard and controllers all navigate it.
 #include "setup.h"
 
+#include "camera_speed.h"
 #include "monster_hp.h"
 #include "plugins.h"
 
@@ -1861,8 +1862,8 @@ void Launcher::Impl::draw_tab_input(PanelLayout& p, float table_w) {
     // camera speed: 30% .. 100% of the game's own turn rate (keyboard, mouse and controller)
     int speed = std::clamp(static_cast<int>(std::lround(o.camera_speed * 10.0f)) - 3, 0, 7);
     changed |= cycle(value_row(p, "Camera speed", std::to_string((speed + 3) * 10) + "%",
-                               "How fast the camera turns, for the controller's right stick, the camera keys and the mouse. "
-                               "100% is the game's own speed."),
+                               "How fast the camera turns left and right and tilts up and down, for the controller, the camera keys and "
+                               "the mouse alike. 100% is the game's own speed."),
                      speed, 8);
     group_end(p);
     if (changed) {
@@ -1870,6 +1871,7 @@ void Launcher::Impl::draw_tab_input(PanelLayout& p, float table_w) {
         o.nintendo_layout = layout == 1;
         o.mouse_sensitivity = kSens[static_cast<size_t>(sens)];
         input::set_control_options(o);
+        game::set_camera_speed(o.camera_speed);  // applies at once, also in a hunt
         input::save_bindings();
     }
     const bool waiting = capturing && std::chrono::steady_clock::now() - capture_since < std::chrono::seconds(6);

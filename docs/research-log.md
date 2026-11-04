@@ -869,3 +869,21 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   cursor helpers, screens from MH3U_MENU_LEARN keys E1SSSS0B. The system cursor is hidden over the window while the
   mouse is not a pointer (runtime/input). A direct mouse yaw (adding the mouse to camera block +0x94 / +0x9C) was
   tried and reverted at the user's request; see ROADMAP Phase 5.5.
+
+## 2026-11-04 - Washed-out picture on Wayland; camera speed that scales the camera, not the stick (fork 0.2.1)
+- **Glare / washed-out colours (user, Fedora 44 KDE Wayland, RX 7800 XT RADV).** The presenter took the *last*
+  B8G8R8A8_UNORM surface format without looking at its colour space. RADV on Wayland offers 81 pairs (9 formats x 9
+  colour spaces, MH3U_VK_FORMATS=1 lists them); the last B8G8R8A8_UNORM one is 1000104011 = ADOBERGB_LINEAR, so the
+  compositor read the game's gamma-encoded sRGB as linear wide-gamut light: lifted, too bright ("a lamp on top of the
+  screen"). Frame dumps (read back before presentation) looked right, which pointed at the swapchain. Now a UNORM
+  format in SRGB_NONLINEAR is required (chosen: 44 / 0, logged at start). The game's scene itself is fine: GI on / off
+  differs in 0.3 % of the village frame. GX2SetTVGamma: the game sets 1.0 at boot (FUN_02BBA7F8, lr 0x02BBAB40:
+  gamma = A / (B - v)); the Monitor Settings slider (lr 0x027596BC) changes it - still a stub, not the cause.
+- **Camera speed.** The camera turns from digital pad bits (FUN_0286BADC: stick past a threshold), at K x ramp / max
+  a frame, so 0.2.0's scaling of the right stick never slowed it and pushed the stick under the threshold (vertical
+  dead at 50 %, horizontal at 30 %, user). Now src/game/camera_speed.cpp multiplies the setting into the steps:
+  the yaw step of FUN_02286F18, the under-water pitch of FUN_02286890 and, on land, the tilt: FUN_02286890's land path
+  (pad +0x3D != 3) only steps a tilt level block +0xA8 (0..5, up bit 1 / down bit 3, swapped by +0x697 bit 2);
+  FUN_0228984C sets +0xA0 from it and eases +0xA4 toward it with FUN_0227FFC0 shift 5 (lr 0x02289EE4 / 0x02289F64 /
+  0x02289FE4; shift 2 eases: +0x98 -> +0x90 and +0x9C -> +0x94). Those three eases run with exponent t x speed.
+  Not yet seen in a hunt (the village camera is fixed).

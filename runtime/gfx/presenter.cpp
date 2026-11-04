@@ -135,9 +135,31 @@ bool Presenter::Impl::create_swapchain(std::string& err) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(n);
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, formats.data());
-    VkSurfaceFormatKHR chosen = formats.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR} : formats[0];
-    for (auto& f : formats)
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM) chosen = f;
+    // The game's image is already gamma-encoded sRGB (8-bit UNORM, as the Wii U scans it out), so it needs a UNORM
+    // format in the standard sRGB colour space. The colour space matters: Wayland (RADV, KDE / GNOME with HDR or wide
+    // gamut) lists B8G8R8A8_UNORM several times, also with extended-linear, Display-P3 or pass-through colour spaces,
+    // and taking the last one of them (0.2.0 did) shows the picture washed out and too bright. An *_SRGB format would
+    // encode it twice - the same glare.
+    auto pick = [&](VkFormat want) -> const VkSurfaceFormatKHR* {
+        for (const auto& f : formats)
+            if (f.format == want && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) return &f;
+        return nullptr;
+    };
+    const VkSurfaceFormatKHR* best = pick(VK_FORMAT_B8G8R8A8_UNORM);
+    if (!best) best = pick(VK_FORMAT_R8G8B8A8_UNORM);
+    if (!best) best = pick(VK_FORMAT_A8B8G8R8_UNORM_PACK32);
+    VkSurfaceFormatKHR chosen = best ? *best
+                                     : formats.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}
+                                                       : formats[0];
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        if (const char* e = std::getenv("MH3U_VK_FORMATS"); e && *e == '1')
+            for (const auto& f : formats)
+                std::printf("presenter: offered format %d, colour space %d\n", static_cast<int>(f.format), static_cast<int>(f.colorSpace));
+        std::printf("presenter: surface format %d, colour space %d (%zu offered)%s\n", static_cast<int>(chosen.format),
+                    static_cast<int>(chosen.colorSpace), formats.size(), best ? "" : " - no UNORM sRGB format, colours may be off");
+    }
     format = chosen.format;
     if (caps.currentExtent.width != UINT32_MAX) {
         extent = caps.currentExtent;
