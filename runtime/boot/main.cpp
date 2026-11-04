@@ -14,6 +14,7 @@
 #include "boot_prompts.h"
 #include "filters.h"
 #include "camera_speed.h"
+#include "movie_skip.h"
 #include "play_log.h"
 #include "windpress.h"
 #include "grab_escape.h"
@@ -148,7 +149,7 @@ bool map_sections(core::GuestMemory& mem, const recomp::Image& img) {
 }
 
 struct Args {
-    bool headless = false, install = false, console = false, play = false;
+    bool headless = false, install = false, console = false, play = false, menu = false;  // --menu: the title menu first
     stdfs::path data_dir;
     std::vector<stdfs::path> games;  // --game / --install / bare paths
 };
@@ -197,6 +198,7 @@ Args parse_args(int argc, char** argv) {
         if (s == "--headless") a.headless = true;
         else if (s == "--console") a.console = true;
         else if (s == "--play") a.play = true;
+        else if (s == "--menu") a.menu = true;
         else if (s == "--install") a.install = true;
         else if (s == "--data-dir" && i + 1 < argc) a.data_dir = path(argv[++i]);
         else if (s == "--game" && i + 1 < argc) a.games.push_back(path(argv[++i]));
@@ -214,6 +216,7 @@ Args parse_args(int, char**) {
         if (s == L"--headless") a.headless = true;
         else if (s == L"--console") a.console = true;
         else if (s == L"--play") a.play = true;
+        else if (s == L"--menu") a.menu = true;
         else if (s == L"--install") a.install = true;
         else if (s == L"--data-dir" && i + 1 < argc) a.data_dir = argv[++i];
         else if (s == L"--game" && i + 1 < argc) a.games.emplace_back(argv[++i]);
@@ -294,11 +297,12 @@ void timed_actions(gfx::Presenter& p, const boot::AppPaths& paths) {
 void on_event(const void* e) {
     input::handle_event(e);
     if (!g_launcher) return;
-    // the settings over the game: F1, or a controller's touchpad click (PlayStation), Home / guide or misc (mic, Share,
-    // Capture) button - none of them is bound to a game button
+    // the settings over the game: F1, Select + Options on a controller, or its touchpad click (PlayStation), Home /
+    // guide or misc (mic, Share, Capture) button - none of those is bound to a game button
     const SDL_Event& ev = *static_cast<const SDL_Event*>(e);
     if ((ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) ||
-        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && input::is_settings_button(ev.gbutton.button))) {
+        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && input::is_settings_button(ev.gbutton.button)) ||
+        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && input::take_settings_chord())) {  // or Select + Options
         g_launcher->toggle_settings();
         return;
     }
@@ -367,7 +371,8 @@ int main(int argc, char** argv) {
         input::set_window(presenter.window_handle());
         input::set_suspended(true);  // the launcher has the input until PLAY
         presenter.set_display_mode(settings.display_mode == "fullscreen" ? 2 : settings.display_mode == "borderless" ? 1 : 0);
-        launcher = std::make_unique<boot::Launcher>(paths, presenter, sources, std::move(game), err, settings, !args.play);
+        launcher = std::make_unique<boot::Launcher>(paths, presenter, sources, std::move(game), err, settings,
+                                                    args.menu);  // straight into the game unless --menu (no game yet: the menu stays)
         g_launcher = launcher.get();
         presenter.set_event_hook(&on_event);
         // until the game can boot: the launcher over its backdrop (first start: choosing the dump, translating shaders)
@@ -454,6 +459,7 @@ int main(int argc, char** argv) {
     game::set_camera_speed(input::control_options().camera_speed);  // Settings -> Input -> Camera speed
     game::register_windpress();     // the windpress push by the frame time, not per frame
     game::register_grab_escape();   // each wiggle out of a grab counts as on the console
+    game::register_movie_skip([] { return input::take_pressed(input::kPlus); });  // + skips a cutscene movie
     // MH3U_PLAY_LOG: per-frame hunter / marker log (frame-rate bugs); MH3U_PLAY_WATCH=1 adds who writes the position
     std::function<void(uint32_t)> play_watch;
     if (char* w = nullptr; _dupenv_s(&w, &frames_len, "MH3U_PLAY_WATCH") == 0 && w) {

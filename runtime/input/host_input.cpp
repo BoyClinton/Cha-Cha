@@ -101,7 +101,15 @@ struct Pad {
     float lx = 0, ly = 0, rx = 0, ry = 0, zl = 0, zr = 0;
     bool touch = false;
     float tx = 0, ty = 0;
+    // Select + Options (Back + Start) together open the settings: when each went down, and the chord already fired
+    // for this hold (both masked from the game until released)
+    std::chrono::steady_clock::time_point back_at{}, start_at{};
+    bool back = false, start = false, chord = false;
 };
+uint32_t g_prev_buttons = 0, g_edges = 0;  // note_buttons: the last buttons the game got, presses not yet taken
+std::chrono::steady_clock::time_point g_edges_at{};  // the last new press: older ones are not handed out
+bool g_chord = false;  // Select + Options pressed: take_settings_chord() hands it to the host once
+constexpr auto kChordWait = std::chrono::milliseconds(80);  // a lone Select / Options waits this long for the other
 
 std::mutex g_m;
 Config g_cfg;
@@ -342,6 +350,22 @@ void refresh(Pad& p) {
                                                     : SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(src));
         if (down) p.buttons |= mask;
     }
+    const auto now = std::chrono::steady_clock::now();
+    const bool back = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_BACK), start = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_START);
+    if (back && !p.back) p.back_at = now;
+    if (start && !p.start) p.start_at = now;
+    p.back = back;
+    p.start = start;
+    if (back && start && !p.chord) {  // the chord: settings, and neither button reaches the game until let go
+        p.chord = true;
+        g_chord = true;
+        const auto mask_of = [](int src) {
+            const auto it = g_cfg.pad.find(src);
+            return it == g_cfg.pad.end() ? 0u : it->second;
+        };
+        g_masked |= mask_of(SDL_GAMEPAD_BUTTON_BACK) | mask_of(SDL_GAMEPAD_BUTTON_START);
+    }
+    if (!back && !start) p.chord = false;
     p.lx = axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX));
     p.ly = -axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY));
     p.rx = axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTX));
@@ -752,7 +776,15 @@ PadState read() {
         if (px * px + py * py > x * x + y * y) x = px, y = py;
     };
     for (const auto& [id, p] : g_pads) {
-        s.buttons |= p.buttons;
+        uint32_t held_back = 0;  // a lone Select / Options just pressed: wait a moment for the other half of the chord
+        const auto now = std::chrono::steady_clock::now();
+        const auto mask_of = [](int src) {
+            const auto it = g_cfg.pad.find(src);
+            return it == g_cfg.pad.end() ? 0u : it->second;
+        };
+        if (p.back && !p.start && now - p.back_at < kChordWait) held_back |= mask_of(SDL_GAMEPAD_BUTTON_BACK);
+        if (p.start && !p.back && now - p.start_at < kChordWait) held_back |= mask_of(SDL_GAMEPAD_BUTTON_START);
+        s.buttons |= p.buttons & ~held_back;
         merge(s.lx, s.ly, p.lx, p.ly);
         merge(s.rx, s.ry, p.rx, p.ry);
         if (p.touch) {
@@ -1036,6 +1068,30 @@ uint32_t pad_buttons_for(int sdl_gamepad_button) {
     std::lock_guard g(g_m);
     const auto it = g_cfg.pad.find(sdl_gamepad_button);
     return it == g_cfg.pad.end() ? 0 : it->second;
+}
+
+void note_buttons(uint32_t buttons) {
+    std::lock_guard g(g_m);
+    if (const uint32_t fresh = buttons & ~g_prev_buttons) {  // pressed since the last read: take_pressed
+        g_edges |= fresh;
+        g_edges_at = std::chrono::steady_clock::now();
+    }
+    g_prev_buttons = buttons;
+}
+
+bool take_pressed(uint32_t buttons) {
+    std::lock_guard g(g_m);
+    // only a press of the last moment: one made long before (+ for the pause menu) must not skip a later cutscene
+    const bool hit = (g_edges & buttons) != 0 && std::chrono::steady_clock::now() - g_edges_at < std::chrono::milliseconds(300);
+    g_edges &= ~buttons;
+    return hit;
+}
+
+bool take_settings_chord() {
+    std::lock_guard g(g_m);
+    const bool c = g_chord;
+    g_chord = false;
+    return c;
 }
 
 bool is_settings_button(int b) {

@@ -157,6 +157,9 @@ typedef struct ChaChaApi {
     void (*config_set)(ChaChaPlugin* self, const char* key, const char* value);
     int (*config_save)(ChaChaPlugin* self); /* 1 when written */
     const char* (*mod_dir)(ChaChaPlugin* self); /* the mod's folder (UTF-8) */
+    /* Cha-Cha 0.2.2+: sizeof(ChaChaPlugin) of the host. A plugin sets ChaChaPlugin members past `host` (on_save,
+     * on_defaults) only when the host has them: chacha_has_save_hooks(api). */
+    uint32_t plugin_size;
 } ChaChaApi;
 
 struct ChaChaPlugin {
@@ -168,9 +171,20 @@ struct ChaChaPlugin {
     void (*on_settings)(ChaChaPlugin* self); /* the plugin's rows in MODS -> <mod> */
     void (*on_shutdown)(ChaChaPlugin* self);
     void* host; /* Cha-Cha's own, do not touch */
+    /* optional (Cha-Cha 0.2.2+; NULL = none): the Mods page ends with one "Save settings" and one "Restore defaults"
+     * row for all mods, which call these. on_save keeps the current settings (config_save); on_defaults puts them back
+     * to the plugin's defaults. Main thread. */
+    void (*on_save)(ChaChaPlugin* self);
+    void (*on_defaults)(ChaChaPlugin* self);
 };
 
 typedef int (*ChaChaPluginInit)(const ChaChaApi* api, ChaChaPlugin* self);
+
+/* 1 when this Cha-Cha has ChaChaPlugin::on_save / on_defaults (an older one's struct ends at `host`) */
+static inline int chacha_has_save_hooks(const ChaChaApi* api) {
+    return api->size >= offsetof(ChaChaApi, plugin_size) + sizeof(uint32_t) &&
+           api->plugin_size >= offsetof(ChaChaPlugin, on_defaults) + sizeof(void*);
+}
 
 #ifdef __cplusplus
 }

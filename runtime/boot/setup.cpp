@@ -604,6 +604,7 @@ struct Launcher::Impl {
     void draw_tab_mods(PanelLayout& p);
     bool hud() const { return booted && plugins::has_hud(); }  // mods draw over the game
     bool show_menu = true, booted = false, translating = false, refocus = true;
+    bool exit_game = false;  // Settings -> General -> Exit game: quit at the end of this frame
     ShaderJob job;
     DialogResult dialog;
     // the settings panel edits a copy; APPLY makes it the settings (closing without it drops the changes)
@@ -962,8 +963,9 @@ bool Launcher::frame(const LaunchState& st) {
     // over the game a mod's HUD moves with it: drawn up to ~150 times a second, the menus ~60
     if (now - d.last < std::chrono::milliseconds(d.mode == Impl::Mode::Hidden && d.hud() ? 6 : 15)) return true;
     d.last = now;
-    // --play: straight into the game once it can be played
+    // straight into the game once it can be played (unless --menu)
     if (!d.show_menu && d.mode == Impl::Mode::Title && st.game_running && st.pipelines_ready) {
+        std::printf("launcher: straight into the game (F1 / Select + Options: settings)\n");
         d.hide();
         return true;
     }
@@ -1052,6 +1054,7 @@ bool Launcher::Impl::draw(const LaunchState& st) {
         snap = std::move(next);
     }
     if (play) hide();
+    if (exit_game) quit = true;
     if (quit) save_settings(paths, settings);
     return !quit;
 }
@@ -1188,36 +1191,41 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
     dl->AddRect(a, b, kPanelEdge, r);
 
     // header bar: the tabs as one pill of segments in the middle, the bumpers' prompts beside it, close on the right
-    struct TabDef {
-        Tab tab;
-        const char* name;
-    };
-    static const TabDef kSettingsTabs[] = {{Tab::General, "General"}, {Tab::Video, "Video"}, {Tab::Input, "Input"}};
-    static const char* const kModsTabs[] = {"Quests", "Mods"};
+    // one row of tabs for both panels (user 2026-11-04: Mods and Quests next to General and Input): 0-2 the settings'
+    // tabs, 3 Mods, 4 Quests (the MODS panel's two tabs)
+    static const char* const kTabNames[] = {"General", "Video", "Input", "Mods", "Quests"};
     const bool mods = panel == Panel::Mods;
     if (mods && quests_stale) refresh_quests();  // also applies the pack modes
-    const int ntabs = mods ? 2 : 3;
+    const int ntabs = 5;
+    const int current = mods ? (mods_tab == ModsTab::Mods ? 3 : 4) : static_cast<int>(tab);
+    const auto select_tab = [&](int i) {
+        if (i < 3) {
+            panel = Panel::Settings;
+            tab = static_cast<Tab>(i);
+        } else {
+            panel = Panel::Mods;
+            mods_tab = i == 3 ? ModsTab::Mods : ModsTab::Quests;
+            quests_stale = true;
+        }
+        g_sound.play(Sfx::Tab);
+        refocus = true;
+    };
     const float header_h = 72 * s, seg_h = 38 * s, seg_pad = 24 * s;
     float seg_total = 0;
     for (int i = 0; i < ntabs; ++i)
-        seg_total += fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, mods ? kModsTabs[i] : kSettingsTabs[i].name).x + 2 * seg_pad;
+        seg_total += fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, kTabNames[i]).x + 2 * seg_pad;
     const float sy = a.y + (header_h - seg_h) * 0.5f;
     float tx = (a.x + b.x) * 0.5f - seg_total * 0.5f;
     const float seg_x0 = tx;
     if (ntabs > 1) dl->AddRectFilled(ImVec2(tx - 3 * s, sy - 3 * s), ImVec2(tx + seg_total + 3 * s, sy + seg_h + 3 * s), IM_COL32(0, 0, 0, 70), seg_h);
     for (int i = 0; i < ntabs; ++i) {
-        const char* name = mods ? kModsTabs[i] : kSettingsTabs[i].name;
-        const bool on = mods ? static_cast<int>(mods_tab) == i : tab == kSettingsTabs[i].tab;
+        const char* name = kTabNames[i];
+        const bool on = current == i;
         const ImVec2 ts = fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, name);
         const float w = ts.x + 2 * seg_pad;
         ImGui::SetCursorScreenPos(ImVec2(tx, sy));
         ImGui::PushID(name);
-        if (ImGui::InvisibleButton("tab", ImVec2(w, seg_h), ImGuiButtonFlags_NoNavFocus) && !on) {
-            if (mods) mods_tab = static_cast<ModsTab>(i);
-            else tab = kSettingsTabs[i].tab;
-            g_sound.play(Sfx::Tab);
-            refocus = true;
-        }
+        if (ImGui::InvisibleButton("tab", ImVec2(w, seg_h), ImGuiButtonFlags_NoNavFocus) && !on) select_tab(i);
         const bool hov = ImGui::IsItemHovered();
         ImGui::PopID();
         if (on && ntabs > 1) dl->AddRectFilled(ImVec2(tx, sy), ImVec2(tx + w, sy + seg_h), IM_COL32(255, 236, 200, 34), seg_h * 0.5f);
@@ -1237,15 +1245,7 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
         int step = 0;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1) || ImGui::IsKeyPressed(ImGuiKey_Q, false)) step = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1) || ImGui::IsKeyPressed(ImGuiKey_E, false)) step = 1;
-        if (step && !mods) {
-            tab = static_cast<Tab>((static_cast<int>(tab) + step + 3) % 3);
-            g_sound.play(Sfx::Tab);
-            refocus = true;
-        } else if (step) {
-            mods_tab = static_cast<ModsTab>((static_cast<int>(mods_tab) + step + 2) % 2);
-            g_sound.play(Sfx::Tab);
-            refocus = true;
-        }
+        if (step) select_tab((current + step + ntabs) % ntabs);
     }
     // close button: a round header button
     const float cr = 18 * s;
@@ -1462,6 +1462,10 @@ void Launcher::Impl::draw_tab_general(PanelLayout& p) {
                "Port Tanzia quests are made for four hunters. On: with fewer hunters monsters have less HP (1 hunter 65%, "
                "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
                "Takes effect for monsters that appear after the change.");
+    group_end(p);
+    group_begin(p, "Exit");
+    if (button_row(p, "Exit game", "Closes Cha-Cha. Save in the game first: progress since the last save is lost."))
+        exit_game = true;
     group_end(p);
 }
 
@@ -1846,6 +1850,13 @@ void Launcher::Impl::draw_tab_mods(PanelLayout& p) {
         }
         ImGui::PopID();
     }
+    // always the last rows of the page, however many mods there are: one Save / Restore for all of them
+    group_begin(p, "All mods");
+    if (button_row(p, "Save settings", "Keeps every mod's settings for the next start (settings.ini in each mod's folder)."))
+        toast(plugins::save_all() ? "Mod settings saved" : "No mod has settings to save");
+    if (button_row(p, "Restore defaults", "Puts every mod's settings back to its defaults. Save settings keeps them."))
+        toast(plugins::defaults_all() ? "Mod settings back to their defaults" : "No mod has settings to restore");
+    group_end(p);
 }
 
 void Launcher::Impl::draw_tab_input(PanelLayout& p, float table_w) {

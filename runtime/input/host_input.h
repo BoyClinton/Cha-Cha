@@ -66,6 +66,10 @@ uint32_t pad_buttons_for(int sdl_gamepad_button);
 // The controller buttons that open / close the settings over the game: the touchpad click (PlayStation), Home / guide
 // and misc (mic, Share, Capture). The game uses none of them, so they are never bound to a game button.
 bool is_settings_button(int sdl_gamepad_button);
+// Select + Options (Back + Start, View + Menu, Share + Options) pressed together since the last call: opens / closes the
+// settings over the game. Neither button reaches the game during the chord; a lone press waits 80 ms for the other.
+// Main thread, after handle_event.
+bool take_settings_chord();
 // Short name of the controller button bound to a game button, as printed on the connected controller ("Cross",
 // "Circle", "A", "Options", "LB", ...); "" if none is bound or no controller is connected. For on-screen prompts.
 std::string pad_prompt(const std::string& target);
@@ -100,6 +104,11 @@ bool pointer_position(float& u, float& v);
 int take_clicks();
 // Presses buttons (VPAD bits) for the next 3 reads, as a click does.
 void tap(uint32_t buttons);
+// The buttons (VPAD bits) the game was handed this read, scripted presses included (runtime/os/input.cpp).
+void note_buttons(uint32_t buttons);
+// True when one of `buttons` (VPAD bits) was newly pressed in the game's input within the last 300 ms and not taken
+// yet (a press, not a hold). Any thread.
+bool take_pressed(uint32_t buttons);
 // VPADControlMotor: rumble on every connected gamepad.
 void rumble(float strength, uint32_t ms);
 

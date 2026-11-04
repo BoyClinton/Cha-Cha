@@ -11,7 +11,7 @@ mods/
     plugins/
       damage_numbers.so     native plugins: .so on Linux, .dll on Windows
     fonts/damage.ttf        whatever the plugin uses (optional)
-    settings.ini            written by the plugin's "Save settings"
+    settings.ini            written on "Save settings" (end of the Mods page: on_save)
   hd-monsters/
     mod.ini
     content/                files over the game's content folder
@@ -19,7 +19,8 @@ mods/
 ```
 
 A folder with none of `mod.ini`, `content/` or `plugins/` is not listed. On/off states are kept in
-`<data folder>/mods.ini` as `mod.<folder>=on|off`, next to the quest packs' `pack.` lines. New mods start on.
+`<data folder>/mods.ini` as `mod.<folder>=on|off`, next to the quest packs' `pack.` lines. New mods start on,
+unless their `mod.ini` says `default = off` (optional mods: True Attack, Key Quests).
 
 ## Content mods (file replacement)
 
@@ -56,7 +57,7 @@ against nothing of Cha-Cha's, so a plugin built once keeps working with later Ch
 | Camera | `camera()`, `world_to_screen()` through the game's live camera, `game_rect()` |
 | HUD | `on_hud`: `draw_text` (outline, slant, alignment), lines, rectangles, circles, polygons; `load_font` |
 | Settings | `on_settings`: `ui_group`, `ui_switch`, `ui_choice`, `ui_float`, `ui_button`, `ui_info` (the launcher's rows, controller-friendly) |
-| Storage | `config_get` / `config_set` / `config_save` → `settings.ini` in the mod's folder |
+| Storage | `config_get` / `config_set` / `config_save` → `settings.ini` in the mod's folder; `on_save` / `on_defaults` for the Mods page's Save settings / Restore defaults rows (check `chacha_has_save_hooks(api)` first) |
 | Misc | `log`, `toast`, `time`, `mod_dir`, `data_dir`, `game_sha1` |
 
 Check `api->game_sha1` before using any address: addresses are for MH3U US update v32
@@ -79,6 +80,8 @@ they chain in load order.
 | `0x0227EDE8` | `uGameCamera::move?`: the game camera's per-frame update (Cha-Cha uses it for `world_to_screen`) | r3 = uGameCamera |
 | `0x0259FB84` | `uEnemy::setMaxHp?` | r3 = uEnemy, r4 = base HP |
 | `0x020ECA2C` | `sCockpit::obtainItem?` | |
+| `0x02045108` | `itemDisplayAttack?`: a weapon's attack as menus show it (raw x class multiplier / 100) | r3 = item, r4 = raw attack; returns the shown value |
+| `0x021E3978` | `sLobby::questListStep?`: the Quest Counter's quest list, once a frame while open | r4 = list: count +0x18, row +0x16, quest numbers u16 +0x1A[8] |
 
 Every other entry in `config/overrides.txt` works too.
 

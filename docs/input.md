@@ -11,7 +11,8 @@ Code: `runtime/input/host_input.*` (SDL3, host main thread) → `runtime/os/inpu
 Settings: `input.ini` in the data folder (not in git), written by the launcher's **Settings > Controls** page.
 
 ## Rebinding in the launcher
-**F1** (or a controller's **touchpad click** on PlayStation pads, **Home / PS / Xbox** button, or the DualSense mic /
+**F1** (or **Select + Options** together on a controller - Back + Start, View + Menu, Share + Options; a lone
+Select or Options reaches the game 80 ms late while it waits for the other - or a controller's **touchpad click** on PlayStation pads, **Home / PS / Xbox** button, or the DualSense mic /
 Xbox Share / Switch capture button) opens the settings over the running game; again, or Esc / B, returns to it. None
 of them is bound to a game button (`input::is_settings_button`; an older `input.ini`'s `touchpad = tv` is ignored).
 Changed settings are applied with the confirm button (A / Enter) on any value row – left / right change the value –
@@ -51,6 +52,8 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
   pad bits (the stick past a threshold), not from the stick's deflection, so the setting scales the game's own steps
   (`src/game/camera_speed.cpp`): the left / right turn, the under-water pitch and, on land, the ease of the camera's
   tilt between its levels. It applies at once. (0.2.0 scaled the stick, which only pushed it below the threshold.)
+- Cutscene skip: a new press of + while a cutscene movie plays skips it (`src/game/movie_skip.cpp`; presses are
+  taken from what the game was handed, `input::note_buttons` / `take_pressed`, and count for 300 ms).
 - **Menu pointer.** While one of the game's menus is open the mouse is a free pointer with a cursor in the style of
   the game's menus (drawn by `make_cursor` in host_input, no game art; 32 px tall at 1080 lines): no mouse look, right
   click = B, wheel = d-pad up / down (fixed; the mouse bindings apply only outside menus). Left click: in a menu with

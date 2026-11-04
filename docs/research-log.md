@@ -887,3 +887,40 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   FUN_0228984C sets +0xA0 from it and eases +0xA4 toward it with FUN_0227FFC0 shift 5 (lr 0x02289EE4 / 0x02289F64 /
   0x02289FE4; shift 2 eases: +0x98 -> +0x90 and +0x9C -> +0x94). Those three eases run with exponent t x speed.
   Not yet seen in a hunt (the village camera is fixed).
+
+## 2026-11-04 - True attack and key quests (fork mods)
+- **Weapon attack display.** FUN_02045108(item r3, raw r4) -> (u16)(raw x table[k] / 100), table u32 x100 at
+  0x1017C13C: 480 140 520 230 148 130 130 330 460 230 120 140 460 170; k = FUN_02158CC0(*(0x10314B80), item[0])
+  (< 14, else 0); item[0] == 0xB with FUN_020450C0(item, 1) uses entry 13. Callers: FUN_0228E554 (sprintf), FUN_020471BC,
+  FUN_02049ECC, FUN_027042E0 (GUI) and FUN_02848454 (uPlayer getter: pad +0x6E8 raw, item pad +0x3B8; no callers, no
+  vtable reference). So the stored attack is the true one. Checked headless: Iron Hammer raw 70 -> shown 364 (x5.2) on
+  Info -> Equipment; with the hook returning raw, Status and Equipment show 70. Hook point added (mods/true-attack).
+- **Quest data in memory.** All 412 rQuestData (vtable 0x1001213C, 0x938 bytes) are resident from the village on
+  (probe plugin scanning guest memory). rQuestData::createProperty 0x02077F10 names the fields: +0x164 QuestNo u16,
+  +0x17C QuestLevel, +0x17D MapNo, +0x1AC SpecialFlag, +0x1E0 Category u64, +0x230 Contract (fee) u32, +0x234 reward
+  money u32, +0x23C MainHRPoint, +0x246 ProgNo, +0x8E8 openFlag u64, +0x8F0 openSource u64, +0x8F8 openNum u8, ...
+  The .quest file (QTDS v5, little-endian) does not follow this order (loader not decoded).
+- **Unlocks.** A quest is offered when its openFlag bits have been set openNum times by clears of quests whose
+  openSource has them. Urgent quests are 2xxx (village) / 12xxx (Port Tanzia); village (1xxx-2xxx) and Port Tanzia
+  (11xxx-12xxx) use the same bit numbers for separate progress. Following each urgent's bits back through the quests
+  that set them, recursively, gives the community wiki's key quests for village 1-3, 6 and 7 star exactly; 4 star gives
+  Dragon Lady (wiki) plus "any 2 of" Leader of the Icepack / Hunter Killer / Lost in Blue / Cold Stones / Snowbound
+  Slider (urgent 2402, openNum 2). Category bit 0x00800000 is a key flag on village 1-5 star quests (adds 5 star
+  Wrath of Rathalos and A Bard's Tale). Not explained by data: 5 star bits 0x20000000 / 0x08000000 (no quest sets
+  them; the wiki's Walk 'n' Roll and Desert Gourmand lead there). Quest Counter list FUN_021E3978: quest numbers u16
+  list+0x1A[row] for the page's list+0x18 rows (from the selection path: lhz r4,0x1a(list + row*2)).
+
+## 2026-11-04 - Cutscenes are movies; skipping them
+- MH3U's story and monster cutscenes are pre-rendered (nativeCafe/movie/NN.mp4, 17 files) played by sMH3GMovie
+  (singleton 0x10314A70, ctor 0x02156B90): +0x34 the playing uMovie (+0x30 its Player), FUN_021571D0 isPlaying? =
+  movie set && uMovie+0x32C != 6, FUN_02156C28 stop (Player stop FUN_02A41748, FUN_02156BE0, unit released via vtable
+  +0x84, +0x34 = 0; harmless with no movie), FUN_0215720C(movie, on) toggles uMovie+0xC bit 0x100000. Callers of
+  isPlaying: FUN_02761A4C (title intro), FUN_02022E94 / 02023D40 / 02026020, FUN_02115D5C, FUN_02118124, FUN_0228CF18;
+  on false they go on as after the movie (FUN_02026020: state 3, then stop). The in-engine sEvDemo (0x103138C8) reads
+  no pad. src/game/movie_skip.cpp wraps isPlaying: a new + press stops the movie and answers false. Checked headless
+  on the title intro: + at frame 400 -> title screen at 650 (without: still the intro at 900); a Continue route after
+  the skip reaches Moga Village.
+- Sky / vine flicker (user): not seen in 40 consecutive village frames (fixed camera). Candidates read in the
+  renderer, not confirmed: a cached render target (targets_) is sampled for any texture at its address and is never
+  dropped when the CPU loads a texture over that memory; GX2SetRasterizerClipControlEx's zClip is ignored (the game
+  only calls it once, 1/1/1).

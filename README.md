@@ -51,8 +51,8 @@ You need your own **Monster Hunter 3 Ultimate (US) with update v32** (a `.wua` f
 2. Make it executable: `chmod +x Cha-Cha-*.AppImage` (or Properties → Allow executing as program).
 3. Run it and choose your game on the setup screen.
 
-The first start translates the game's shaders (a few seconds, once). Then press **PLAY**. **F1** opens the settings,
-**F2** the mods. **Damage Numbers** comes included: switch it on or off in MODS → Mods.
+The first start translates the game's shaders (a few seconds, once), then the game starts by itself. **F1** or
+**Select + Options** on a controller opens the settings: General, Video, Input, **Mods** and **Quests** tabs (LB / RB or Q / E switch), **Exit game** in General; **F2** opens Mods directly. **Damage Numbers** comes included: switch it on or off in MODS → Mods.
 
 **Adding mods:** put each mod's folder into the `mods` folder of your data folder (`data\mods` next to
 `Cha-Cha.exe` on Windows, `~/.local/share/Cha-Cha/mods` on Linux) and restart Cha-Cha.
@@ -107,8 +107,9 @@ These are part of the game. Monster HP scaling can be switched off in Settings �
 - **Effects the original never had:** global illumination, ambient occlusion, an enhanced depth of field and a
   vignette, each optional. The game's own bloom and depth of field can be switched off.
 - **Texture packs** and texture dumping for making them.
-- **A real launcher:** PLAY / SETTINGS / MODS / QUIT over the game's own title screen. **F1** (or the PlayStation
-  touchpad / Home button) opens the settings over the game, **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only).
+- **Skippable cutscenes:** press **+** (Start / Options, or the keyboard key bound to +) to skip a cutscene movie.
+- **Straight into the game:** no launcher menu to click through (`--menu` shows it). **F1**, **Select + Options**
+  (or the PlayStation touchpad / Home button) opens the settings over the game, with Exit game in General; **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only).
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller.
   Every button can be rebound, and the settings show which button does what, for your bindings and your
   controller (Xbox, PlayStation or Nintendo names).
@@ -151,7 +152,7 @@ Cha-Cha-<version>/
 ├── Cha-Cha                 the program
 ├── Cha-Cha.ini             settings (makes this folder Cha-Cha's data folder)
 ├── game/                   your dump: the game and update folders, or a .wua (found by itself)
-├── mods/                   mods, one folder each (Damage Numbers included)
+├── mods/                   mods, one folder each (Damage Numbers, True Attack, Key Quests included)
 │   └── damage-numbers/
 ├── licenses/               Cha-Cha's GPL-3.0 and the bundled libraries' licences
 ├── README.txt
@@ -205,8 +206,15 @@ Put mods in `<data folder>/mods`, one folder each. **MODS → Mods** (F2 in game
 - **Plugins** (`plugins/*.dll` on Windows, `plugins/*.so` on Linux) are native code: they can hook game functions,
   draw over the game and add settings rows. The API is a single C header, [`include/chacha_plugin.h`](include/chacha_plugin.h).
 
-Included as an example: **Damage Numbers** ([mods/damage-numbers](mods/damage-numbers/README.md)), the damage of
-every hit over the monster in the Wilds, Rise or Classic style. Making mods: [docs/modding.md](docs/modding.md).
+Included:
+- **Damage Numbers** ([mods/damage-numbers](mods/damage-numbers/README.md)): the damage of every hit over the monster,
+  in the Wilds, Rise or Classic style.
+- **True Attack** ([mods/true-attack](mods/true-attack/README.md), optional, starts off): menus show weapons' true
+  attack instead of the bloated number (Iron Hammer 70 instead of 364). Damage is not changed.
+- **Key Quests** ([mods/key-quests](mods/key-quests/README.md), optional, starts off): a gold key icon, "2 OF 5" and URGENT tags on
+  the Quest Counter's list, for the quests that unlock the next urgent quest.
+
+Switch mods on or off in MODS → Mods (F2 in game). Making mods: [docs/modding.md](docs/modding.md).
 
 ## Texture packs and texture dumping
 

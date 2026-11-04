@@ -495,7 +495,8 @@ std::vector<Mod> scan(const stdfs::path& data) {
         m.version = get("version", "");
         m.description = get("description", "");
         const auto st = states.find("mod." + m.folder);
-        m.enabled = st == states.end() || st->second != "off";
+        // never switched in MODS: the mod's own default (mod.ini "default = off" for optional mods), else on
+        m.enabled = st == states.end() ? get("default", "on") != "off" : st->second != "off";
         m.has_content = stdfs::is_directory(m.dir / "content", ec);
         if (m.has_content) m.content_files = count_files(m.dir / "content");
         for (const auto& p : stdfs::directory_iterator(m.dir / "plugins", ec))
@@ -578,6 +579,7 @@ void load(const stdfs::path& data, uint8_t* guest_base, const std::string& rpx_s
     g_api.config_set = &config_set;
     g_api.config_save = &config_save;
     g_api.mod_dir = &mod_dir;
+    g_api.plugin_size = sizeof(ChaChaPlugin);
 
     size_t loaded = 0;
     for (size_t i = 0; i < g_mods.size(); ++i) {
@@ -682,6 +684,20 @@ void draw_settings(size_t index, const SettingsUi& ui) {
         if (g_group_open) ui.end_group();
         g_ui = nullptr;
     }
+}
+
+int save_all() {
+    int n = 0;
+    for (const auto& h : g_hosts)
+        if (h->plugin.on_save) h->plugin.on_save(&h->plugin), ++n;
+    return n;
+}
+
+int defaults_all() {
+    int n = 0;
+    for (const auto& h : g_hosts)
+        if (h->plugin.on_defaults) h->plugin.on_defaults(&h->plugin), ++n;
+    return n;
 }
 
 void shutdown() {

@@ -42,8 +42,8 @@ In **MODS → Mods → Damage Numbers** (F2 in game):
 | Number size | 1.0x | 0.5x to 3.0x. |
 | Duration | 0.9 s | 0.4 to 2.0 seconds. |
 
-**Save settings** keeps them for the next start, in `settings.ini` in the mod's folder. **Restore defaults** resets
-this session's settings; press Save settings afterward to keep the defaults.
+**Save settings** at the end of the Mods page keeps them for the next start, in `settings.ini` in the mod's folder.
+**Restore defaults** there resets them (for every mod); press Save settings afterward to keep the defaults.
 
 `settings.ini` can be edited while Cha-Cha is closed:
 

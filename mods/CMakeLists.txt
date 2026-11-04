@@ -11,3 +11,5 @@ function(chacha_mod_plugin mod target)
 endfunction()
 
 chacha_mod_plugin(damage-numbers damage_numbers damage-numbers/src/damage_numbers.cpp)
+chacha_mod_plugin(true-attack true_attack true-attack/src/true_attack.cpp)
+chacha_mod_plugin(key-quests key_quests key-quests/src/key_quests.cpp)

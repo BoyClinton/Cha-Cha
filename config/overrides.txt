@@ -63,3 +63,5 @@
 0x021C4304 sLobby::furnishingRemoveStep? # src/game/menu_mouse.cpp: house furnishing Remove (r4 = pick: state +2; state 1 the occupied-spot picker like Place, removable bit 2 of +0xBB[]); hover as the Place picker
 0x020E8DD4 questResultStep? # src/game/menu_mouse.cpp: quest results (r4 = res: state +0 / +1, hunter +0x20 of +0x21, view +0x2F, detail cursors +0x29 / +0x2A / +0x2C / +0x2D / +0x44); pointer kept on, learn screenshots per view
 0x02180870 sResult::rewardStep? # src/game/menu_mouse.cpp: solo quest results / rewards (r4 = res: state +0x2FF4, sub +2, cursor +0x3066 of +0x3067, grid +0x3073 / +0x3075, Yes / No +0x3084); pointer kept on, learn screenshots per state
+0x02045108 itemDisplayAttack? # mod hook point (runtime/boot/plugins.cpp): (item, raw attack) -> raw x the weapon class multiplier (u32 x100 table 0x1017C13C) / 100, for menus only; true-attack mod
+0x021571D0 sMH3GMovie::isPlaying? # src/game/movie_skip.cpp: "a cutscene movie is still playing" (sMH3GMovie+0x34 set, uMovie+0x32C != 6); a new press of + stops the movie (FUN_02156C28) and answers no

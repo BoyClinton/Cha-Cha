@@ -280,13 +280,14 @@ void on_settings(ChaChaPlugin*) {
                    "Wilds: outlined digits that pop in. Rise: slanted digits with a slash. Classic: small plain digits.");
     api->ui_float("Number size", &g_set.scale, 0.5f, 3.0f, 0.1f, "%.1fx", "How big the numbers are. They follow the picture's height.");
     api->ui_float("Duration", &g_set.lifetime, 0.4f, 2.0f, 0.1f, "%.1f s", "How long each number stays on screen.");
-    api->ui_group("Keep");
-    if (api->ui_button("Save settings", "", "Keeps these settings for the next start (settings.ini in the mod's folder)."))
-        api->toast(self, save_settings() ? "Damage Numbers: settings saved" : "Damage Numbers: settings could not be saved");
-    if (api->ui_button("Restore defaults", "", "Back to the defaults for this session. Save settings keeps them.")) {
-        g_set = Settings{};
-        api->toast(self, "Damage Numbers: defaults restored");
-    }
+    publish();
+}
+// the Mods page's Save settings / Restore defaults (for all mods, at its end)
+void on_save(ChaChaPlugin*) {
+    if (!save_settings()) api->toast(self, "Damage Numbers: settings could not be saved");
+}
+void on_defaults(ChaChaPlugin*) {
+    g_set = Settings{};
     publish();
 }
 
@@ -304,6 +305,10 @@ extern "C" CHACHA_EXPORT int chacha_plugin_init(const ChaChaApi* a, ChaChaPlugin
     load_settings();
     p->on_hud = &on_hud;
     p->on_settings = &on_settings;
+    if (chacha_has_save_hooks(a)) {  // a host with the Mods page's Save / Restore rows
+        p->on_save = &on_save;
+        p->on_defaults = &on_defaults;
+    }
     if (!a->hook(p, kDamageCheck, &before_check, &after_check, nullptr)) {
         a->log(p, "this Cha-Cha has no hook point for the damage check (needs Cha-Cha with mod support)");
         return 0;

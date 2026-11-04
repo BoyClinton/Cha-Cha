@@ -78,6 +78,9 @@ struct SettingsUi {
 void draw_settings(size_t index, const SettingsUi& ui);
 // any loaded plugin of the mod has settings
 bool has_settings(size_t index);
+// The Mods page's "Save settings" / "Restore defaults": every loaded plugin's on_save / on_defaults; how many had one.
+int save_all();
+int defaults_all();
 void shutdown();
 
 }  // namespace mh3u::plugins

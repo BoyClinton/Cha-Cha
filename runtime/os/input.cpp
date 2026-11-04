@@ -188,6 +188,7 @@ HLE_FUNC(vpad, VPADRead) {
     if (!g_pro) {
         s = input::read();
         apply_script(s, script_now());
+        input::note_buttons(s.buttons);  // presses for game code (input::take_pressed: cutscene skip)
     }
     const uint32_t st = arg(ctx, 1);
     std::memset(base + st, 0, kVpadStatusSize);
@@ -249,6 +250,7 @@ HLE_FUNC(padscore, KPADReadEx) {
     }
     input::PadState s = input::read();
     apply_script(s, script_now());
+    input::note_buttons(s.buttons);
     const uint32_t hold = pro_buttons(s.buttons);
     std::memset(base + st, 0, 0xF0);
     base[st + 0x5C] = 31;  // devType: URCC
