@@ -24,6 +24,8 @@ struct VulkanContext {
     uint32_t queue_family = 0;
     std::mutex* queue_mutex = nullptr;
     bool depth_clip_control = false;  // VK_EXT_depth_clip_control (GL -1..1 clip-space depth)
+    bool depth_range_unrestricted = false;  // VK_EXT_depth_range_unrestricted (GX2's -1..1 viewport depth range)
+    bool depth_bias_clamp = false;          // VkPhysicalDeviceFeatures::depthBiasClamp (GX2 polygon offset clamp)
     uint32_t api_version = 0;         // the device's Vulkan version (VkPhysicalDeviceProperties::apiVersion)
 };
 
@@ -44,6 +46,10 @@ public:
     double refresh_rate() const;  // of the display the window is on (60 if unknown)
     // 0 windowed, 1 borderless (fills the display at its desktop resolution), 2 exclusive fullscreen. Main thread.
     void set_display_mode(int mode);
+    // F11: windowed <-> the last fullscreen mode (borderless if there was none). Not saved. Main thread.
+    void toggle_fullscreen();
+    // The game image scaled to the window with nearest pixels (sharp) instead of bilinear filtering (smooth).
+    void set_sharp_scaling(bool on);
     // Windowed mode: the window's size (client area), centred on its display. Main thread.
     void set_window_size(int width, int height);
     // Presents one frame cleared to the given colour (thread-safe).

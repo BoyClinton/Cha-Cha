@@ -78,14 +78,15 @@ These are part of the game and always on.
 ### Made for PC
 
 - **Your resolution and frame rate:** internal resolution from 0.5× to 4× (up to 5120×2880), a frame rate limit up
-  to unlimited, V-sync, windowed / borderless / fullscreen.
+  to unlimited, V-sync, windowed / borderless / fullscreen, smooth or sharp scaling to the window.
 - **Tri look:** the softer, muted, hazier picture of Monster Hunter Tri on the Wii, applied to the world only (menus
   and the HUD stay as they are).
 - **Effects the original never had:** global illumination, ambient occlusion, an enhanced depth of field and a
   vignette, each optional. The game's own bloom and depth of field can be switched off.
 - **Texture packs** and texture dumping for making them.
 - **A real launcher:** PLAY / SETTINGS / MODS / QUIT over the game's own title screen. **F1** (or the PlayStation
-  touchpad / Home button) opens the settings over the game, **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only).
+  touchpad / Home button) opens the settings over the game, **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only),
+  **F11** switches between fullscreen and a window and frees the mouse.
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller.
   Every button can be rebound, and the settings show which button does what, for your bindings and your
   controller (Xbox, PlayStation or Nintendo names).

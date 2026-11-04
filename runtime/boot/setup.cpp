@@ -651,6 +651,7 @@ struct Launcher::Impl {
     // settings that take effect while the game runs
     void apply_live() {
         presenter.set_display_mode(settings.display_mode == "fullscreen" ? 2 : settings.display_mode == "borderless" ? 1 : 0);
+        presenter.set_sharp_scaling(settings.sharp_scaling);
         if (int w = 0, h = 0; settings.display_mode == "windowed" && sscanf_s(settings.window_size.c_str(), "%dx%d", &w, &h) == 2)
             presenter.set_window_size(w, h);
         game::set_filters(settings.bloom, settings.depth_of_field != "off");
@@ -1439,6 +1440,13 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
     if (cycle(value_row(p, "Internal resolution", kScaleNames[static_cast<size_t>(scale_i)], scale_desc.c_str()), scale_i,
               static_cast<int>(kScales.size())))
         draft.render_scale = kScales[static_cast<size_t>(scale_i)];
+    int sharp = draft.sharp_scaling ? 1 : 0;
+    if (cycle(value_row(p, "Scaling", sharp ? "Sharp" : "Smooth",
+                        "How the game's picture is fitted to the window or screen. Smooth blends neighbouring pixels (soft "
+                        "edges); Sharp keeps every pixel crisp, with no smoothing - best when the screen is a whole multiple of "
+                        "the internal resolution. The game itself has no anti-aliasing."),
+              sharp, 2))
+        draft.sharp_scaling = sharp != 0;
     static const std::vector<int> kFps = {0, 30, 60, 120, 144, 240, -1};
     static const std::vector<std::string> kFpsNames = {"Display refresh", "30", "60", "120", "144", "240", "Unlimited"};
     int fps = static_cast<int>(std::find(kFps.begin(), kFps.end(), draft.fps_limit) - kFps.begin());
