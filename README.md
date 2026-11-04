@@ -85,7 +85,7 @@ These are part of the game and always on.
   vignette, each optional. The game's own bloom and depth of field can be switched off.
 - **Texture packs** and texture dumping for making them.
 - **A real launcher:** PLAY / SETTINGS / MODS / QUIT over the game's own title screen. **F1** (or the PlayStation
-  touchpad / Home button) opens the settings over the game, **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only),
+  touchpad / Home button) opens the settings over the game (General > Quit game closes it), **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only),
   **F11** switches between fullscreen and a window and frees the mouse.
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller.
   Every button can be rebound, and the settings show which button does what, for your bindings and your
