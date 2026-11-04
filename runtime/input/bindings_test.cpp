@@ -24,6 +24,8 @@ int main() {
     expect(in::key_names("a"), "F, Return, Right click", "default keys for A");
     expect(in::pad_names("a"), "B / Circle", "default controller button for A (by position: right = A)");
     expect(in::pad_names("lstick_up"), "Left stick", "stick direction on the controller");
+    expect(in::key_names("a+x"), "Mouse 4", "two buttons together (X + A)");
+    expect(in::key_names("rstick_right"), ";", "a key named like an input.ini comment");
 
     SDL_Event e{};
     e.type = SDL_EVENT_KEY_DOWN;
@@ -48,6 +50,8 @@ int main() {
     expect(in::key_names("a"), "X", "A after reload");
     expect(in::pad_names("zl"), "X / Square", "ZL after reload");
     expect(in::key_names("lstick_up"), "W", "untouched binding after reload");
+    expect(in::key_names("a+x"), "Mouse 4", "X + A after reload");
+    expect(in::key_names("rstick_right"), ";", "the ';' key after reload");
 
     std::filesystem::remove_all(dir);
     std::printf("%s\n", fails ? "bindings: FAILED" : "bindings: ok");

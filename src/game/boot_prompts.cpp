@@ -20,6 +20,7 @@
 
 #include "functions.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <set>
@@ -44,8 +45,11 @@ thread_local bool t_confirming = false;  // inside a boot-state step: Yes/No ans
 std::set<uint32_t> g_states = {0, 1};
 bool boot_state(uint32_t state) { return g_states.count(state) != 0; }
 
+std::atomic<uint32_t> g_widget{0};  // start_menu_widget
+
 PPC_FUNC(start_menu_step) {
     const uint32_t self = ctx.r[3], state = ppc::ld32(base, self + kMenuState);
+    g_widget = self;
     static uint32_t seen = ~0u;
     if (state != seen) {
         seen = state;
@@ -147,6 +151,8 @@ PPC_FUNC(notice_message) {  // 0x0201A020
 }
 
 }  // namespace
+
+uint32_t start_menu_widget() { return g_widget.load(); }
 
 void register_boot_prompts(bool enabled) {
     g_enabled = enabled;

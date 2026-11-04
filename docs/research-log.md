@@ -633,6 +633,36 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   each picture from the `avcodec_send_packet` that fed it, like the Wii U decoder with OUTPUT_PER_FRAME;
   `apply_cropping = 0` keeps the 1088-line coded picture with the crop reported (as Media Foundation gave it).
   Not yet checked in a window (WSL).
+
+## 2026-10-29 - Menu mouse: when is a menu open
+- Goal: the mouse as a pointer in menus (user 2026-10-29). Signals found with an override of sAppPad::vf6 (0x020E0CFC,
+  the pad system's per-frame update) logging candidate fields (MH3U_MENU_PROBE=1), headless Continue route + field
+  menu: sGame+0x48 is 0 on the start-menu screens and 2 from the village load on (frame 2260); sMenu+0x4C is 1 exactly
+  while the field menu is open (opened with MINUS - PLUS did nothing there - closed with B; frames 4803-5003). sID+0x368
+  goes 0 -> 1 (boot) -> 4 (village); sID+0x354 pulses 0x52 for one frame as the field menu opens.
+- FUN_0221A430 sLobby::menuDirections? (key-repeat directions 1/2/4/8 from sAppPad +0x80 | +0x6C, gated by
+  FUN_02219FB8 effects-busy and FUN_0221A0A8 sID+0x354/+0x368 checks) has 185 call sites in 97 functions, almost all
+  sLobby menu steps; two cockpit ones (0x020EB03C, 0x020ECD58). Wrapped with ctx.lr logging: not called once in the
+  village idle or in the field menu, so a call = a lobby menu is open (to be confirmed in a window with the item box).
+- FUN_021536D8(sMenu) = +0x4C && +0x34 == 2 && +0x35 == 2 (only caller: cockpit 0x020EB03C).
+- src/game/menu_mouse.cpp: pointer on while any signal holds, off 8 frames after the last one; headless run: on at
+  boot, off at frame 2267 (village), on 4803-5010 (field menu).
+- Item box hover (same day): the box screen is not reachable headless (no route to the box); forcing sLobby+0x5450 = 6
+  runs the box state machine (+0x6F10 0 -> 1 -> 2, sLobby::boxMenuStep? reads directions from 0x021F0EF0) but nothing
+  is drawn - the screen comes from the normal interaction path. sLobby+0x5450 is the lobby mode: FUN_02219800 (the
+  lobby step) switches on it - 0 walking, 6 the item box (FUN_02201508), 3/4/5/7/8/... other NPC / facility screens;
+  FUN_021F0574 is the box's close (mode 0, sID resets). Layout constants 0x1005C520..34 = 54 (row), 10, 176, -0, 0,
+  900 (the sub-list's bottom limit): the GUI works in 1920 x 1080 TV pixels. Cursor sound: FUN_020432C8 = FUN_020431F8
+  with r8 = 3 (sound 3 on a move). Hover takes the plates' summed instance x / y (+0xA0 / +0xA4) as row centres,
+  54 high, 260 either side; logged ("item box hover: ...") for checking in a window.
+- Start-menu lists (same day): snapshots of uIDStartMenu (0x171E0 bytes, every 5th pad update, MH3U_MENU_SNAP) over
+  DOWN, DOWN, UP, diffed offline. States (+0x2A0): 6 the title after the first A (d-pad ignored), 7 the Main Menu,
+  8 Game Options. Cursors (u32, a copy at +4): Main Menu +0x2AC (0 New Game .. 4 DLC, starts on Continue), Game
+  Options +0x2D4 (0 Camera .. 5 Language). Rows measured on frame dumps (orange highlight): Main Menu 5 rows, top 201,
+  110 high, 126 apart, x 588-1336; Game Options 6 rows, top 190, 92 high, 106 apart, x 175-790. Hover steps the
+  game's cursor with d-pad taps (one per 5 pad updates), a click on a row steps there then taps A. Checked headless with
+  MH3U_POINTER_SCRIPT (scripted pointer): hover to DLC, click Options -> Game Options, hover Language, a click beside
+  the rows does nothing.
 - **Linux movies stall (2026-10-29, issue #2).** Reproduced headless in WSL with the released 0.1.0 AppImage and the
   .wua: the intro (09_EU.mp4) gets only 3 H264DECExecute calls in 180 s (AU 1 = SPS/PPS/IDR, AU 2 = P slice, nal 0x41),
   then the player waits forever - the window shows the first frame, as reported. Likely cause: libavcodec 4.4 in
@@ -643,6 +673,25 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   outputs each non-reference B at once; the low-delay one skips non-reference pictures (AVDISCARD_NONREF) and gives
   I / P at once; pictures matched by pts. Headless WSL run: 3,673 Executes with one picture each, the intro plays to
   the end (frame dumps 600-3000 show it moving), an A press at frame 700 reaches the title, the attract movie loops.
+- Start-menu sub-screens and Options pages (same day). Start-menu states (uIDStartMenu+0x2A0): 7 Main Menu, 8 Game
+  Options, 9 DLC, 10 New Game (Character Creation, uIDMakeCharacter), 14 Character Select, 18-24 the Options pages
+  (18 Sound, 19 Effect, 20 Game, 22 Monitor, 23 Controller, 24 Language), 25 Data Transfer. The Options pages run in
+  uIDOption (start menu widget + 0x5CF70 here; also used by the in-game Options): FUN_0275BD84(uIDOption, page)
+  dispatches page 8 list (FUN_0275A7DC, cursor s16 +0x330), 18 Sound (FUN_0275AB88: row +0x368, levels 0-7 at +0x360 /
+  +0x364), 19 Effect (FUN_0275B264, +0x37C), 20 Game (FUN_0275B3DC: row +0x3BC, values +0x3B0 / +0x3CC), 22 Monitor
+  (FUN_0275B8D4, float +0x33C), 23 Controller (FUN_0275BA88, +0x398), 24 Language (FUN_0275BBC4, +0x39C); input
+  FUN_0275A4A8(obj, 1 up 2 down 4 left 8 right) on sAppPad +0x80 | +0x6C. The Controller page saves as it moves: a
+  LEFT on it set a scratch save to the GamePad ("set controller could not be detected" afterwards). Character Select:
+  slots uIDStartMenu+0x318; its sub-state +0x290: 3 slots, 6 "Use this character?" (5 the same for an empty slot),
+  cursor the byte sMenu+0x59 (0 Yes, 1 No; up / down), from FUN_02764E60. Yes / No elsewhere: FUN_020435B4(&cursor,
+  buttons, left, right) is the shared two-choice step (decide 0x10, cancel 0x20; the system message via FUN_020E28A0
+  on sMenu+0x204); the message box draws its pair with FUN_0261C0FC(box, text, yes, no, value) every frame, value =
+  sMenu+0x204, but the DLC prompt steps its own copy into it each frame (writing sMenu+0x204 does not stick), so that
+  one is driven with left / right taps. All of these are in menu_mouse.cpp's screens(); checked headless with
+  MH3U_POINTER_SCRIPT: Main Menu -> Options -> Sound (a click at Min sets SFX to 0), Effect (click Mild), Game (click
+  Quick Load's right side: On), Continue (hover slot 3, click slot 1), "Use this character?" (hover No, click No closes
+  it), DLC prompt (hover No, click No leaves). Not covered: Character Creation, the Data Transfer wait screen (Cancel
+  is +), Monitor / Controller / Language clicks only read in code.
 - **Older GPUs: Vulkan 1.2 (2026-10-29, issue #3).** The reporter's Radeon HD 7750 on AMD 23.11.1 (Windows) reports
   Vulkan 1.2.178: no VK_KHR_push_descriptor (we required it but never used it: no vkCmdPushDescriptorSetKHR, no push
   layouts), no dynamic rendering (core or KHR), synchronization2 and demote only as extensions, no depth_clip_control.
@@ -664,3 +713,118 @@ Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what 
   + A, back out (stick holds scaled to WSL's ~12 fps: the game moves by wall time). In WSL: house loaded at frame
   3170, inside at 3250, village again at 3750, no fault through 420 s. The unfixed build never got that far (the save
   load itself faulted, 2 of 2 runs).
+- Character Creation and the rest of New Game (same day). uIDMakeCharacter (step FUN_0275412C; it does not run while
+  a sub-screen is open, start-menu state 10 does): cursor +0x884 = 1 Name, 2 gender, 4 Clothing / 5 Clothing Color,
+  6 Face / 7 Features, 8 Hairstyle / 9 Hair Color, 10 Voice / 3 Skin Tone, 11 OK (from d-pad walks); +0x868 = the
+  sub-screen open (same numbers, 0 none); +0x874 mode: 2 grid, 3 "Cancel character creation?" (cursor +0x89C, 0 Yes,
+  1 No), 4 name keyboard, 5 name entered. Sub-screen cursor +0x890: type grids 4 columns x up to 5 rows (cells 208 x 64
+  on 225 / 76 from 186, 360; Clothing's one row at y 504), colour swatches 3 x 4 above an analog gradient, Features
+  0 / 2 / 3 (Feature 2's Color greyed while Off), Skin Tone an analog slider (not covered). OK goes straight to Touch
+  Panel Settings (state 12, cursor +0x324 Standard / Dynamic), then the save slot (state 13, cursor +0x318; an
+  occupied slot asks "Overwrite all existing data?" in the message box, side by side), then "Welcome" (state 15).
+  Hover steps the game's cursor with d-pad taps; a tap that does not move it ends the walk (empty cells). Controller
+  Settings (Options page 23) stores the controller as it moves - choosing the GamePad there leaves no input with the
+  default Pro Controller setup: option_page() masks left / right (sAppPad +0x6C / +0x80 bits 4 / 8) around that page's
+  step, so its choice cannot change (B still leaves). Checked headless with MH3U_POINTER_SCRIPT: grid walks, Voice
+  Type 16 hover / Type 18 click, gender click flips it, Features, cancel prompt hover Yes / click No, Touch Panel,
+  save slot 2, overwrite prompt on slot 1; LEFT / RIGHT on Controller Settings leave Pro Controller selected.
+- Field menu (same day): sMenu snapshots (MH3U_MENU_SNAP_SMENU) over DOWN, DOWN, UP, RIGHT, LEFT, RIGHT in the
+  village: row cursor sMenu+0x5C (s16, 0-5, shared by both tabs), tab sMenu+0x84 (s16, 0 Hunter, 1 Info), open
+  +0x4C; +0x34 goes 1 when a screen opened from it (Item Pouch, the quit prompt) is up. Rows 1412-1826 x, from y 286,
+  44 high, 52 apart; tabs Hunter 1424-1556 / Info 1564-1684 at y 204-248 (frame dumps). Checked headless with a
+  scripted pointer: hover walks both tabs, tab clicks switch, Item Pouch and Quit Game open by click. Quest Info is
+  greyed in the village and the cursor skips it, so a walk gives up after 2 x rows + 2 taps.
+- Screens from the field menu (2026-11-02). Their cursors are not in their widgets' obvious fields, so a heap search
+  was added: MH3U_MENU_HUNT="f0,f1,f2,f3;..." copies the MEM2 heap (0x10600000-0x50000000, committed 1 MB blocks;
+  VirtualQuery per 4 KB page is far too slow on the write-watched heap, and 0x104xxxxx is not committed) at f0 and
+  keeps the bytes that go +1, +1, -1 with DOWN, DOWN, UP, printing the vtables before each hit. All landed in sMenu
+  (vtable 0x10020FB4): sMenu+0x34 == 1 while a screen opened from the field menu is up, sMenu+0x52 says which (0 Item
+  Pouch, 1 Combine, 2 Combo List, 3 Hunter's Notes, 4 Options, 8 Equipment, 11 Gestures, 12 Guild Card); cursors (bytes):
+  +0x21F the item lists (Pouch, Combine, Combo List, Gestures; 8 rows a page, L / R pages), +0x5F Hunter's Notes'
+  pop-out (Monster List / Hunter Info) and Equipment (Weapon, 5 armour, Charm), +0x36 Guild Card's pop-out (Check,
+  Edit, Send - greyed but counted - Card List), +0x225 Options (7 rows a page; left / right turn its pages, so a click
+  is A, no value area). Status and Moga Village have nothing to select. Rows from frame dumps: lists x 1415-1815 from
+  y 282, 46 high, 52 apart; pop-outs x 1082-1326 from y 436 / 438. Checked headless with MH3U_POINTER_SCRIPT: each
+  hover walks the game's cursor (Pouch to row 3, Combine 2, Gestures 5, Equipment to Charm, Guild Card to Card List,
+  Options to row 4), Hunter Info opens by click. Deeper screens (an item's sub-menu, Hunter's Notes pages: sMenu+0x34
+  above 1) are not mapped: a click there is A.
+- One level below the field menu's screens (2026-11-02). One headless run per screen (a wrong count of B presses
+  spoiled a single long route), sMenu snapshots over DOWN, DOWN, UP plus frame dumps. sMenu+0x34 stays 1, sMenu+0x35
+  is the level inside the screen: Item Pouch 1 = an item's Discard / Swap (cursor +0x5A, 0 Discard), 2 = "Swap into
+  which position?" (the pouch list, +0x21F); Options (id 4) 1 = a row's value being edited (left / right change it,
+  A ends it); Hunter's Notes opens Monster List as id 37 and Hunter Info as id 38 (+0x35 1): Hunter Info's categories,
+  topic lists and topic pages all use cursor +0x225 and the same rows (8 a page), +0x229 = rows shown (3 / 6 / 8 seen,
+  constant per list); Guild Card Check +0x35 13 (L / R pages, nothing to select), Card List 15. Combine's second
+  material (+0x35 0), Combo List and Equipment details (A shows them beside the list) stay on their lists. Monster List
+  and Guild Card List are empty in the test save (one row), so their cursors are unconfirmed: left unmapped (click = A).
+  Checked with MH3U_POINTER_SCRIPT: hover walks Discard / Swap, the swap target, Hunter Info rows (an empty row on the
+  3-row list does nothing), a click on Player Info opens it; Music Volume 5 -> 6 -> 5 -> 4 by clicks on the value
+  box's halves, a click on the row ends the edit.
+- Creation's analog pickers, Monster List, Guild Card List (2026-11-03). Character Creation's sub-screens run from
+  FUN_027576D8 by +0x868 (3 Skin Tone FUN_02754C04, 5 Clothing Color FUN_02755414, 9 Hair Color FUN_02756698; the
+  creation step FUN_0275412C only for 0). Skin Tone: mode 2 is the slider, left / right step the int +0x8B4 (0-99,
+  FUN_02751BA8), FUN_027518E8 places the knob (x = v / 100 * 618 + 72 in the widget; on the TV 288 + v * 6.18, y 528)
+  and recolours (sUserData+0x7418); A (or B) leaves. Colour screens: swatch cursor +0x890, 12 = the gradient row (A
+  there: mode 3); in mode 3 the d-pad steps floats x 0-175 / y 0-50 (clothing +0x8AC / +0x8B0, FUN_0275274C /
+  FUN_027527C0, redraw FUN_02752470 -> sUserData+0x57A0; hair +0x8A4 / +0x8A8, FUN_02752120 / FUN_02752194, redraw
+  FUN_02751E5C), the knob at 200 + x / 175 * 400, 610 + y / 50 * 116 TV px; A or B back to mode 2. The gradient
+  texture is sampled by FUN_027517D8 from the copy uIDMakeAppearance+0x6C8 (FUN_0274A9F0). So mode 3 inside a
+  sub-screen is not the cancel prompt (that is mode 3 with +0x868 0): the pointer had shown the prompt's boxes there.
+  Monster List (sMenu id 37, +0x35 1) is Hunter Info's list: +0x229 = 1 with only "(No Data)", the row on the same
+  place. Guild Card List is uIDLobbyCardList (0x4B0 bytes), step FUN_0268E7DC (reads FUN_0221A430, so the pointer is
+  on): state +0x3D2 (0 list, 1 / 2 prompts, 5 a card shown, 6 moving a card, 7 closing), row +0x3D4 (s8, 0-7, wraps),
+  page +0x3D8 (s16, count +0x3DA), slots s8 at +0x3DC + page * 8 + row (< 0 empty), A views; card data at 0x10315F58
+  + slot * 0x380. Checked headless (MH3U_POINTER_SCRIPT): the gradients and the slider follow the pointer and a click
+  confirms (clothing 88,25 -> 131,13 then back to the swatches; hair clamps at the edge, ignores the pointer 48 px
+  past it; skin 50, then a click at 20 leaves the screen); the card list row went 0 -> 1 -> 2 -> 1 with DOWN, DOWN, UP
+  and its empty rows take no hover or click; Monster List ignores rows below "(No Data)", a click on it is A.
+- **Camera too fast above 30 FPS; loud menu sounds (2026-11-03, issues #2, #6, #7).** uGameCamera::vf8 (0x0227EDE8)
+  sets its frame time +0x8E4 = cUnit+0x1C x 0.5 (0x10029C40; 1.0 at 30 FPS, 1.0 fixed with sMain+0x76) and hands a
+  pointer to it to its sub-blocks, but four steps ignore it and run once a frame: FUN_0227FFC0 (ease (s16)(target -
+  current) >> shift, shifts 2 / 5, from FUN_0228984C and FUN_02283374), FUN_02286DE8 (auto-turn behind the hunter),
+  FUN_02286F18 (camera left / right = player pad +0x1C8 bits 6 / 8 with bit 9: target yaw block +0x94 +- 0x40B x
+  ramp / 5, ramp +0xE4 counting the frame time; 0x34B / 0x2EB variants, max 10 when pad +0x3D == 3) and FUN_02286890
+  (under water, bits 2 / 4: target pitch +0x90 +- 0x230 x ramp / 12, clamp +-0x3E94). Above 30 FPS the camera turned
+  FPS / 30 times faster and its ease snapped ("stops abruptly"). src/game/camera_speed.cpp scales them: turns x frame
+  time, ease 1 - (1 - 2^-shift)^t; 30 FPS is unchanged. The right stick reaches the camera through sAppPad +0x13C
+  / +0x136 (magnitude / angle, filled by FUN_020DFCF4; read watch: FUN_0227E138 copies them, FUN_0286BADC turns them
+  into the pad bits). FUN_0228984C returns at once while sGame+0x48 == 2; the village camera is fixed (user), so
+  the fix still has to be seen in the field.
+  Audio (MH3U_AX_LOG): every sound plays twice, a TV voice and a GamePad voice of the same sample (title jingle
+  18C274F0: TV 0.169, DRC 0.379; peaks 4678 vs 10474). The mixer played DRC-only voices on the TV, so these came out
+  ~3x too loud (the start-menu open / close sound). DRC-only voices are now skipped while a TV voice plays the same
+  sample. Not found yet: the windpress push and the fast "red markers above characters" (uIDCockpitAbovehead
+  0x025F20B0 / 0x025F2810 is a candidate; its GUI step FUN_02A70D34 is only called at set-up).
+- **Windpress and grab escape above 30 FPS (2026-11-03, issue #2).** Found with play logs (MH3U_PLAY_LOG: per-frame
+  hunter, changed words of the uPlayer / pad block / first monster, sticks; MH3U_PLAY_WATCH=1: writers of the
+  hunter's x position per second, RelWithDebInfo). The pad block is the uPlayer itself + 0xE40 (uPlayer+0xE30 points
+  there); +7 is the action phase, +0xE0/E4/E8 the position, +0x11C/+0x120 the facing, uPlayer+0xDB8 the motion.
+  Windpress: FUN_028ABC3C (motions 0xDA -> 0xE2): phase 1 adds K x cos(motion frame) along the facing to the
+  position every frame, without the frame time (100 FPS: a ~970-unit slide; the only position writer in that phase
+  besides the per-frame mover FUN_028A337C). src/game/windpress.cpp scales that step by cUnit+0x1C / 2.
+  FUN_028A6960 (airborne physics) is fine: it integrates in frame-time sub-steps.
+  Grab (Arzuros, motions 0x118 / 0x119, the hunter shaken 6.7 s): FUN_028B0F70 adds *(pad +0x6BC) - the frame time,
+  1.0 at 30 FPS - to the gauge pad +0x6B4 for each wiggle FUN_0286C37C accepts (one-frame cooldown +0x6C0 / +0x6C4);
+  at 4 (2 with skill 0x30) it resets and +0x6B0 counts down. Log at 100 FPS: steps of 0.25-0.34 on stick flips, a
+  fill about every second - ~13 wiggles per fill instead of 4. src/game/grab_escape.cpp points +0x6BC at 1.0
+  (0x10029C08) for the call. Both: 30 FPS unchanged; to be checked in game.
+  Volume: master x0.8 with a soft knee from 20000 (runtime/audio/ax.cpp), after removing the doubled GamePad voices.
+- **Lobby menus with real hover (2026-11-03).** Each lobby list keeps its cursor in guest memory and draws its
+  highlight from it every frame, so the hover writes that cursor (src/game/menu_mouse.cpp, one wrapped step each):
+  FUN_0221C614 option scroll (list +4; geometry per caller lr), FUN_02217F10 Market list (sLobby+0x5558),
+  FUN_021F1140 item box grid (box +0xC / +0xE, 10x10), FUN_021F1B00 Store Items list (+0x14), FUN_021CE834 Smithy /
+  Armory list (sLobby+0x5944; refresh FUN_021CCDD4 + FUN_021CDCF0), FUN_021E55A8 quest level plaques (+0x38),
+  FUN_021E3978 quest list (+0x16), FUN_021D8C8C Canteen ingredients (+0x1E), FUN_021EF1A8 furnishing / Sources list
+  (u8 sLobby+0x6EB9), FUN_022101F4 Farm Name List (sLobby+0x7FC2), FUN_021D431C Farm Felyne tab (view+0x38, redraw
+  FUN_021D3E1C), FUN_021D4420 Cultivate settings (view+0x3A), FUN_021EFA70 Crop Box / Stockpile (menu u8 +0x693E,
+  grid +0x693D / +0x694E / +0x694C), FUN_02043308 stacked Yes / No (u32, 0 Yes), FUN_02863258 quest Supply Box (byte
+  +0x6BF of FUN_02166A14(sQuest), 8x5), sMenu+0x204 Abandon Quest's Yes / No (field menu screen 1/5/0).
+  Ferry: lobby mode 29 runs uIDLobbyOnline; its state 9 FUN_026AD984 is the Destination list (six entries, cursor
+  +0x408 / +0x404, drawn +0x40C; it only redraws on up / down, so the hover calls FUN_026ACBB8 like it). Furnishing
+  position picker: FUN_021C3DCC (Place) and FUN_021C4304 (Remove) share a struct (cursor +0xCA, spots +0xB3[]); the
+  spots are 3D markers (sLobbyTarget+0x19A flags) seen from fixed cameras, so their screen places were measured
+  (MH3U_MENU_PICKER_CAL steps through the free spots and captures each; Moga house, area 26 room 1, spots 0-2 at
+  475,658 / 827,515 / 1415,738). Tools: MH3U_MENU_LEARN (callers of the lobby directions and cursor helpers, field
+  menu screen keys, a screenshot per new screen), MH3U_MENU_HUNT_LIVE (Down, Down, Up in a window: the bytes that went
+  +1, +1, -1). uCamera fields (createProperty): far +0x30, near +0x34, aspect +0x38, fov +0x3C, pos +0x40, up +0x50,
+  target +0x60.

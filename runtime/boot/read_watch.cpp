@@ -8,6 +8,7 @@
 #include <dbghelp.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -26,6 +27,10 @@ std::atomic<uintptr_t> g_host{0};  // host address of the watched word once reso
 std::atomic<bool> g_armed{false};
 std::mutex g_m;
 std::map<std::tuple<uint64_t, uint64_t, uint64_t>, uint64_t> g_hits;  // (rip, caller, caller's caller) -> count
+// writes only (MH3U_WATCH_WRITES=1 or watch(..., true)): also counted per second, for a timeline of who wrote when
+bool g_writes_only = false;
+std::map<std::tuple<uint32_t, uint64_t, uint64_t>, uint64_t> g_timeline;  // (second, rip, caller) -> count
+std::chrono::steady_clock::time_point g_start = std::chrono::steady_clock::now();
 thread_local bool t_stepping = false;
 
 uintptr_t page_of(uintptr_t a) { return a & ~uintptr_t{0xFFF}; }
@@ -59,11 +64,17 @@ LONG CALLBACK handler(EXCEPTION_POINTERS* e) {
     if (code == STATUS_GUARD_PAGE_VIOLATION && g_host) {
         const uintptr_t at = static_cast<uintptr_t>(e->ExceptionRecord->ExceptionInformation[1]);
         if (page_of(at) != page_of(g_host)) return EXCEPTION_CONTINUE_SEARCH;
-        if (at + 8 > g_host && at < g_host + 4) {  // a read or write overlapping the watched word
+        const bool write = e->ExceptionRecord->ExceptionInformation[0] == 1;
+        if (at + 8 > g_host && at < g_host + 4 && (write || !g_writes_only)) {  // an access overlapping the word
             uint64_t c[2];
             callers(*e->ContextRecord, c);
             std::lock_guard g(g_m);
             ++g_hits[{e->ContextRecord->Rip, c[0], c[1]}];
+            if (g_writes_only) {
+                const auto sec = static_cast<uint32_t>(
+                    std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - g_start).count());
+                ++g_timeline[{sec, e->ContextRecord->Rip, c[0]}];
+            }
         }
         e->ContextRecord->EFlags |= 0x100;  // single-step the access, then re-arm
         t_stepping = true;
@@ -95,6 +106,9 @@ std::string symbol(uint64_t a) {
 void start_from_env(uint8_t* base) {
     char* env = nullptr;
     size_t len = 0;
+    if (_dupenv_s(&env, &len, "MH3U_WATCH_WRITES") == 0 && env) g_writes_only = std::string(env) == "1";
+    std::free(env);
+    env = nullptr;
     if (_dupenv_s(&env, &len, "MH3U_WATCH_READ") != 0 || !env) return;
     const std::string spec = env;
     std::free(env);
@@ -108,6 +122,28 @@ void start_from_env(uint8_t* base) {
     }
     AddVectoredExceptionHandler(1, &handler);
     std::printf("read watch: %s\n", spec.c_str());
+}
+
+void watch(uint8_t* base, uint32_t guest, bool writes_only) {
+    static bool handler_added = false;
+    if (!handler_added) {
+        AddVectoredExceptionHandler(1, &handler);
+        handler_added = true;
+        g_start = std::chrono::steady_clock::now();
+    }
+    g_base = base;
+    g_writes_only = writes_only;
+    const uintptr_t host = reinterpret_cast<uintptr_t>(base) + guest;
+    if (g_host == host) return;
+    if (g_host && page_of(g_host) != page_of(host)) {  // drop the guard from the old page
+        DWORD old = 0;
+        VirtualProtect(reinterpret_cast<void*>(page_of(g_host)), 0x1000, PAGE_READWRITE, &old);
+    }
+    g_ptr = 0;
+    g_offset = guest;
+    g_host = host;
+    std::printf("read watch: guest %08X (%s)\n", guest, writes_only ? "writes" : "reads and writes");
+    arm();
 }
 
 void poll() {
@@ -135,6 +171,10 @@ void report() {
     for (const auto& [k, n] : g_hits)
         std::printf("  %8llu  %s  <- %s  <- %s\n", static_cast<unsigned long long>(n), symbol(std::get<0>(k)).c_str(),
                     symbol(std::get<1>(k)).c_str(), symbol(std::get<2>(k)).c_str());
+    if (!g_timeline.empty()) std::printf("read watch: writes per second (s, count, writer <- caller)\n");
+    for (const auto& [k, n] : g_timeline)
+        std::printf("  t %4u %6llu  %s  <- %s\n", std::get<0>(k), static_cast<unsigned long long>(n),
+                    symbol(std::get<1>(k)).c_str(), symbol(std::get<2>(k)).c_str());
 }
 
 }  // namespace mh3u::read_watch
@@ -143,6 +183,7 @@ void report() {
 
 namespace mh3u::read_watch {
 void start_from_env(uint8_t*) {}
+void watch(uint8_t*, uint32_t, bool) {}
 void poll() {}
 void report() {}
 }  // namespace mh3u::read_watch

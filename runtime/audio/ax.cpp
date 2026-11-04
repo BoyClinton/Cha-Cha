@@ -11,7 +11,8 @@
 //
 // Timing: with an audio device, frames are produced whenever the device queue drops below ~40 ms (AX time follows
 // the audio clock, like hardware); without one (--headless, MH3U_AUDIO=0 or no device) a steady 3 ms host clock.
-// MH3U_AUDIO_WAV=<file> also writes the stereo output to a WAV (for checking without listening).
+// MH3U_AUDIO_WAV=<file> also writes the stereo output to a WAV (for checking without listening). MH3U_AX_LOG=1 prints
+// each voice when it stops: data, envelope, mix and its loudest output sample (for level problems).
 //
 // AXVoice layout (public Cafe headers): index +0, state +4, priority +0x1C, callback +0x20, userContext +0x24,
 // offsets (AXVoiceOffsets) +0x34: u16 dataType, u16 loopingEnabled, u32 loopOffset, u32 endOffset, u32 currentOffset,
@@ -46,6 +47,8 @@ constexpr int kRate = 32000;
 constexpr int kFrame = 96;  // samples per 3 ms frame
 constexpr int kTvChannels = 6, kBuses = 4;
 constexpr uint16_t kAdpcm = 0, kPcm16 = 0x0A, kPcm8 = 0x19;
+constexpr float kMaster = 0.8f;    // overall level (about -2 dB)
+constexpr float kKnee = 20000.0f;  // soft limiter starts here (of 32767)
 
 struct Mix {
     float vol = 0, delta = 0;  // 1.0 = 0x8000
@@ -71,6 +74,8 @@ struct Voice {
     float lpf_a0 = 1, lpf_b0 = 0, lpf_y = 0;
     Mix tv[kTvChannels][kBuses];
     Mix drc[2];  // GamePad (DRC 0) main bus L/R: played on the TV output when the voice has no TV mix
+    float peak = 0;   // MH3U_AX_LOG: loudest output sample since it started
+    uint32_t frames = 0;
 };
 
 std::recursive_mutex g_m;  // also the AXUserBegin/AXUserEnd protection
@@ -83,6 +88,7 @@ std::thread g_thread;
 SDL_AudioStream* g_stream = nullptr;
 std::FILE* g_wav = nullptr;
 uint32_t g_wav_bytes = 0;
+bool g_log = false;  // MH3U_AX_LOG
 
 uint32_t voice_addr(int i) { return g_voice_base + static_cast<uint32_t>(i) * kVoiceSize; }
 int voice_index(uint32_t addr) {
@@ -150,8 +156,15 @@ float next_sample(Voice& v, const uint8_t* base) {
     return out;
 }
 
-// One frame of a voice: decode + SRC + envelope + low-pass, then mixed into the TV main bus.
-void mix_voice(Voice& v, const uint8_t* base, float (&tv)[kTvChannels][kFrame]) {
+bool has_tv_mix(const Voice& v) {
+    for (int c = 0; c < kTvChannels; ++c)
+        if (v.tv[c][0].vol != 0 || v.tv[c][0].delta != 0) return true;
+    return false;
+}
+
+// One frame of a voice: decode + SRC + envelope + low-pass, then mixed into the TV main bus. A voice with only a
+// GamePad mix plays through its DRC L/R volumes when play_drc is set.
+void mix_voice(Voice& v, const uint8_t* base, float (&tv)[kTvChannels][kFrame], bool play_drc) {
     float buf[kFrame];
     for (int i = 0; i < kFrame; ++i) {
         if (!v.src) {
@@ -176,16 +189,34 @@ void mix_voice(Voice& v, const uint8_t* base, float (&tv)[kTvChannels][kFrame]) 
     }
     if (v.lpf)
         for (int i = 0; i < kFrame; ++i) buf[i] = v.lpf_y = v.lpf_a0 * buf[i] - v.lpf_b0 * v.lpf_y;
-    bool tv_mix = false;
-    for (int c = 0; c < kTvChannels; ++c) tv_mix |= v.tv[c][0].vol != 0 || v.tv[c][0].delta != 0;
+    const bool tv_mix = has_tv_mix(v);
     for (int c = 0; c < kTvChannels; ++c) {
+        if (!tv_mix && (c >= 2 || !play_drc)) break;
         Mix& m = c < 2 && !tv_mix ? v.drc[c] : v.tv[c][0];
         if (m.vol == 0 && m.delta == 0) continue;
         for (int i = 0; i < kFrame; ++i) {
             m.vol += m.delta;
             tv[c][i] += buf[i] * m.vol;
+            if (g_log) v.peak = std::max(v.peak, std::fabs(buf[i] * m.vol));
         }
     }
+    ++v.frames;
+}
+
+// MH3U_AX_LOG: one line per voice as it stops (or is freed while playing)
+void log_voice(int i, const char* why) {
+    const Voice& v = g_voice[i];
+    if (!g_log || !v.frames) return;
+    std::printf("ax: voice %2d %s after %u frames: data %08X type %u ve %.3f%+.5f", i, why, v.frames, v.data, v.type,
+                v.ve, v.ve_delta);
+    for (int c = 0; c < kTvChannels; ++c)
+        if (v.tv[c][0].vol || v.tv[c][0].delta) std::printf(" tv%d %.3f%+.5f", c, v.tv[c][0].vol, v.tv[c][0].delta);
+    for (int b = 1; b < kBuses; ++b)
+        for (int c = 0; c < kTvChannels; ++c)
+            if (v.tv[c][b].vol) std::printf(" aux%d.%d %.3f", b, c, v.tv[c][b].vol);
+    for (int c = 0; c < 2; ++c)
+        if (v.drc[c].vol || v.drc[c].delta) std::printf(" drc%d %.3f", c, v.drc[c].vol);
+    std::printf(" peak %.0f\n", v.peak);
 }
 
 void write_wav_header() {
@@ -213,21 +244,36 @@ uint32_t produce_frame(uint8_t* base) {
     uint32_t cb;
     {
         std::lock_guard g(g_m);
+        // The game plays its sounds twice, to the TV and to the GamePad speaker (same sample, the GamePad copy
+        // louder: menu sounds 0.17 TV / 0.38 DRC). GamePad-only voices are heard on the TV output only when no TV
+        // voice plays the same sample, or every such sound would come out about three times too loud.
+        uint32_t tv_data[kVoices];
+        int tv_count = 0;
+        for (const Voice& v : g_voice)
+            if (v.acquired && v.playing && has_tv_mix(v)) tv_data[tv_count++] = v.data;
         for (int i = 0; i < kVoices; ++i) {
             Voice& v = g_voice[i];
             if (!v.acquired || !v.playing) continue;
-            mix_voice(v, base, tv);
+            mix_voice(v, base, tv, std::find(tv_data, tv_data + tv_count, v.data) == tv_data + tv_count);
+            if (!v.playing) log_voice(i, "ended");
             mirror(base, i);
         }
         cb = g_frame_callback;
     }
-    // TV channels L R SL SR C LFE -> stereo
+    // TV channels L R SL SR C LFE -> stereo, then the master level: kMaster lower overall, and peaks above kKnee
+    // bent smoothly toward full scale instead of clipping (loud effects on top of music no longer crackle)
     int16_t pcm[kFrame * 2];
+    const auto master = [](float x) {
+        x *= kMaster;
+        const float a = std::fabs(x);
+        if (a > kKnee) x = std::copysign(kKnee + (a - kKnee) / (1.0f + (a - kKnee) / (32767.0f - kKnee)), x);
+        return static_cast<int16_t>(std::clamp(x, -32768.0f, 32767.0f));
+    };
     for (int i = 0; i < kFrame; ++i) {
         const float c = 0.7071f * tv[4][i];
         const float l = tv[0][i] + c + 0.7071f * tv[2][i], r = tv[1][i] + c + 0.7071f * tv[3][i];
-        pcm[i * 2] = static_cast<int16_t>(std::clamp(l, -32768.0f, 32767.0f));
-        pcm[i * 2 + 1] = static_cast<int16_t>(std::clamp(r, -32768.0f, 32767.0f));
+        pcm[i * 2] = master(l);
+        pcm[i * 2 + 1] = master(r);
     }
     if (g_stream) SDL_PutAudioStreamData(g_stream, pcm, sizeof pcm);
     if (g_wav) {
@@ -300,6 +346,7 @@ AX_FUNC(AXAcquireVoice) {
 }
 AX_FUNC(AXFreeVoice) {
     VOICE();
+    if (v.playing) log_voice(vi, "freed");
     v = Voice{};
 }
 // void AXSetVoiceState(AXVoice*, AXVoiceState): 0 stopped, 1 playing
@@ -309,7 +356,10 @@ AX_FUNC(AXSetVoiceState) {
     if (play && !v.playing) {
         v.primed = false;
         v.s0 = v.s1 = 0;
+        v.peak = 0;
+        v.frames = 0;
     }
+    if (!play && v.playing) log_voice(vi, "stopped");
     v.playing = play;
     mirror(base, vi);
 }
@@ -512,6 +562,7 @@ void register_ax(os::Runtime& r, bool output) {
     g_voice_base = r.mem->alloc_hle(kVoices * kVoiceSize, 32);
     g_stack_top = core::layout::kStackEnd - 0x10000;  // 64 KB below the alarm stack
     open_output(output);
+    g_log = env("MH3U_AX_LOG") == "1";
 #define R(name) ppc::register_import("snd_core." #name, &hle_##name);
     R(AXInit) R(AXQuit) R(AXAcquireVoice) R(AXFreeVoice) R(AXSetVoiceState) R(AXSetVoiceOffsets) R(AXGetVoiceOffsets)
     R(AXSetVoiceSrcRatio) R(AXSetVoiceSrc) R(AXSetVoiceAdpcmLoop) R(AXSetVoiceAdpcm) R(AXSetVoiceType)

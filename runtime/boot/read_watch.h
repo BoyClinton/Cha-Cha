@@ -12,6 +12,9 @@ namespace mh3u::read_watch {
 
 // Parses MH3U_WATCH_READ; base = guest memory base.
 void start_from_env(uint8_t* base);
+// Watches the word at a guest address from code (re-targets when called with another address); writes_only counts
+// only writes and keeps a per-second timeline of the writers (MH3U_WATCH_WRITES=1 does the same for the env form).
+void watch(uint8_t* base, uint32_t guest, bool writes_only);
 // Main thread, periodically: resolves the address and (re)arms the guard page.
 void poll();
 void report();
