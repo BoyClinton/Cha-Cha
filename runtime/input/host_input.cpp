@@ -113,6 +113,7 @@ bool g_captured = false;
 std::set<int> g_down;  // held keys / mouse buttons
 std::map<int, int> g_pulses;  // wheel: source -> reads left
 float g_mouse_dx = 0, g_mouse_dy = 0, g_prev_rx = 0, g_prev_ry = 0;
+bool g_cursor_hidden = false;
 std::map<SDL_JoystickID, Pad> g_pads;
 float g_rumble = 0;
 uint32_t g_rumble_ms = 0;
@@ -644,6 +645,14 @@ void update() {
             SDL_SetCursor(SDL_GetDefaultCursor());
             if (g_recapture && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS)) capture(true);
         }
+    }
+    // no menu, no overlay, no text entry: the mouse is not a pointer, so no cursor over the game (user 2026-11-03)
+    const bool hide = g_window && !g_pointer && !g_suspended && !g_text.active &&
+                      (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS);
+    if (hide != g_cursor_hidden) {
+        if (hide) SDL_HideCursor();
+        else SDL_ShowCursor();
+        g_cursor_hidden = hide;
     }
     // the pointer's cursor (again after the launcher overlay, whose UI sets its own)
     if (g_window && g_pointer && !g_suspended && g_cursor && SDL_GetCursor() != g_cursor) SDL_SetCursor(g_cursor);

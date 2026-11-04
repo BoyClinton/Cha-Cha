@@ -59,3 +59,5 @@
 0x026AD984 uIDLobbyOnline::destinationStep? # src/game/menu_mouse.cpp: Ferry Destination list, state 9 (cursor +0x408 / +0x404, drawn +0x40C, locks +0x400, entries +0x2E4); hover sets and redraws
 0x021C3DCC sLobby::furnishingPickerStep? # src/game/menu_mouse.cpp: house furnishing position picker (r4 = pick: state +2, cursor +0xCA of +0xC4, spots +0xB3[]); hover by measured spot positions, MH3U_MENU_PICKER_CAL to measure
 0x021C4304 sLobby::furnishingRemoveStep? # src/game/menu_mouse.cpp: house furnishing Remove (r4 = pick: state +2; state 1 the occupied-spot picker like Place, removable bit 2 of +0xBB[]); hover as the Place picker
+0x020E8DD4 questResultStep? # src/game/menu_mouse.cpp: quest results (r4 = res: state +0 / +1, hunter +0x20 of +0x21, view +0x2F, detail cursors +0x29 / +0x2A / +0x2C / +0x2D / +0x44); pointer kept on, learn screenshots per view
+0x02180870 sResult::rewardStep? # src/game/menu_mouse.cpp: solo quest results / rewards (r4 = res: state +0x2FF4, sub +2, cursor +0x3066 of +0x3067, grid +0x3073 / +0x3075, Yes / No +0x3084); pointer kept on, learn screenshots per state

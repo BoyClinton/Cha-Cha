@@ -1361,6 +1361,95 @@ PPC_FUNC(stacked_yes_no) {
     sub_02043308__orig(ctx, base);
 }
 
+// Quest results, FUN_020E8DD4(?, res): reads the pad itself (sAppPad+0x6C). res+0 == 3 and res+1 == 0 is the results
+// view: res+0x20 the hunter shown (of res+0x21; left / right), A finishes, X opens a menu (res+0x2F 5, choice res+0x44)
+// for the detail views res+0x2F 1 (rows res+0x29 of 7, columns res+0x2A of res+0x23), 2 (rows res+0x29 of 8, res+0x2C)
+// and 3 (res+0x2D, res+0x2A). The pointer is kept on there (a left click is A); with MH3U_MENU_LEARN each view gets a
+// screenshot (key E00000VV, VV = res+0x2F) and MH3U_MENU_PROBE logs the cursors - for its hover.
+PPC_FUNC(quest_results) {
+    const uint32_t res = static_cast<uint32_t>(ctx.r[4]);
+    if (res && ppc::ld8(base, res) == 3 && ppc::ld8(base, res + 1) == 0) {
+        g_prompt = true;
+        const uint8_t view = ppc::ld8(base, res + 0x2F);
+        if (g_learn) g_callers.insert(0xE0000000u | view);
+        static uint32_t last = 0xFFFFFFFF;
+        const uint32_t now = view << 24 | ppc::ld8(base, res + 0x20) << 16 | ppc::ld8(base, res + 0x29) << 8 | ppc::ld8(base, res + 0x2A);
+        const uint32_t more = ppc::ld8(base, res + 0x2C) << 16 | ppc::ld8(base, res + 0x2D) << 8 | ppc::ld8(base, res + 0x44);
+        if (g_probe && now != last)
+            std::printf("menu probe: frame %u results view %u hunter %u/%u row %u col %u (+23 %u +2C %u +2D %u +44 %u)\n", g_frame,
+                        view, ppc::ld8(base, res + 0x20), ppc::ld8(base, res + 0x21), ppc::ld8(base, res + 0x29),
+                        ppc::ld8(base, res + 0x2A), ppc::ld8(base, res + 0x23), more >> 16, (more >> 8) & 0xFF, more & 0xFF);
+        last = now;
+    }
+    sub_020E8DD4__orig(ctx, base);
+}
+
+// Solo quest results (rewards), sResult's FUN_02180870(?, res): state res+0x2FF4 (1 / 2 rewards, 3 ..., up to 8),
+// sub-state res+2; cursors res+0x3066 of res+0x3067 (up / down; B jumps to the last), res+0x3073 / res+0x3075 (an
+// 8-row grid), Yes / No res+0x3084 (FUN_02043308). Pointer kept on (a left click is A); MH3U_MENU_LEARN screenshots
+// each state (key E1SSSS0B: state, sub), MH3U_MENU_PROBE logs the cursors - for its hover.
+PPC_FUNC(result_rewards) {
+    const uint32_t res = static_cast<uint32_t>(ctx.r[4]);
+    if (res) {
+        const uint32_t state = ppc::ld32(base, res + 0x2FF4);
+        const uint8_t sub = ppc::ld8(base, res + 2);
+        g_prompt = true;
+        if (g_learn) g_callers.insert(0xE1000000u | (state & 0xFFFF) << 8 | sub);
+        static uint64_t last = ~0ull;
+        const uint64_t now = static_cast<uint64_t>(state) << 48 | static_cast<uint64_t>(sub) << 40 |
+                             static_cast<uint64_t>(ppc::ld8(base, res + 0x3066)) << 32 | ppc::ld8(base, res + 0x3067) << 24 |
+                             ppc::ld8(base, res + 0x3073) << 16 | ppc::ld8(base, res + 0x3075) << 8 | ppc::ld8(base, res + 0x3084 + 3);
+        if (g_probe && now != last)
+            std::printf("menu probe: frame %u rewards state %u sub %u cursor %u/%u grid %u,%u yes/no %u\n", g_frame, state, sub,
+                        ppc::ld8(base, res + 0x3066), ppc::ld8(base, res + 0x3067), ppc::ld8(base, res + 0x3073),
+                        ppc::ld8(base, res + 0x3075), ppc::ld32(base, res + 0x3084));
+        last = now;
+        // hover (window session screenshots, 2026-11-03): state 1 sub 0 the menu (Take Rewards, Send to Item Box,
+        // Sell Items and Exit; rows centred at y 289 + 56 * row, x 330-690), sub 1 the Reward Box grid (row +0x306F of
+        // +0x3072, column +0x306E of 8; cells at x 1288 + 52 * col, y 250 + 52 * row), state 5 the summary pages (page
+        // +0x3066 of +0x3067: the arrows at 1372,140 / 1612,140 turn it, a click elsewhere is A = Done); other states:
+        // a click is A
+        static float px = -1, py = -1;
+        if (state == 1 && sub == 0) {
+            const Hover h = hover_cells({510, 289, 0, 56, 180, 25, 1, 3}, ppc::ld8(base, res + 0x3067), px, py);
+            if (h.item >= 0 && (h.moved || h.click) && h.item != ppc::ld8(base, res + 0x3066)) {
+                base[res + 0x3066] = static_cast<uint8_t>(h.item);
+                cursor_sound(ctx, base);
+            }
+            if (h.click) menu_confirm();
+        } else if (state == 1 && sub == 1) {
+            const int rows = ppc::ld8(base, res + 0x3072);
+            const Hover h = hover_cells({1288, 250, 52, 52, 25, 25, 8, 6}, rows * 8, px, py);
+            if (h.item >= 0 && (h.moved || h.click) &&
+                h.item != ppc::ld8(base, res + 0x306F) * 8 + ppc::ld8(base, res + 0x306E)) {
+                base[res + 0x306F] = static_cast<uint8_t>(h.item / 8);
+                base[res + 0x306E] = static_cast<uint8_t>(h.item % 8);
+                cursor_sound(ctx, base);
+            }
+            if (h.click) menu_confirm();
+        } else if (state == 5) {
+            float x = 0, y = 0;
+            if (g_pointer.tap && menu_pointer(x, y))
+                while (menu_click()) {
+                    const int page = ppc::ld8(base, res + 0x3066), pages = ppc::ld8(base, res + 0x3067);
+                    const bool left = std::fabs(x - 1372) < 60 && std::fabs(y - 140) < 45;
+                    const bool right = std::fabs(x - 1612) < 60 && std::fabs(y - 140) < 45;
+                    if ((left || right) && pages > 1) {
+                        base[res + 0x3066] = static_cast<uint8_t>((page + (right ? 1 : pages - 1)) % pages);
+                        cursor_sound(ctx, base);
+                    } else if (!left && !right) {
+                        menu_confirm();
+                    }
+                }
+        } else {
+            float x = 0, y = 0;
+            if (g_pointer.tap && menu_pointer(x, y))
+                while (menu_click()) menu_confirm();
+        }
+    }
+    sub_02180870__orig(ctx, base);
+}
+
 // Abandon Quest's "Quit and return to the village?" (field menu sMenu+0x34 1, +0x52 5, +0x35 0): Yes and No side by
 // side, cursor sMenu+0x204 (u32: 0 Yes, 1 No; opens on No - seen with MH3U_MENU_PROBE). Yes centred at 810,666 and No
 // at 1111,666 (window session screenshot, 2026-11-03).
@@ -1583,6 +1672,8 @@ void register_menu_mouse(Pointer pointer) {
     ppc::set_override(0x026AD984, &ferry_list);
     ppc::set_override(0x021C3DCC, &furnishing_picker);
     ppc::set_override(0x021C4304, &furnishing_remove);
+    ppc::set_override(0x020E8DD4, &quest_results);
+    ppc::set_override(0x02180870, &result_rewards);
     if (g_learn) {
         ppc::set_override(0x020431F8, &learn_cursor_a);
         ppc::set_override(0x020432BC, &learn_cursor_b);
