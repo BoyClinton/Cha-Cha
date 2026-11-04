@@ -38,6 +38,7 @@
 
 #include "functions.h"
 #include "guest_memory.h"
+#include "menu_mouse.h"
 #include "text_trace.h"
 
 namespace mh3u::game {
@@ -62,9 +63,9 @@ struct Slot {
 };
 
 // The game's menu sounds (FUN_020BFC74(handle, id), as the box menu plays them): 0 a sub-list opens, 1 back, 2 not
-// possible, 5 a choice made, 6 a page turned (Store Items' paging, FUN_020431F8). The handle is an 8-byte object on
-// the guest stack.
-enum Sound : uint32_t { kOpen = 0, kBack = 1, kError = 2, kChoose = 5, kPage = 6 };
+// possible, 3 the cursor moved (FUN_020432C8, the menus' up / down step), 5 a choice made, 6 a page turned (Store
+// Items' paging, FUN_020431F8). The handle is an 8-byte object on the guest stack.
+enum Sound : uint32_t { kOpen = 0, kBack = 1, kError = 2, kMove = 3, kChoose = 5, kPage = 6 };
 void play(ppc::Context& ctx, uint8_t* base, Sound id) {
     const ppc::Context saved = ctx;
     ctx.r[1] -= 0x40;
@@ -477,6 +478,94 @@ uint32_t nth_child(uint8_t* base, uint32_t obj, int n) {
     return o;
 }
 
+// Mouse hover on the option list (menu_mouse.h): the option under the pointer becomes the cursor (with the cursor
+// sound), a click on it confirms (A), a click beside the rows does nothing. Rows are the plates' places in the GUI
+// tree: an instance's x / y (+0xA0 / +0xA4) are taken as relative to its parent, summed from the widget's root; a row
+// is kRow high around that y and kRowHalfWidth either side of x. Only the option list (state 2, level 0): the
+// sub-lists still take a click as A. Status: wip - the geometry is logged (first draw, every click) and still to be
+// checked against the picture in a window.
+constexpr float kRowHalfWidth = 220.0f;
+// The summed places come out 220 px left of and 28 px above the rows as drawn (a window session, 2026-11-03: the
+// small box's rows are at x 200-640, y 272 + 54 * slot on the TV; the tree gave x 200, y 244 + 54 * slot): the widget
+// sits there on the screen, an offset the tree does not hold.
+constexpr float kBoxDx = 220.0f, kBoxDy = 28.0f;
+bool g_hover_logged = false;
+float g_hover_x = -1, g_hover_y = -1;  // where the pointer was: only a moved pointer moves the cursor (keys / wheel stay)
+
+// x / y of an instance in the widget, summed over its parents (false if it is not in the tree)
+bool place(uint8_t* base, uint32_t maki, uint32_t inst, float& x, float& y) {
+    struct Node {
+        uint32_t e;
+        float x, y;
+    };
+    std::vector<Node> stack;
+    if (const uint32_t root = ppc::ld32(base, maki + 0xF4)) stack.push_back({root, 0, 0});
+    for (int n = 0; !stack.empty() && n < 600; ++n) {
+        const Node nd = stack.back();
+        stack.pop_back();
+        const float ex = nd.x + ppc::ldf32(base, nd.e + 0xA0), ey = nd.y + ppc::ldf32(base, nd.e + 0xA4);
+        if (nd.e == inst) {
+            x = ex, y = ey;
+            return true;
+        }
+        if (const uint32_t next = ppc::ld32(base, nd.e + 0x64)) stack.push_back({next, nd.x, nd.y});
+        if (const uint32_t child = ppc::ld32(base, nd.e + 0x60)) stack.push_back({child, ex, ey});
+    }
+    return false;
+}
+
+// The option drawn in each row slot (-1: none): the game's 6 options use slots 0-2 and 4-6; with Item Sets, 0-2, Item
+// Sets in 3, the gap in 4 and options 3-5 in 5-7; the small box only rows 0-3.
+int slot_option(uint8_t* base, uint32_t state, int slot) {
+    constexpr int kOurs[8] = {0, 1, 2, static_cast<int>(kOption), -1, 3, 4, 5}, kGame[8] = {0, 1, 2, -1, 3, 4, 5, -1};
+    const uint16_t count = ppc::ld16(base, state + 0xC);
+    const int o = count == 7 ? kOurs[slot] : kGame[slot];
+    if (ppc::ld8(base, state + 2) && slot > 3) return -1;  // the small box
+    return o >= 0 && o < count ? o : -1;
+}
+
+void box_hover(ppc::Context& ctx, uint8_t* base, uint32_t maki, uint32_t state) {
+    if (ppc::ld8(base, state) != 2 || ppc::ld16(base, state + 0xA) != 0) return;
+    float px = 0, py = 0;
+    const bool on_screen = game::menu_pointer(px, py);
+    const uint32_t plates = ppc::ld32(base, maki + 0x2B0);
+    int hit = -1;
+    for (int slot = 0; plates && slot < 8; ++slot) {
+        const int option = slot_option(base, state, slot);
+        float x = 0, y = 0;
+        if (option < 0 || !place(base, maki, ppc::ld32(base, plates + slot * 4), x, y)) continue;
+        if (!g_hover_logged) std::printf("item box hover: row %d option %d at %.1f, %.1f\n", slot, option, x, y);
+        x += kBoxDx, y += kBoxDy;
+        if (on_screen && py >= y - kRow * 0.5f && py < y + kRow * 0.5f && px >= x - kRowHalfWidth && px <= x + kRowHalfWidth)
+            hit = option;
+    }
+    g_hover_logged = true;
+    const bool moved = on_screen && (px != g_hover_x || py != g_hover_y);
+    if (on_screen) g_hover_x = px, g_hover_y = py;
+    static const bool probe = [] {
+        char* v = nullptr;
+        const bool on = _dupenv_s(&v, nullptr, "MH3U_MENU_PROBE") == 0 && v;
+        std::free(v);
+        return on;
+    }();
+    static int last_set = -1;
+    if (probe && last_set >= 0)  // did the option set last frame stick?
+        std::printf("item box hover: set %d, now %d\n", last_set, ppc::ld16(base, state + 6));
+    last_set = -1;
+    if (probe && moved) std::printf("item box hover: pointer %.0f,%.0f -> option %d (cursor %d)\n", px, py, hit, ppc::ld16(base, state + 6));
+    if (moved && hit >= 0 && hit != ppc::ld16(base, state + 6)) last_set = hit;
+    if (moved && hit >= 0 && hit != ppc::ld16(base, state + 6)) {
+        ppc::st16(base, state + 6, static_cast<uint16_t>(hit));
+        play(ctx, base, kMove);
+    }
+    while (game::menu_click()) {
+        std::printf("item box hover: click at %.1f, %.1f -> option %d\n", px, py, hit);
+        if (hit < 0) continue;
+        if (hit != ppc::ld16(base, state + 6)) ppc::st16(base, state + 6, static_cast<uint16_t>(hit));
+        game::menu_confirm();
+    }
+}
+
 // An object moved a row down while the box menu with Item Sets is drawn. The animation's tracks write PosY when the
 // frame changes (the scroll opening), so the shift is applied again whenever PosY is not the value written last.
 // Once the menu is no longer drawn the objects get their own PosY back and are forgotten (the GUI may be freed).
@@ -566,6 +655,7 @@ PPC_FUNC(draw_options) {
         rearrange(texts, saved_texts);
     }
     sub_026A6B80__orig(ctx, base);
+    box_hover(ctx, base, maki, state);
     if (!ours) return;
     restore(frames, saved_frames);
     restore(texts, saved_texts);
@@ -798,5 +888,9 @@ void register_item_sets(const std::filesystem::path& save_dir, std::function<voi
 }
 
 void set_frame_capture(std::function<void()> capture) { g_capture = std::move(capture); }
+
+void capture_frame() {
+    if (g_capture) g_capture();
+}
 
 }  // namespace mh3u::game

@@ -12,5 +12,7 @@ namespace mh3u::game {
 void register_item_sets(const std::filesystem::path& save_dir, std::function<void(const std::string&)> notify);
 // MH3U_GUI_TEST: how a screenshot of the next frame is taken (gfx::dump_next_frame), for the box menu layout test.
 void set_frame_capture(std::function<void()> capture);
+// A screenshot of the next frame (build/frame_<n>.bmp) through it, if one was set (also MH3U_MENU_LEARN).
+void capture_frame();
 
 }  // namespace mh3u::game

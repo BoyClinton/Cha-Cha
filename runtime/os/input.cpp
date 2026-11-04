@@ -15,7 +15,7 @@
 // battery +0xA1, mic +0xA2.
 //
 // MH3U_INPUT_SCRIPT="frame[+frames]:BUTTON[|BUTTON...];..." presses GamePad buttons at given swap counts (default 6
-// frames), e.g. "700:A;760+10:A|R" - for headless tests. LSTICK_LEFT/RIGHT/UP/DOWN push the left stick fully. MH3U_INPUT_CLOCK=time reads the numbers as 1/60 s since
+// frames), e.g. "700:A;760+10:A|R" - for headless tests. LSTICK_LEFT/RIGHT/UP/DOWN (RSTICK_... the right stick) push a stick fully. MH3U_INPUT_CLOCK=time reads the numbers as 1/60 s since
 // the script was loaded instead, so a script keeps its timing at any frame rate (MH3U_FPS).
 #include "hle.h"
 
@@ -38,8 +38,9 @@ constexpr int32_t kKpadNoSamples = -1;      // KPAD_ERROR_NO_SAMPLES
 struct ScriptPress {
     uint32_t frame, frames, buttons;
     float lx = 0, ly = 0;  // left stick
+    float rx = 0, ry = 0;  // right stick
 };
-// the presses active at this frame: buttons OR'ed, the left stick of the last one that pushes it
+// the presses active at this frame: buttons OR'ed, each stick from the last one that pushes it
 void apply_script(input::PadState& s, uint32_t frame);
 std::vector<ScriptPress> g_script;
 bool g_script_time = false;  // MH3U_INPUT_CLOCK=time
@@ -115,6 +116,10 @@ void load_script() {
             if (n == "LSTICK_RIGHT") p.lx = 1;
             if (n == "LSTICK_UP") p.ly = 1;
             if (n == "LSTICK_DOWN") p.ly = -1;
+            if (n == "RSTICK_LEFT") p.rx = -1;
+            if (n == "RSTICK_RIGHT") p.rx = 1;
+            if (n == "RSTICK_UP") p.ry = 1;
+            if (n == "RSTICK_DOWN") p.ry = -1;
             q = bar + 1;
         }
         g_script.push_back(p);
@@ -133,6 +138,10 @@ void apply_script(input::PadState& s, uint32_t frame) {
         if (p.lx || p.ly) {
             s.lx = p.lx;
             s.ly = p.ly;
+        }
+        if (p.rx || p.ry) {
+            s.rx = p.rx;
+            s.ry = p.ry;
         }
     }
 }
