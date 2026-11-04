@@ -1444,7 +1444,8 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
     group_begin(p, "Display");
     int mode_i = static_cast<int>(std::find(kDisplayModes.begin(), kDisplayModes.end(), draft.display_mode) - kDisplayModes.begin()) % 3;
     if (cycle(value_row(p, "Display mode", kDisplayNames[static_cast<size_t>(mode_i)],
-                        "Windowed, borderless (fills the screen at desktop resolution) or exclusive fullscreen."),
+                        "Windowed, borderless (fills the screen at desktop resolution) or exclusive fullscreen (on Wayland "
+                        "the same as borderless)."),
               mode_i, 3))
         draft.display_mode = kDisplayModes[static_cast<size_t>(mode_i)];
     const std::vector<std::string> sizes = window_sizes();

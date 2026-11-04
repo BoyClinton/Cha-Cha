@@ -107,8 +107,12 @@ void Presenter::set_display_mode(int mode) {
         SDL_SetWindowFullscreen(w, false);
         return;
     }
-    // borderless: SDL's desktop fullscreen (null mode); exclusive: the display's own desktop mode
-    const SDL_DisplayMode* m = mode == 2 ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : nullptr;
+    // borderless: SDL's desktop fullscreen (null mode); exclusive: the display's own desktop mode - except on Wayland,
+    // where there are no real mode changes: the desktop mode of a scaled desktop has the logical size, which SDL
+    // emulates by drawing at that size and stretching it, blurry again (issue #13, fine in borderless)
+    const char* driver = SDL_GetCurrentVideoDriver();
+    const bool exclusive = mode == 2 && !(driver && std::strcmp(driver, "wayland") == 0);
+    const SDL_DisplayMode* m = exclusive ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : nullptr;
     SDL_SetWindowFullscreenMode(w, m);
     SDL_SetWindowFullscreen(w, true);
 }
@@ -175,6 +179,13 @@ bool Presenter::Impl::create_swapchain(std::string& err) {
         extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
     }
     if (extent.width == 0 || extent.height == 0) return true;  // minimised: try again later
+    {  // drawn at the screen's real pixels in every display mode? (issue #13: points vs pixels on scaled desktops)
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize(window, &ww, &wh);
+        std::printf("presenter: window %dx%d, swapchain %ux%u pixels, display scale %.2f, %s\n", ww, wh, extent.width,
+                    extent.height, SDL_GetWindowDisplayScale(window),
+                    SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN ? "fullscreen" : "windowed");
+    }
     uint32_t count = std::max(caps.minImageCount + 1, 2u);
     if (caps.maxImageCount) count = std::min(count, caps.maxImageCount);
     VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
