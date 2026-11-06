@@ -960,3 +960,15 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   renderer, not confirmed: a cached render target (targets_) is sampled for any texture at its address and is never
   dropped when the CPU loads a texture over that memory; GX2SetRasterizerClipControlEx's zClip is ignored (the game
   only calls it once, 1/1/1).
+
+## 2026-11-06 - Which cutscenes the + skip reaches (fork)
+- Headless New Game route (scratch save): `MH3U_INPUT_SCRIPT="400:PLUS;1000:A;1150:UP;1250:A;1450:A;1750:A;2000:DOWN;
+  2100:DOWN;2200:DOWN;2300:DOWN;2400:DOWN;2500:DOWN;2600:A;2800:A;3400:A;3700:DOWN;3850:DOWN;4000:A;4200:A;4320:A;
+  4440:A;4560:A;5600:PLUS"` (name, notice, six DOWNs to OK - gender is a stop -, touch panel, empty slot 3). Both
+  movies skip: the title intro and the opening (+ at 5600 -> Moga Village gameplay at 5700).
+- The game also has real-time cutscenes (sound/bgm/demo/demo_NN_bgm, rDemoCamera / rDemoEnemy / rDemoFade /
+  rDemoListeningPoint resources) that never go through sMH3GMovie, so + does not reach them. sEvDemo (singleton
+  0x103138C8, vtable 0x1001D1F4: 0210BEE8 0210BFD8 0210BAC4 0210BFDC 0210BBF8 0210BFA0 0210BF3C 0210BFD4):
+  FUN_0210FCA8 "demo active?" = +0x34 == 4 || +0x34 > 1 || +0x100; FUN_0211001C init (+0x34 = 1, +0x36 = 0xFF);
+  FUN_0210CA84 picks the quest's demo setup by quest number (sQuest? *(0x1031537C), FUN_02170E88). +0x34 stayed 1
+  through the whole New Game opening (no real-time demo there). Skipping these needs a save in front of one.
