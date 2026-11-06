@@ -84,7 +84,7 @@ This folder
   log.txt         what Cha-Cha printed (when not started from a terminal)
   licenses/       licenses of Cha-Cha and the libraries it ships
 
-Keys: F1 settings, F2 mods, F3 GamePad screen. Settings -> Input: bindings, mouse sensitivity, camera speed.
+Keys: F1 settings, F2 mods, F3 GamePad screen, F11 fullscreen / window. Settings -> Input: bindings, mouse sensitivity, camera speed.
 
 Mods: see mods/damage-numbers/README.md for an example. Making mods: docs/modding.md in Cha-Cha's source.
 

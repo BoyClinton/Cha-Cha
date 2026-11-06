@@ -16,7 +16,7 @@ Command line: Cha-Cha --install <dump>  records the dump without the setup scree
               Cha-Cha --game <dump>     plays a dump without recording it.
 
 In game: F1 opens the settings, F2 the mods (DLC quests and mods), F3 cycles the
-GamePad screen view. Settings > Input > Camera speed slows the camera down;
+GamePad screen view, F11 switches fullscreen / window. Settings > Input > Camera speed slows the camera down;
 Settings > General > Monster HP scaling switches the Port Tanzia HP scaling off.
 
 Mods: one folder each in the mods folder of the data folder (data\mods here).
