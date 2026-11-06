@@ -57,6 +57,8 @@
 0x021D431C sLobby::farmStatsStep? # src/game/menu_mouse.cpp: Farm Stats facility (r4 = view: +0x38 of sUserData+0x5E78); hover sets it and redraws (FUN_021D3E1C)
 0x02043308 menuYesNoStacked? # src/game/menu_mouse.cpp: the lobby's stacked Yes / No (r3 = &cursor u32 0 Yes 1 No, r4 buttons 0x10 decide); hover / click
 0x021D4420 sLobby::farmCultivateStep? # src/game/menu_mouse.cpp: Farm Cultivate (r4 = view: state +1, settings row +0x3A: Source, Enrich, Cycles); hover sets the row
+0x021D2724 sLobby::stockForecastStep? # src/game/menu_mouse.cpp: Stockpile Moga Forecast (r4 = view: day tab +0xC of +0xE); hover sets the tab
+0x021D24BC sLobby::stockResourcesStep? # src/game/menu_mouse.cpp: Stockpile Resource Items (r4 = list: row +0x8 of +0x10, page +0xC of +0xE); hover sets the row, page arrows press left / right
 0x021EFA70 sLobby::cropBoxStep? # src/game/menu_mouse.cpp: Farm Crop Box / Stockpile (r3 = sLobby: state +0x693C; menu u8 +0x693E; grid column u8 +0x693D of +0x6974, row +0x694E of +0x6976, cell +0x694C)
 0x026AD984 uIDLobbyOnline::destinationStep? # src/game/menu_mouse.cpp: Ferry Destination list, state 9 (cursor +0x408 / +0x404, drawn +0x40C, locks +0x400, entries +0x2E4); hover sets and redraws
 0x021C3DCC sLobby::furnishingPickerStep? # src/game/menu_mouse.cpp: house furnishing position picker (r4 = pick: state +2, cursor +0xCA of +0xC4, spots +0xB3[]); hover by measured spot positions, MH3U_MENU_PICKER_CAL to measure

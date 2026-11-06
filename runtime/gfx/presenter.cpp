@@ -28,6 +28,7 @@ struct Presenter::Impl {
     VkQueue queue = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_B8G8R8A8_UNORM;
+    bool logged_format = false;
     VkExtent2D extent{};
     std::vector<VkImage> images;
     std::vector<VkImageView> views;  // per swapchain image, for the overlay
@@ -48,6 +49,8 @@ struct Presenter::Impl {
     std::mutex m;
     VulkanContext ctx;
     std::atomic<uint64_t> frames{0};
+    std::atomic<bool> sharp{false};  // nearest-pixel scaling of the game image (setting "scaling")
+    int mode = 0, fullscreen_mode = 1;  // display mode now, and the one F11 returns to (main thread)
     bool needs_recreate = false;
     // present_image: host staging buffer -> source image -> scaled blit into the swapchain image
     VkBuffer staging = VK_NULL_HANDLE;
@@ -98,15 +101,29 @@ uint64_t Presenter::frames_presented() const { return impl_->frames.load(); }
 void Presenter::set_display_mode(int mode) {
     SDL_Window* w = impl_->window;
     if (!w) return;
+    impl_->mode = mode;
+    if (mode != 0) impl_->fullscreen_mode = mode;
     if (mode == 0) {
         SDL_SetWindowFullscreen(w, false);
         return;
     }
-    // borderless: SDL's desktop fullscreen (null mode); exclusive: the display's own desktop mode
-    const SDL_DisplayMode* m = mode == 2 ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : nullptr;
+    // borderless: SDL's desktop fullscreen (null mode); exclusive: the display's own desktop mode - except on Wayland,
+    // where there are no real mode changes: the desktop mode of a scaled desktop has the logical size, which SDL
+    // emulates by drawing at that size and stretching it, blurry again (issue #13, fine in borderless)
+    const char* driver = SDL_GetCurrentVideoDriver();
+    const bool exclusive = mode == 2 && !(driver && std::strcmp(driver, "wayland") == 0);
+    const SDL_DisplayMode* m = exclusive ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : nullptr;
     SDL_SetWindowFullscreenMode(w, m);
     SDL_SetWindowFullscreen(w, true);
 }
+
+void Presenter::toggle_fullscreen() {
+    const int back = impl_->fullscreen_mode;
+    set_display_mode(impl_->mode != 0 ? 0 : back);
+    impl_->fullscreen_mode = back;
+}
+
+void Presenter::set_sharp_scaling(bool on) { impl_->sharp = on; }
 
 void Presenter::set_window_size(int width, int height) {
     SDL_Window* w = impl_->window;
@@ -135,30 +152,23 @@ bool Presenter::Impl::create_swapchain(std::string& err) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(n);
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, formats.data());
-    // The game's image is already gamma-encoded sRGB (8-bit UNORM, as the Wii U scans it out), so it needs a UNORM
-    // format in the standard sRGB colour space. The colour space matters: Wayland (RADV, KDE / GNOME with HDR or wide
-    // gamut) lists B8G8R8A8_UNORM several times, also with extended-linear, Display-P3 or pass-through colour spaces,
-    // and taking the last one of them (0.2.0 did) shows the picture washed out and too bright. An *_SRGB format would
-    // encode it twice - the same glare.
-    auto pick = [&](VkFormat want) -> const VkSurfaceFormatKHR* {
-        for (const auto& f : formats)
-            if (f.format == want && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) return &f;
-        return nullptr;
+    // The picture is already gamma-encoded and copied as it is: an 8-bit UNORM format in the plain sRGB colour space.
+    // A compositor may list the same format again for HDR / extended colour spaces, and an _SRGB format would encode
+    // it a second time - both showed it washed out and far too bright (issue #11, Steam Deck).
+    const auto rank = [](const VkSurfaceFormatKHR& f) {
+        if (f.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) return 0;
+        if (f.format == VK_FORMAT_B8G8R8A8_UNORM) return 3;
+        if (f.format == VK_FORMAT_R8G8B8A8_UNORM || f.format == VK_FORMAT_A8B8G8R8_UNORM_PACK32) return 2;
+        if (f.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || f.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32) return 1;
+        return 0;
     };
-    const VkSurfaceFormatKHR* best = pick(VK_FORMAT_B8G8R8A8_UNORM);
-    if (!best) best = pick(VK_FORMAT_R8G8B8A8_UNORM);
-    if (!best) best = pick(VK_FORMAT_A8B8G8R8_UNORM_PACK32);
-    VkSurfaceFormatKHR chosen = best ? *best
-                                     : formats.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}
-                                                       : formats[0];
-    static bool logged = false;
-    if (!logged) {
-        logged = true;
-        if (const char* e = std::getenv("MH3U_VK_FORMATS"); e && *e == '1')
-            for (const auto& f : formats)
-                std::printf("presenter: offered format %d, colour space %d\n", static_cast<int>(f.format), static_cast<int>(f.colorSpace));
-        std::printf("presenter: surface format %d, colour space %d (%zu offered)%s\n", static_cast<int>(chosen.format),
-                    static_cast<int>(chosen.colorSpace), formats.size(), best ? "" : " - no UNORM sRGB format, colours may be off");
+    VkSurfaceFormatKHR chosen = formats.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR} : formats[0];
+    for (auto& f : formats)
+        if (rank(f) > rank(chosen)) chosen = f;
+    if (chosen.format != format || !logged_format) {
+        std::printf("presenter: swapchain format %d, colour space %d (%zu offered)\n", static_cast<int>(chosen.format),
+                    static_cast<int>(chosen.colorSpace), formats.size());
+        logged_format = true;
     }
     format = chosen.format;
     if (caps.currentExtent.width != UINT32_MAX) {
@@ -169,6 +179,13 @@ bool Presenter::Impl::create_swapchain(std::string& err) {
         extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
     }
     if (extent.width == 0 || extent.height == 0) return true;  // minimised: try again later
+    {  // drawn at the screen's real pixels in every display mode? (issue #13: points vs pixels on scaled desktops)
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize(window, &ww, &wh);
+        std::printf("presenter: window %dx%d, swapchain %ux%u pixels, display scale %.2f, %s\n", ww, wh, extent.width,
+                    extent.height, SDL_GetWindowDisplayScale(window),
+                    SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN ? "fullscreen" : "windowed");
+    }
     uint32_t count = std::max(caps.minImageCount + 1, 2u);
     if (caps.maxImageCount) count = std::min(count, caps.maxImageCount);
     VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
@@ -240,7 +257,9 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
         SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");
         SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
         if (!SDL_Init(SDL_INIT_VIDEO)) return fail(std::string("SDL_Init: ") + SDL_GetError());
-        d.window = SDL_CreateWindow(title.c_str(), width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+        // high pixel density: on a scaled desktop (Wayland at 150 % / 200 %) the swapchain has the screen's real pixels;
+        // without it the picture was drawn at the logical size and stretched by the compositor, blurry (issue #13)
+        d.window = SDL_CreateWindow(title.c_str(), width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if (!d.window) return fail(std::string("SDL_CreateWindow: ") + SDL_GetError());
         SDL_SetWindowMinimumSize(d.window, 960, 540);  // the launcher's layout needs at least this much
         ext = SDL_Vulkan_GetInstanceExtensions(&n_ext);
@@ -377,6 +396,15 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
         link(clip);
         d.ctx.depth_clip_control = true;
     }
+    // MH3U_NO_DEPTH_RANGE=1: as on a GPU without it (testing the renderer's fallback)
+    char* no_range = nullptr;
+    size_t no_range_len = 0;
+    const bool skip_range = _dupenv_s(&no_range, &no_range_len, "MH3U_NO_DEPTH_RANGE") == 0 && no_range && *no_range == '1';
+    std::free(no_range);
+    if (!skip_range && has(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME)) {  // no feature struct
+        dev_ext.push_back(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
+        d.ctx.depth_range_unrestricted = true;
+    }
     VkPhysicalDeviceFeatures supported{};
     vkGetPhysicalDeviceFeatures(d.phys, &supported);
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -388,6 +416,8 @@ bool Presenter::init(const std::string& title, int width, int height, bool headl
     f2.features.logicOp = supported.logicOp;
     f2.features.fillModeNonSolid = supported.fillModeNonSolid;
     f2.features.depthClamp = supported.depthClamp;
+    f2.features.depthBiasClamp = supported.depthBiasClamp;
+    d.ctx.depth_bias_clamp = supported.depthBiasClamp;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
     f2.features.textureCompressionBC = supported.textureCompressionBC;
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -439,6 +469,7 @@ bool Presenter::pump_events() {
     while (SDL_PollEvent(&e)) {
         if (event_hook_) event_hook_(&e);
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F3) cycle_gamepad_view();
+        if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F11) toggle_fullscreen();
         if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) return false;
         if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
             std::lock_guard g(impl_->m);
@@ -629,7 +660,7 @@ void Presenter::present(const uint8_t* rgba, VkImage image, uint32_t width, uint
         blit.dstOffsets[0] = {x0, y0, 0};
         blit.dstOffsets[1] = {x0 + w, y0 + h, 1};
         vkCmdBlitImage(cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target,
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, d.sharp ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
     }
     VkImageLayout layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     if (d.overlay) {

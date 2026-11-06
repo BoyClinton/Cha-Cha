@@ -123,6 +123,7 @@ std::set<int> g_down;  // held keys / mouse buttons
 std::map<int, int> g_pulses;  // wheel: source -> reads left
 float g_mouse_dx = 0, g_mouse_dy = 0, g_prev_rx = 0, g_prev_ry = 0;
 bool g_cursor_hidden = false;
+bool g_freed = false;  // the mouse was released with Esc / F11: its cursor stays visible until captured again
 std::map<SDL_JoystickID, Pad> g_pads;
 float g_rumble = 0;
 uint32_t g_rumble_ms = 0;
@@ -449,6 +450,7 @@ SDL_Cursor* make_cursor(int window_h) {
 
 void capture(bool on) {
     g_captured = on && g_window;
+    if (g_captured) g_freed = false;
     if (g_window) SDL_SetWindowRelativeMouseMode(g_window, g_captured);
     g_mouse_dx = g_mouse_dy = 0;
 }
@@ -569,9 +571,11 @@ void handle_event(const void* ev) {
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP:
             if (e.key.repeat) break;
-            if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
+            // Esc, and F11 (the presenter also leaves fullscreen): the mouse is released, with its cursor shown
+            if (e.key.scancode == SDL_SCANCODE_ESCAPE || e.key.scancode == SDL_SCANCODE_F11) {
                 if (e.type == SDL_EVENT_KEY_DOWN && g_captured) capture(false);
                 if (e.type == SDL_EVENT_KEY_DOWN) g_recapture = false;  // released on purpose: stays free after the menu
+                if (e.type == SDL_EVENT_KEY_DOWN) g_freed = true;
                 break;
             }
             press(e.key.scancode, e.type == SDL_EVENT_KEY_DOWN);
@@ -672,8 +676,9 @@ void update() {
             if (g_recapture && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS)) capture(true);
         }
     }
-    // no menu, no overlay, no text entry: the mouse is not a pointer, so no cursor over the game (user 2026-11-03)
-    const bool hide = g_window && !g_pointer && !g_suspended && !g_text.active &&
+    // no menu, no overlay, no text entry: the mouse is not a pointer, so no cursor over the game (user 2026-11-03) -
+    // unless it was released with Esc / F11 (issue #8: to reach the window's close button)
+    const bool hide = g_window && !g_pointer && !g_suspended && !g_text.active && !g_freed &&
                       (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS);
     if (hide != g_cursor_hidden) {
         if (hide) SDL_HideCursor();

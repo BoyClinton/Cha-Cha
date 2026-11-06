@@ -5,6 +5,16 @@ at the end of the session that shipped 0.1.0.
 
 ## Where things stand
 
+- **0.1.2hf4 (2026-11-04)**: Fullscreen on Wayland uses desktop fullscreen (#13: hf3 fixed borderless, the
+  emulated exclusive mode was still stretched); swapchain sizes logged. Scaled desktops still untested here (this PC
+  runs at 100 %).
+- **0.1.2hf3 (2026-11-04)**: Linux reports - Quit game over the game (#10), plain sRGB swapchain format (#11, Steam
+  Deck too bright; not verified on a Deck), high-density window for scaled desktops (#13; not verified on Wayland).
+  Issue #14 (Fishmongress / Argosy menus with the mouse) waits for a save where they open.
+- **0.1.2hf2 (2026-11-04)**: issue #8 - F11 fullscreen / window with the cursor back after Esc / F11, Scaling
+  (smooth / sharp), the far-sea stripes fixed (GX2 polygon offset on non-depth-writing layers; GX2's -1..1 depth range
+  kept); Stockpile forecast / Resource Items and the Farm's Cultivate / OK buttons with the mouse. Debugging aid kept:
+  MH3U_DUMP_KEY=1 makes F9 dump a burst of 6 frames with their draws (sampler words and polygon offsets in the trace).
 - **0.1.2 released 2026-11-03** (<https://github.com/BoyClinton/Cha-Cha/releases/tag/v0.1.2>, public `main`
   25593c9): lobby menus with real mouse hover, World-style keyboard defaults, frame rate fixes (camera, windpress,
   grab escape), doubled GamePad sounds removed. Issues #2, #6, #7 answered; #7's fast red markers still open. Full

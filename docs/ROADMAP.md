@@ -96,7 +96,7 @@ reachable than a pure decomp.
     menu's own cursor written, no d-pad presses. Still open: the start / field menu screens move their cursor with
     d-pad taps (screen_hover) - to convert to direct writes; furnishing rooms 5-7 in the spot tables (unknown, maybe
     unused; not measured); the online quest results (FUN_020E8DD4; the solo results are done in 0.1.2hf); the
-    Canteen's quest board (Phase 6)
+    Canteen's quest board (Phase 6); the Fishmongress and Argosy menus (issue #14: not open on our test save yet)
   - [ ] Controller Settings: disabled for now (option_page masks its left / right); our own controller page to come
 - [x] Saves load/write → a new character (Character Creation → Touch Panel Settings → Character Select slot 1) is written to `save/80000001/user1` (35,364 bytes) with `system` updated; after a fresh boot, Continue lists it (name, gender, play time, zenny, HR) and "Use this character? → Yes" loads it back into Moga Village
 - [x] Milestone: in game – Moga Village renders (opening Village Chief scene, NPCs, player in starting gear)

@@ -40,6 +40,7 @@ struct Settings {
     float render_scale = 1.0f;      // internal resolution, x the native 1280x720: 0.5, 0.75, 1, 1.5, 2, 3, 4
     std::string display_mode = "windowed";  // "windowed", "borderless" (desktop-sized) or "fullscreen" (exclusive)
     std::string window_size = "1280x720";   // windowed mode; independent of render_scale
+    bool sharp_scaling = false;              // the game image scaled to the window with nearest pixels, not smoothed
     bool bloom = true;
     // "off", "original" (the game's own DOF filters, where it uses them) or "enhanced" (also our gameplay DOF)
     std::string depth_of_field = "original";

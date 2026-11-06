@@ -294,8 +294,21 @@ void timed_actions(gfx::Presenter& p, const boot::AppPaths& paths) {
     }
     if (g_settings_at.due(secs) >= 0 && g_launcher) g_launcher->toggle_settings();
 }
+// MH3U_DUMP_KEY=1: F9 dumps a burst of 6 frames, 4 apart (build/frame_<n>.bmp and _draws.txt, as MH3U_DUMP_FRAME),
+// for catching a rendering bug that comes and goes while playing.
+const bool g_dump_key = [] {
+    char* v = nullptr;
+    size_t n = 0;
+    const bool on = _dupenv_s(&v, &n, "MH3U_DUMP_KEY") == 0 && v && *v == '1';
+    std::free(v);
+    return on;
+}();
 void on_event(const void* e) {
     input::handle_event(e);
+    if (g_dump_key) {
+        const SDL_Event& ev = *static_cast<const SDL_Event*>(e);
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) gfx::dump_frames(6, 4);
+    }
     if (!g_launcher) return;
     // the settings over the game: F1, Select + Options on a controller, or its touchpad click (PlayStation), Home /
     // guide or misc (mic, Share, Capture) button - none of those is bound to a game button
@@ -371,6 +384,7 @@ int main(int argc, char** argv) {
         input::set_window(presenter.window_handle());
         input::set_suspended(true);  // the launcher has the input until PLAY
         presenter.set_display_mode(settings.display_mode == "fullscreen" ? 2 : settings.display_mode == "borderless" ? 1 : 0);
+        presenter.set_sharp_scaling(settings.sharp_scaling);
         launcher = std::make_unique<boot::Launcher>(paths, presenter, sources, std::move(game), err, settings,
                                                     args.menu);  // straight into the game unless --menu (no game yet: the menu stays)
         g_launcher = launcher.get();

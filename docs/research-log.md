@@ -869,11 +869,47 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   cursor helpers, screens from MH3U_MENU_LEARN keys E1SSSS0B. The system cursor is hidden over the window while the
   mouse is not a pointer (runtime/input). A direct mouse yaw (adding the mouse to camera block +0x94 / +0x9C) was
   tried and reverted at the user's request; see ROADMAP Phase 5.5.
+- **Far-sea stripes = ignored polygon offset (2026-11-04, 0.1.2hf2, issue #8).** Diagonal stripes on the far sea in
+  Moga Woods, flickering only while the camera turns. Ruled out one by one: shadow map (lookups off), our AO, mip
+  levels (level 0 only, MH3U_RENDER_DEBUG=32), invariant / no-contraction positions, and hiding any one of the 42
+  pixel shaders that draw to the scene. Found with a per-draw readback of full-width bands of the scene (edge energy
+  per 128-pixel segment after each draw, F9 bursts of 6 frames with MH3U_DUMP_KEY=1): the stripes appear with a
+  blended wave layer over the sea (ps 4ee05310e4dbdfa3, LEQUAL, no depth write). MH3U enables GX2 polygon offset
+  (GX2SetPolygonControl args 6 / 7, GX2SetPolygonOffset) on nearly every draw with -32..-512, which we ignored, so the
+  layer z-fought the sea. But the same offsets sit on its two depth-writing passes of a mesh (a base pass, ps
+  9dea153816533696, then the lit pass, both LEQUAL) and differ in both directions (characters -192 -> -32, terrain
+  -32 -> -224, -160 -> -96): applied as Vulkan depth bias with either sign, characters or terrain went black. So the
+  offset is applied only to draws that test but do not write depth, pulled towards the camera by its size (the
+  Latte units / sign for the depth-writing pairs are not understood). Also: GX2's viewport depth range is -1..1
+  (window z = ndc z); clamping it to 0..1 halved the depth precision, now taken as it is with
+  VK_EXT_depth_range_unrestricted, or, without it, in 0..1 clip space (same window z; MH3U_NO_DEPTH_RANGE=1 tests
+  that path). F11 (fullscreen / window) and the cursor shown after Esc / F11, a Scaling setting (smooth / sharp) for
+  the anti-aliasing request.
+- **Stockpile and Farm hover (2026-11-04, 0.1.2hf2).** Moga Forecast FUN_021D2724(?, view): day tab view+0xC of
+  view+0xE (left / right; Y = map, view+4). Resource Items FUN_021D24BC(?, list): row list+0x8 of list+0x10 on the
+  page (up to 8), page list+0xC of list+0xE (FUN_021D2240 fills a page). Farm FUN_021D4420 state 0 ("Assign which
+  Felyne"): A goes on to the settings; settings row view+0x3A 3 is OK; states 3 / 5 are FUN_02043308 Yes / No.
+- **Linux display fixes (2026-11-04, 0.1.2hf3, issues #10, #11, #13).** The window had no SDL_WINDOW_HIGH_PIXEL_DENSITY,
+  so on a scaled Wayland desktop the swapchain had the logical size and the compositor stretched it (sharp at 50 %,
+  blurry at 150 / 200 %). With the flag the swapchain has the real pixels; ImGui 1.91.9's SDL3 backend then reports
+  points with a framebuffer scale, while the launcher lays itself out in pixels (SDL_GetWindowDisplayScale), so
+  the launcher draws in pixels 1:1 (DisplaySize x scale, framebuffer scale 1, mouse motion x pixel density). The
+  swapchain format was picked by format only: a compositor listing B8G8R8A8_UNORM again with HDR / extended colour
+  spaces (Steam Deck), or offering only _SRGB formats, showed the picture washed out and too bright. Now only plain
+  sRGB colour space, UNORM formats (B8G8R8A8, then R8G8B8A8 / A8B8G8R8, then 10-bit); the choice is logged
+  ("presenter: swapchain format 44, colour space 0" on Windows / NVIDIA). Settings > General > Session > Quit game
+  over a running game (select twice).
+- **Fullscreen on Wayland (2026-11-04, 0.1.2hf4, issue #13).** After hf3, borderless was sharp on a scaled Wayland
+  desktop but exclusive fullscreen was not: it passed SDL the desktop display mode, which on a scaled desktop has
+  the logical size; Wayland has no real mode changes, so SDL emulates the mode by drawing at that size and stretching
+  it. On Wayland "Fullscreen" now uses desktop fullscreen (null mode); Windows and X11 keep the exclusive mode. Each
+  swapchain logs window points, swapchain pixels and the display scale (Windows 100 %: windowed 1920x1080 / 1920x1080,
+  borderless and fullscreen 2560x1440 / 2560x1440).
 
 ## 2026-11-04 - Washed-out picture on Wayland; camera speed that scales the camera, not the stick (fork 0.2.1)
 - **Glare / washed-out colours (user, Fedora 44 KDE Wayland, RX 7800 XT RADV).** The presenter took the *last*
   B8G8R8A8_UNORM surface format without looking at its colour space. RADV on Wayland offers 81 pairs (9 formats x 9
-  colour spaces, MH3U_VK_FORMATS=1 lists them); the last B8G8R8A8_UNORM one is 1000104011 = ADOBERGB_LINEAR, so the
+  colour spaces, MH3U_VK_FORMATS=1 listed them; upstream hf3 now ranks formats the same way and its presenter replaces ours); the last B8G8R8A8_UNORM one is 1000104011 = ADOBERGB_LINEAR, so the
   compositor read the game's gamma-encoded sRGB as linear wide-gamut light: lifted, too bright ("a lamp on top of the
   screen"). Frame dumps (read back before presentation) looked right, which pointed at the swapchain. Now a UNORM
   format in SRGB_NONLINEAR is required (chosen: 44 / 0, logged at start). The game's scene itself is fine: GI on / off

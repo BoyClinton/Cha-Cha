@@ -52,7 +52,7 @@ You need your own **Monster Hunter 3 Ultimate (US) with update v32** (a `.wua` f
 3. Run it and choose your game on the setup screen.
 
 The first start translates the game's shaders (a few seconds, once), then the game starts by itself. **F1** or
-**Select + Options** on a controller opens the settings: General, Video, Input, **Mods** and **Quests** tabs (LB / RB or Q / E switch), **Exit game** in General; **F2** opens Mods directly. **Damage Numbers** comes included: switch it on or off in MODS → Mods.
+**Select + Options** on a controller opens the settings: General, Video, Input, **Mods** and **Quests** tabs (LB / RB or Q / E switch), **Quit game** in General; **F2** opens Mods directly. **Damage Numbers** comes included: switch it on or off in MODS → Mods.
 
 **Adding mods:** put each mod's folder into the `mods` folder of your data folder (`data\mods` next to
 `Cha-Cha.exe` on Windows, `~/.local/share/Cha-Cha/mods` on Linux) and restart Cha-Cha.
@@ -101,7 +101,7 @@ These are part of the game. Monster HP scaling can be switched off in Settings �
 ### Made for PC
 
 - **Your resolution and frame rate:** internal resolution from 0.5× to 4× (up to 5120×2880), a frame rate limit up
-  to unlimited, V-sync, windowed / borderless / fullscreen.
+  to unlimited, V-sync, windowed / borderless / fullscreen, smooth or sharp scaling to the window.
 - **Tri look:** the softer, muted, hazier picture of Monster Hunter Tri on the Wii, applied to the world only (menus
   and the HUD stay as they are).
 - **Effects the original never had:** global illumination, ambient occlusion, an enhanced depth of field and a
@@ -109,7 +109,8 @@ These are part of the game. Monster HP scaling can be switched off in Settings �
 - **Texture packs** and texture dumping for making them.
 - **Skippable cutscenes:** press **+** (Start / Options, or the keyboard key bound to +) to skip a cutscene movie.
 - **Straight into the game:** no launcher menu to click through (`--menu` shows it). **F1**, **Select + Options**
-  (or the PlayStation touchpad / Home button) opens the settings over the game, with Exit game in General; **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only).
+  (or the PlayStation touchpad / Home button) opens the settings over the game, with Quit game in General; **F2** the mods, **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only),
+  **F11** switches between fullscreen and a window and frees the mouse.
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller.
   Every button can be rebound, and the settings show which button does what, for your bindings and your
   controller (Xbox, PlayStation or Nintendo names).

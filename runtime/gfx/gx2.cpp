@@ -731,7 +731,19 @@ GX2_FUNC(GX2SetCullOnlyControl) {
     g_ds.cull_front = arg(ctx, 1) != 0;
     g_ds.cull_back = arg(ctx, 2) != 0;
 }
-GX2_FUNC(GX2SetPolygonControl) { hle_gx2_GX2SetCullOnlyControl(ctx, base); }
+// void GX2SetPolygonControl(GX2FrontFace, BOOL cullFront, BOOL cullBack, BOOL enablePolygonModes, GX2PolygonMode front,
+// GX2PolygonMode back, BOOL polyOffsetFrontEnable, BOOL polyOffsetBackEnable, BOOL pointLineOffsetEnable)
+GX2_FUNC(GX2SetPolygonControl) {
+    hle_gx2_GX2SetCullOnlyControl(ctx, base);
+    StateLock g;
+    g_ds.poly_offset_front = arg(ctx, 6) != 0;
+    g_ds.poly_offset_back = arg(ctx, 7) != 0;
+}
+// void GX2SetPolygonOffset(float frontOffset, float frontScale, float backOffset, float backScale, float clamp)
+GX2_FUNC(GX2SetPolygonOffset) {
+    StateLock g;
+    for (int i = 0; i < 5; ++i) g_ds.poly_offset[i] = static_cast<float>(ctx.f[1 + i].ps0);
+}
 // void GX2SetAlphaTest(BOOL enable, GX2CompareFunction, float ref)
 GX2_FUNC(GX2SetAlphaTest) {
     StateLock g;
@@ -1129,7 +1141,7 @@ GX2_FUNC(GX2DirectCallDisplayList) {
 // Remaining command-emitting calls: recordable, no effect yet.
 #define GX2_STATE_ONLY(X)                                                                                         \
     X(GX2Invalidate) X(GX2SetAlphaToMask) X(GX2SetGeometryShaderInputRingBuffer)                                    \
-    X(GX2SetGeometryShaderOutputRingBuffer) X(GX2SetLineWidth) X(GX2SetPolygonOffset) X(GX2SetPrimitiveRestartIndex)
+    X(GX2SetGeometryShaderOutputRingBuffer) X(GX2SetLineWidth) X(GX2SetPrimitiveRestartIndex)
 #define X(name) GX2_FUNC(name) {}
 GX2_STATE_ONLY(X)
 #undef X
@@ -1188,6 +1200,11 @@ uint64_t texture_dumps() { return g_renderer ? g_renderer->texture_dumps() : 0; 
 void dump_next_frame() {
     StateLock g;
     g_dump_frames.insert(rt().frames + 2);  // + 2: the renderer's trace is switched on a frame ahead
+}
+
+void dump_frames(int count, int step) {
+    StateLock g;
+    for (int i = 0; i < count; ++i) g_dump_frames.insert(rt().frames + 2 + static_cast<uint32_t>(i * step));
 }
 
 void register_gx2(os::Runtime& r) {
@@ -1251,7 +1268,7 @@ void register_gx2(os::Runtime& r) {
     RR(GX2SetPixelSampler) RR(GX2SetVertexUniformBlock) RR(GX2SetPixelUniformBlock) RR(GX2SetGeometryUniformBlock)
     RR(GX2SetScissor) RR(GX2SetColorControl) RR(GX2SetBlendControl) RR(GX2SetTargetChannelMasks)
     RR(GX2SetBlendConstantColor) RR(GX2SetDepthOnlyControl) RR(GX2SetDepthStencilControl) RR(GX2SetCullOnlyControl)
-    RR(GX2SetPolygonControl) RR(GX2SetAlphaTest) RR(GX2SetPointSize) RR(GX2SetRasterizerClipControlEx)
+    RR(GX2SetPolygonControl) RR(GX2SetPolygonOffset) RR(GX2SetAlphaTest) RR(GX2SetPointSize) RR(GX2SetRasterizerClipControlEx)
     RR(GX2SetStencilMask)
 #define X(name) RR(name)
     GX2_STATE_ONLY(X)

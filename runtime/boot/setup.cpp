@@ -604,7 +604,6 @@ struct Launcher::Impl {
     void draw_tab_mods(PanelLayout& p);
     bool hud() const { return booted && plugins::has_hud(); }  // mods draw over the game
     bool show_menu = true, booted = false, translating = false, refocus = true;
-    bool exit_game = false;  // Settings -> General -> Exit game: quit at the end of this frame
     ShaderJob job;
     DialogResult dialog;
     // the settings panel edits a copy; APPLY makes it the settings (closing without it drops the changes)
@@ -656,6 +655,7 @@ struct Launcher::Impl {
     std::vector<std::string> posted;
     // DUMP TEXTURES (this session only, not saved): files written since it was switched on
     bool dumping = false;
+    bool quit_armed = false, quit_requested = false;  // General > Quit game over the game: armed by the first press
     uint64_t dump_base = 0, dumps_shown = 0;
     std::string dump_folder() const {
         const auto u = (paths.data / "texture_dump").u8string();
@@ -677,6 +677,7 @@ struct Launcher::Impl {
     // settings that take effect while the game runs
     void apply_live() {
         presenter.set_display_mode(settings.display_mode == "fullscreen" ? 2 : settings.display_mode == "borderless" ? 1 : 0);
+        presenter.set_sharp_scaling(settings.sharp_scaling);
         if (int w = 0, h = 0; settings.display_mode == "windowed" && sscanf_s(settings.window_size.c_str(), "%dx%d", &w, &h) == 2)
             presenter.set_window_size(w, h);
         game::set_filters(settings.bloom, settings.depth_of_field != "off");
@@ -866,7 +867,14 @@ void Launcher::handle_event(const void* ev) {
         analog(x_axis ? ImGuiKey_GamepadLStickRight : ImGuiKey_GamepadLStickDown, v);
         return;
     }
-    ImGui_ImplSDL3_ProcessEvent(&e);
+    if (e.type == SDL_EVENT_MOUSE_MOTION) {  // the UI works in pixels on a high-density window (see frame)
+        SDL_Event m = e;
+        const float density = d.window ? SDL_GetWindowPixelDensity(d.window) : 1.0f;
+        if (density > 0) m.motion.x *= density, m.motion.y *= density;
+        ImGui_ImplSDL3_ProcessEvent(&m);
+    } else {
+        ImGui_ImplSDL3_ProcessEvent(&e);
+    }
     if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) {
         std::lock_guard g(d.dialog.m);
         d.dialog.picked.push_back(from_utf8(e.drop.data));
@@ -1015,6 +1023,13 @@ bool Launcher::Impl::draw(const LaunchState& st) {
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    // a high-density window (scaled desktop, issue #13): the backend gives the size in points and a framebuffer scale;
+    // the launcher is laid out in pixels (fonts and sizes from SDL_GetWindowDisplayScale), so draw in pixels 1:1 (the
+    // mouse positions are scaled in handle_event)
+    if (ImGuiIO& io = ImGui::GetIO(); io.DisplayFramebufferScale.x > 1.0f || io.DisplayFramebufferScale.y > 1.0f) {
+        io.DisplaySize = ImVec2(io.DisplaySize.x * io.DisplayFramebufferScale.x, io.DisplaySize.y * io.DisplayFramebufferScale.y);
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    }
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_HasGamepad;  // fed by handle_event (the backend clears it in manual mode)
     ImGui::NewFrame();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1054,7 +1069,8 @@ bool Launcher::Impl::draw(const LaunchState& st) {
         snap = std::move(next);
     }
     if (play) hide();
-    if (exit_game) quit = true;
+    if (quit_requested) quit = true;  // the in-game Quit game row
+    if (mode == Mode::Hidden) quit_armed = false;
     if (quit) save_settings(paths, settings);
     return !quit;
 }
@@ -1463,10 +1479,15 @@ void Launcher::Impl::draw_tab_general(PanelLayout& p) {
                "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
                "Takes effect for monsters that appear after the change.");
     group_end(p);
-    group_begin(p, "Exit");
-    if (button_row(p, "Exit game", "Closes Cha-Cha. Save in the game first: progress since the last save is lost."))
-        exit_game = true;
-    group_end(p);
+    if (mode == Mode::InGame) {  // issue #10: no way out but closing the window, which fullscreen hides
+        group_begin(p, "Session");
+        if (button_row(p, quit_armed ? "Quit now" : "Quit game",
+                       "Closes Cha-Cha. Progress since your last save in the game is lost. Select it twice to quit.")) {
+            if (quit_armed) quit_requested = true;
+            quit_armed = true;
+        }
+        group_end(p);
+    }
 }
 
 // Window size and internal resolution are independent: the game renders at its internal resolution and the picture
@@ -1475,7 +1496,8 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
     group_begin(p, "Display");
     int mode_i = static_cast<int>(std::find(kDisplayModes.begin(), kDisplayModes.end(), draft.display_mode) - kDisplayModes.begin()) % 3;
     if (cycle(value_row(p, "Display mode", kDisplayNames[static_cast<size_t>(mode_i)],
-                        "Windowed, borderless (fills the screen at desktop resolution) or exclusive fullscreen."),
+                        "Windowed, borderless (fills the screen at desktop resolution) or exclusive fullscreen (on Wayland "
+                        "the same as borderless)."),
               mode_i, 3))
         draft.display_mode = kDisplayModes[static_cast<size_t>(mode_i)];
     const std::vector<std::string> sizes = window_sizes();
@@ -1497,6 +1519,13 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
     if (cycle(value_row(p, "Internal resolution", kScaleNames[static_cast<size_t>(scale_i)], scale_desc.c_str()), scale_i,
               static_cast<int>(kScales.size())))
         draft.render_scale = kScales[static_cast<size_t>(scale_i)];
+    int sharp = draft.sharp_scaling ? 1 : 0;
+    if (cycle(value_row(p, "Scaling", sharp ? "Sharp" : "Smooth",
+                        "How the game's picture is fitted to the window or screen. Smooth blends neighbouring pixels (soft "
+                        "edges); Sharp keeps every pixel crisp, with no smoothing - best when the screen is a whole multiple of "
+                        "the internal resolution. The game itself has no anti-aliasing."),
+              sharp, 2))
+        draft.sharp_scaling = sharp != 0;
     static const std::vector<int> kFps = {0, 30, 60, 120, 144, 240, -1};
     static const std::vector<std::string> kFpsNames = {"Display refresh", "30", "60", "120", "144", "240", "Unlimited"};
     int fps = static_cast<int>(std::find(kFps.begin(), kFps.end(), draft.fps_limit) - kFps.begin());
