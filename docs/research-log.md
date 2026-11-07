@@ -972,3 +972,14 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   FUN_0210FCA8 "demo active?" = +0x34 == 4 || +0x34 > 1 || +0x100; FUN_0211001C init (+0x34 = 1, +0x36 = 0xFF);
   FUN_0210CA84 picks the quest's demo setup by quest number (sQuest? *(0x1031537C), FUN_02170E88). +0x34 stayed 1
   through the whole New Game opening (no real-time demo there). Skipping these needs a save in front of one.
+
+## 2026-11-07 - Menus drawn with the game's GUI textures; how local play could work (fork)
+- **GUI sheets.** 470 GUI textures in the content; the menus use four (US English): `GUI\Texture\common\td_com_ID_eng`
+  (1024x1024 BC3: bands, frames, cursor, parchment) and `td_bu_ID` (512x256 BC3: Pro Controller glyphs) from
+  `nativeCafe/arc/ID/ID_cock_eng.arc`; `GUI\Texture\startmenu\st_M_menu_01_ID_eng` (2048x2048 BC3: title scroll,
+  parchment page x 1677-2036 y 6-628) and `st_menu_04` (2048x1024 RGBA8, 12 mips: carved wood, loaded at mip 1) from
+  `ID_dataTrans_eng.arc`. runtime/boot/skin_decode.cpp (own inflate + .arc + .tex level decode) gives pixel-identical
+  results to scripts/mt_tex.py on all four; loading them takes ~125 ms at start. Sprite rectangles in game_skin.h.
+- **Network backends.** See docs/online.md "Local play": session factory 0x02E4D9AC (kind 3 Uds, 4 Nex, 0x10 / 0x11
+  Snow), context factory 0x02E4D844, kind from nNetwork::SessionDriver +0x60; the Wii U's nn_uds can only host (no
+  Scan / Connect imports), so instance-to-instance play needs a replacement for the Nex / Snow backend.

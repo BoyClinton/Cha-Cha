@@ -15,7 +15,8 @@ find_package(Vulkan REQUIRED)
 target_link_libraries(mh3u_imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
 
 # The game executable: recompiled code + HLE runtime.
-add_executable(mh3u WIN32 main.cpp plugins.cpp plugins.h profiler.cpp read_watch.cpp read_watch.h app_paths.cpp app_paths.h launcher_image.cpp launcher_image.h quests.cpp quests.h setup.cpp setup.h)
+add_executable(mh3u WIN32 main.cpp plugins.cpp plugins.h profiler.cpp read_watch.cpp read_watch.h app_paths.cpp app_paths.h launcher_image.cpp launcher_image.h quests.cpp quests.h setup.cpp setup.h
+  game_skin.cpp game_skin.h skin_decode.cpp skin_decode.h)
 if(WIN32)
   # GUI subsystem (no console window for players) with the standard main(); output: setup_output() in main.cpp
   target_link_options(mh3u PRIVATE /ENTRY:mainCRTStartup)
@@ -54,3 +55,7 @@ target_compile_definitions(mh3u PRIVATE MH3U_VERSION="${MH3U_VERSION}")
 
 add_executable(quests_test quests_test.cpp quests.cpp quests.h)
 add_test(NAME boot_quests COMMAND quests_test)
+
+add_executable(skin_decode_test skin_decode_test.cpp skin_decode.cpp skin_decode.h ${CMAKE_SOURCE_DIR}/runtime/gfx/tiling.cpp)
+target_include_directories(skin_decode_test PRIVATE ${CMAKE_SOURCE_DIR}/runtime/gfx)
+add_test(NAME boot_skin_decode COMMAND skin_decode_test)

@@ -7,6 +7,7 @@
 #include "plugins.h"
 
 #include "filters.h"
+#include "game_skin.h"
 #include "gx2.h"
 #include "host_input.h"
 #include "presenter.h"
@@ -47,6 +48,12 @@ namespace mh3u::boot {
 namespace {
 
 namespace stdfs = std::filesystem;
+
+// The game's GUI sheets (game_skin.h) while they are loaded: the menus are drawn with them; null draws the flat look.
+const GameSkin* g_skin = nullptr;
+const ImU32 kGold = IM_COL32(214, 180, 112, 255), kGoldDim = IM_COL32(214, 180, 112, 110);
+const ImU32 kInk = IM_COL32(52, 38, 26, 255), kInkRed = IM_COL32(110, 36, 26, 255);  // text on parchment / tan
+
 
 // Unoptimised SPIR-V: the driver optimises when it builds pipelines anyway, and spirv-opt over the translated
 // shaders takes minutes (360 s vs 4 s for all 668 on a 12-thread CPU).
@@ -236,7 +243,11 @@ bool menu_item(const char* label, ImFont* font, float width, bool enabled = true
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 col = !enabled ? IM_COL32(255, 255, 255, 70) : selected ? IM_COL32(255, 236, 200, 255) : IM_COL32(230, 220, 205, 210);
     dl->AddText(font, font->FontSize, ImVec2(at.x + 36, at.y + 7), col, label);
-    if (selected && enabled) {
+    if (selected && enabled && g_skin) {  // the game's menu cursor in front of the entry
+        const float cy = at.y + h * 0.5f, ch = font->FontSize * 0.9f, cw = ch * skin::kCursor.w() / skin::kCursor.h();
+        g_skin->image(dl, skin::kCursor, ImVec2(at.x + 28 - cw, cy - ch * 0.5f), ImVec2(at.x + 28, cy + ch * 0.5f));
+        dl->AddLine(ImVec2(at.x + 36, cy + font->FontSize * 0.62f), ImVec2(at.x + 36 + ImGui::CalcTextSize(label).x, cy + font->FontSize * 0.62f), kGold, 2.0f);
+    } else if (selected && enabled) {
         const float cy = at.y + h * 0.5f;
         dl->AddText(font, font->FontSize, ImVec2(at.x, at.y + 7), col, "<");
         dl->AddText(font, font->FontSize, ImVec2(at.x + width - 16, at.y + 7), col, ">");
@@ -386,7 +397,14 @@ bool nav_cursor_visible() { return ImGui::GetCurrentContext()->NavCursorVisible;
 void group_begin(PanelLayout& p, const char* title) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImGui::SetCursorScreenPos(ImVec2(p.x, ImGui::GetCursorScreenPos().y));
-    if (title) {
+    if (title && g_skin) {  // the title on a short dark band of the game's, the card right under it
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float bh = p.small->FontSize + 14 * p.scale;
+        const float tw = p.small->CalcTextSizeA(p.small->FontSize, FLT_MAX, 0, title).x;
+        g_skin->bar(dl, skin::kBandShort, at, ImVec2(at.x + std::min(p.w, tw + 64 * p.scale), at.y + bh), 8, 30);
+        dl->AddText(p.small, p.small->FontSize, ImVec2(at.x + 16 * p.scale, at.y + (bh - p.small->FontSize) * 0.5f), kGold, title);
+        ImGui::Dummy(ImVec2(p.w, bh));
+    } else if (title) {
         const ImVec2 at = ImGui::GetCursorScreenPos();
         dl->AddText(p.small, p.small->FontSize, ImVec2(at.x + 16 * p.scale, at.y), kDim, title);  // on the labels' line
         ImGui::Dummy(ImVec2(p.w, p.small->FontSize + 8 * p.scale));
@@ -407,6 +425,24 @@ void group_end(PanelLayout& p) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float bottom = ImGui::GetCursorScreenPos().y, r = 12 * p.scale;
     dl->ChannelsSetCurrent(0);
+    if (g_skin) {  // square cards with a thin gold rim; the selected row framed by the game's scroll-ended outline
+        dl->AddRectFilled(ImVec2(p.x, p.group_top), ImVec2(p.x + p.w, bottom), IM_COL32(10, 8, 6, 170));
+        dl->AddRect(ImVec2(p.x, p.group_top), ImVec2(p.x + p.w, bottom), IM_COL32(214, 180, 112, 60));
+        for (float y : p.seps)
+            if (y > p.group_top + 1 && y < bottom - 1) dl->AddLine(ImVec2(p.x + 16 * p.scale, y), ImVec2(p.x + p.w - 16 * p.scale, y), IM_COL32(214, 180, 112, 28));
+        if (p.hi_col) {
+            dl->AddRectFilled(ImVec2(p.hi0.x + 2, p.hi0.y + 2), ImVec2(p.hi1.x - 2, p.hi1.y - 2), IM_COL32(230, 190, 120, 30));
+            // the scroll ends hang outside the card, clear of the label and the value
+            const float kx = 26 * p.scale, ky = 3 * p.scale;
+            g_skin->bar(dl, skin::kFrameOrnate, ImVec2(p.hi0.x - kx, p.hi0.y - ky), ImVec2(p.hi1.x + kx, p.hi1.y + ky), 60, 60,
+                        p.focus_ring ? kGold : IM_COL32(214, 180, 112, 170));
+        }
+        dl->ChannelsMerge();
+        ImGui::PopStyleVar();
+        p.in_group = false;
+        ImGui::Dummy(ImVec2(1, 24 * p.scale));
+        return;
+    }
     dl->AddRectFilled(ImVec2(p.x, p.group_top), ImVec2(p.x + p.w, bottom), kCard, r);
     if (p.hi_col) {
         ImDrawFlags f = 0;
@@ -485,13 +521,13 @@ int panel_row(PanelLayout& p, Row kind, const char* label, const std::string& va
         p.focus_ring = focused && enabled && nav_cursor_visible();
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float s = p.scale, cy = at.y + p.row_h * 0.5f, right = b.x - 16 * s;
+    const float s = p.scale, inset = (g_skin ? 24.0f : 16.0f) * s, cy = at.y + p.row_h * 0.5f, right = b.x - inset;
     float label_end = right;
     if (kind == Row::Switch) {  // a track with a knob that slides (150 ms) to the new state
         const float tw = 46 * s, th = 26 * s, x0 = right - tw;
         float& t = *ImGui::GetStateStorage()->GetFloatRef(id, on ? 1.0f : 0.0f);
         t += ((on ? 1.0f : 0.0f) - t) * std::min(1.0f, ImGui::GetIO().DeltaTime * 20.0f);
-        const ImVec4 off = ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 236, 200, 40)), amber = ImGui::ColorConvertU32ToFloat4(kAmber);
+        const ImVec4 off = ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 236, 200, 40)), amber = ImGui::ColorConvertU32ToFloat4(g_skin ? kGold : kAmber);
         ImVec4 track(off.x + (amber.x - off.x) * t, off.y + (amber.y - off.y) * t, off.z + (amber.z - off.z) * t, off.w + (amber.w - off.w) * t);
         if (!enabled) track.w *= 0.4f;
         dl->AddRectFilled(ImVec2(x0, cy - th * 0.5f), ImVec2(right, cy + th * 0.5f), ImGui::ColorConvertFloat4ToU32(track), th * 0.5f);
@@ -515,7 +551,12 @@ int panel_row(PanelLayout& p, Row kind, const char* label, const std::string& va
         const bool arrows = kind == Row::Value;
         const float vx = right - (arrows ? 20 * s : 0) - vs.x;
         dl->AddText(p.value, p.value->FontSize, ImVec2(vx, cy - vs.y * 0.5f), !enabled ? kOff : sel && arrows ? kText : kSoft, value.c_str());
-        if (arrows) {
+        if (arrows && g_skin) {
+            const ImU32 col = !enabled ? IM_COL32(255, 255, 255, 40) : sel ? kGold : IM_COL32(214, 180, 112, 120);
+            const float ch = 14 * s, cw = ch * skin::kChevron.w() / skin::kChevron.h();
+            g_skin->image(dl, skin::kChevron, ImVec2(vx - 10 * s - cw, cy - ch * 0.5f), ImVec2(vx - 10 * s, cy + ch * 0.5f), col, true);
+            g_skin->image(dl, skin::kChevron, ImVec2(right - cw, cy - ch * 0.5f), ImVec2(right, cy + ch * 0.5f), col);
+        } else if (arrows) {
             const ImU32 col = !enabled ? IM_COL32(255, 255, 255, 40) : sel ? kAmber : IM_COL32(170, 160, 145, 150);
             arrow(dl, ImVec2(vx - 14 * s, cy), 5 * s, -1, col);
             arrow(dl, ImVec2(right - 4 * s, cy), 5 * s, 1, col);
@@ -523,7 +564,7 @@ int panel_row(PanelLayout& p, Row kind, const char* label, const std::string& va
         label_end = vx - (arrows ? 28 * s : 16 * s);
     }
     dl->PushClipRect(at, ImVec2(std::max(at.x, label_end), b.y), true);
-    dl->AddText(p.label, p.label->FontSize, ImVec2(at.x + 16 * s + p.indent, cy - p.label->FontSize * 0.5f), enabled ? kText : kOff, label);
+    dl->AddText(p.label, p.label->FontSize, ImVec2(at.x + inset + p.indent, cy - p.label->FontSize * 0.5f), enabled ? kText : kOff, label);
     dl->PopClipRect();
     ImGui::SetCursorScreenPos(ImVec2(at.x, b.y));
     ImGui::Dummy(ImVec2(1, 0));
@@ -576,9 +617,24 @@ struct Launcher::Impl {
     // Title: the launcher over the game's own intro / title screen (menu or a panel); Hidden: the game is played;
     // InGame: the settings panel over the game (F1 / Home)
     enum class Mode { Title, Hidden, InGame } mode = Mode::Title;
+    // Panel: which key's panel is open (F1 / Select + Options the settings, F2 the mods); Page: the sidebar's entry
+    // shown in it. Item sets, hold to carve: always on (no page).
     enum class Panel { None, Settings, Mods } panel = Panel::None;
-    enum class Tab { General, Video, Input } tab = Tab::General;
-    enum class ModsTab { Quests, Mods } mods_tab = ModsTab::Quests;  // item sets, HP scaling, hold to carve: always on (no tab)
+    enum class Page { Display, Graphics, Controls, Gameplay, Mods, Quests, System, Count } page = Page::Display;
+    Page last_settings_page = Page::Display, last_mods_page = Page::Quests;
+    static bool is_mods_page(Page pg) { return pg == Page::Mods || pg == Page::Quests; }
+    void show_page(Page pg) {
+        page = pg;
+        panel = is_mods_page(pg) ? Panel::Mods : Panel::Settings;
+        (panel == Panel::Mods ? last_mods_page : last_settings_page) = pg;
+        if (panel == Panel::Mods) quests_stale = true;
+        refocus = true;
+    }
+    // the game's GUI sheets, read from the dump once it is known (game_skin.h)
+    GameSkin skin;
+    void load_skin() {
+        if (game && !skin.ok()) skin.load(*game, presenter.vk(), image_sampler);
+    }
     // MODS -> QUESTS: the library (<data>/quests), pack modes (<data>/mods.ini) and what the save has installed; re-read
     // (and packs applied) at start and whenever the panel opens or changes something
     quests::Library quest_library;
@@ -723,8 +779,10 @@ struct Launcher::Impl {
     float draw_guide(ImDrawList* dl, ImVec2 at, float h, bool changes, bool confirm_applies);
     float key_cap(ImDrawList* dl, ImVec2 at, const std::string& key, bool draw);
     void toggle_panel(Panel which);
-    void draw_tab_general(PanelLayout& p);
-    void draw_tab_video(PanelLayout& p);
+    void draw_page_display(PanelLayout& p);
+    void draw_page_graphics(PanelLayout& p);
+    void draw_page_gameplay(PanelLayout& p);
+    void draw_page_system(PanelLayout& p);
     void draw_tab_input(PanelLayout& p, float table_w);
     void draw_status(const LaunchState& st, ImVec2 size);
     void draw_keyboard(ImVec2 size);
@@ -787,10 +845,14 @@ Launcher::Launcher(const AppPaths& paths, gfx::Presenter& presenter, std::vector
     char* open = nullptr;
     size_t open_len = 0;
     if (_dupenv_s(&open, &open_len, "MH3U_LAUNCHER_OPEN") == 0 && open) {
+        // settings[:display|graphics|controls|gameplay|system] (the old names video / input / general too), mods[:mods]
         const std::string o = open;
-        d.panel = o.rfind("mods", 0) == 0 ? Impl::Panel::Mods : Impl::Panel::Settings;
-        if (o.find(":mods") != std::string::npos) d.mods_tab = Impl::ModsTab::Mods;
-        d.tab = o.find("video") != std::string::npos ? Impl::Tab::Video : o.find("input") != std::string::npos ? Impl::Tab::Input : Impl::Tab::General;
+        using P = Impl::Page;
+        const auto has = [&](const char* w) { return o.find(w) != std::string::npos; };
+        P pg = has("graphics") ? P::Graphics : has("controls") || has("input") ? P::Controls : has("gameplay") || has("general") ? P::Gameplay
+             : has("system") ? P::System : P::Display;
+        if (o.rfind("mods", 0) == 0) pg = has(":mods") ? P::Mods : P::Quests;
+        d.show_page(pg);
     }
     std::free(open);
     if (!g_sound.open()) std::fprintf(stderr, "launcher: no sound (%s)\n", SDL_GetError());
@@ -798,6 +860,7 @@ Launcher::Launcher(const AppPaths& paths, gfx::Presenter& presenter, std::vector
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(vk.device, &sci, nullptr, &d.image_sampler);
+    d.load_skin();
     plugins::ensure_scanned(paths.data);  // MODS -> Mods before the game boots
     d.refresh_quests();  // quest packs set to All install themselves (the official DLC by default)
     presenter.set_overlay([&d](VkCommandBuffer cmd, VkExtent2D) { d.record(cmd); });
@@ -813,6 +876,8 @@ Launcher::~Launcher() {
     }
     d.snap.reset();
     for (auto& [f, img] : d.images) destroy_image(dev, img);
+    d.skin.destroy(dev);
+    g_skin = nullptr;
     if (d.image_sampler) vkDestroySampler(dev, d.image_sampler, nullptr);
     g_sound.close();
     ImGui_ImplVulkan_Shutdown();
@@ -887,10 +952,9 @@ void Launcher::toggle_mods() { impl_->toggle_panel(Impl::Panel::Mods); }
 void Launcher::Impl::toggle_panel(Panel which) {
     Impl& d = *this;
     if (d.keyboard) return;  // finish the text first
+    const Page open_on = which == Panel::Mods ? d.last_mods_page : d.last_settings_page;
     if (d.mode == Impl::Mode::InGame && d.panel != which) {  // F1 over MODS / F2 over the settings: switch
-        d.panel = which;
-        d.quests_stale = true;
-        d.refocus = true;
+        d.show_page(open_on);
         g_sound.play(Sfx::Tab);
     } else if (d.mode == Impl::Mode::InGame) {
         d.hide();
@@ -899,18 +963,14 @@ void Launcher::Impl::toggle_panel(Panel which) {
         // would close the panel again at once
         ImGui::GetIO().ClearInputKeys();
         d.mode = Impl::Mode::InGame;
-        d.panel = which;
-        d.quests_stale = true;
-        d.refocus = true;
+        d.show_page(open_on);
         d.last = {};  // draw at once
     } else if (d.panel == which) {  // the title overlay: the same keys open and close its panels
         d.close_panel();
     } else {
         if (d.panel == Panel::None) g_sound.play(Sfx::Select);
         else g_sound.play(Sfx::Tab);
-        d.panel = which;
-        d.quests_stale = true;
-        d.refocus = true;
+        d.show_page(open_on);
     }
 }
 bool Launcher::ready_to_boot() const {
@@ -993,6 +1053,7 @@ bool Launcher::Impl::draw(const LaunchState& st) {
                     error.clear();
                     save_game_sources(paths, sources);
                     start_shaders();
+                    load_skin();
                 }
             } else if (auto other = fs::open_game(sources, &error)) {  // a different game: used from the next start
                 error.clear();
@@ -1021,6 +1082,7 @@ bool Launcher::Impl::draw(const LaunchState& st) {
         ImGui_ImplVulkan_DestroyFontsTexture();
         ImGui_ImplVulkan_CreateFontsTexture();
     }
+    g_skin = skin.ok() ? &skin : nullptr;
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     // a high-density window (scaled desktop, issue #13): the backend gives the size in points and a framebuffer scale;
@@ -1110,15 +1172,8 @@ void Launcher::Impl::draw_title(const LaunchState& st, ImVec2 size, bool& play, 
         dialog.pending = true;
         SDL_ShowOpenFileDialog(&DialogResult::callback, &dialog, window, filters, 2, nullptr, false);
     }
-    if (menu_item("SETTINGS", fonts.menu, menu_w)) {
-        panel = Panel::Settings;
-        refocus = true;
-    }
-    if (menu_item("MODS", fonts.menu, menu_w)) {
-        panel = Panel::Mods;
-        quests_stale = true;
-        refocus = true;
-    }
+    if (menu_item("SETTINGS", fonts.menu, menu_w)) show_page(last_settings_page);
+    if (menu_item("MODS", fonts.menu, menu_w)) show_page(last_mods_page);
     if (menu_item("QUIT", fonts.menu, menu_w)) quit = true;
 }
 
@@ -1182,97 +1237,83 @@ void Launcher::Impl::draw_toast(ImVec2 size) {
     const float left = std::chrono::duration<float>(toast_until - std::chrono::steady_clock::now()).count();
     const float alpha = std::clamp(left * 2.0f, 0.0f, 1.0f);
     const auto fade = [&](int a8) { return static_cast<ImU32>(static_cast<float>(a8) * alpha) << 24; };
-    dl->AddRectFilled(a, b, IM_COL32(20, 16, 12, 0) | fade(225), 4.0f);
-    dl->AddRect(a, b, IM_COL32(255, 255, 255, 0) | fade(40), 4.0f);
-    dl->AddRectFilled(ImVec2(a.x, a.y + 4), ImVec2(a.x + 4 * scale, b.y - 4), IM_COL32(240, 170, 60, 0) | fade(255));
+    if (g_skin) {  // the game's gold-trimmed box
+        g_skin->frame(dl, skin::kFrameGold, ImVec2(a.x - 4 * scale, a.y - 4 * scale), ImVec2(b.x + 4 * scale, b.y + 4 * scale), 14,
+                      10 * scale, IM_COL32(255, 255, 255, 0) | fade(235), true);
+    } else {
+        dl->AddRectFilled(a, b, IM_COL32(20, 16, 12, 0) | fade(225), 4.0f);
+        dl->AddRect(a, b, IM_COL32(255, 255, 255, 0) | fade(40), 4.0f);
+        dl->AddRectFilled(ImVec2(a.x, a.y + 4), ImVec2(a.x + 4 * scale, b.y - 4), IM_COL32(240, 170, 60, 0) | fade(255));
+    }
     dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(a.x + pad + 6 * scale, a.y + pad), (kText & 0x00FFFFFFu) | fade(255),
                 toast_text.c_str(), nullptr, wrap);
 }
 
-// The settings window: a header bar with the tab switcher (LB / RB or Q / E switch) and the close button, grouped
-// rows on the left, the selected row's description on the right, and a footer with the control guide (the buttons
-// as bound right now) and APPLY. Esc / B close it. MODS uses the same frame.
+// The settings window: a title band (the page's name, close on the right), the pages down the left (L / R or Q / E
+// change page, or a click), the page's groups of rows in the middle, the selected row's description on the right (on
+// the game's parchment page), and a footer with the control guide (the buttons as bound right now) and APPLY. Esc / B
+// close it. With the game's GUI sheets loaded everything is drawn from them, else in the flat warm-brown look.
 void Launcher::Impl::draw_panel(ImVec2 size) {
     const float s = scale;
-    const float pw = std::min(size.x - 60 * s, 1240 * s), ph = std::min(size.y - 80 * s, 720 * s);
-    const float split = 0.58f;  // rows on the left, the description pane on the right
+    const GameSkin* sk = g_skin;
+    const float pw = std::min(size.x - 60 * s, 1280 * s), ph = std::min(size.y - 80 * s, 740 * s);
     const ImVec2 a((size.x - pw) * 0.5f, (size.y - ph) * 0.5f), b(a.x + pw, a.y + ph);
-    const float r = 14 * s;
+    const float r = sk ? 0.0f : 14 * s;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (int i = 1; i <= 8; ++i) {  // a soft shadow, offset downwards
         const float g = i * 3.0f * s;
         dl->AddRectFilled(ImVec2(a.x - g * 0.5f, a.y - g * 0.5f + 8 * s), ImVec2(b.x + g * 0.5f, b.y + g * 0.5f + 8 * s), IM_COL32(0, 0, 0, 14), r + g);
     }
-    dl->AddRectFilled(a, b, kPanelBg, r);
-    dl->AddRect(a, b, kPanelEdge, r);
+    if (sk) {  // carved wood in the game's gold-trimmed frame
+        sk->cover(dl, skin::kWood, a, b);
+        dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, 60));
+        sk->frame(dl, skin::kFrameGold, ImVec2(a.x - 6 * s, a.y - 6 * s), ImVec2(b.x + 6 * s, b.y + 6 * s), 14, 14 * s);
+    } else {
+        dl->AddRectFilled(a, b, kPanelBg, r);
+        dl->AddRect(a, b, kPanelEdge, r);
+    }
 
-    // header bar: the tabs as one pill of segments in the middle, the bumpers' prompts beside it, close on the right
-    // one row of tabs for both panels (user 2026-11-04: Mods and Quests next to General and Input): 0-2 the settings'
-    // tabs, 3 Mods, 4 Quests (the MODS panel's two tabs)
-    static const char* const kTabNames[] = {"General", "Video", "Input", "Mods", "Quests"};
-    const bool mods = panel == Panel::Mods;
-    if (mods && quests_stale) refresh_quests();  // also applies the pack modes
-    const int ntabs = 5;
-    const int current = mods ? (mods_tab == ModsTab::Mods ? 3 : 4) : static_cast<int>(tab);
-    const auto select_tab = [&](int i) {
-        if (i < 3) {
-            panel = Panel::Settings;
-            tab = static_cast<Tab>(i);
-        } else {
-            panel = Panel::Mods;
-            mods_tab = i == 3 ? ModsTab::Mods : ModsTab::Quests;
-            quests_stale = true;
-        }
-        g_sound.play(Sfx::Tab);
-        refocus = true;
+    struct PageInfo {
+        const char* name;
+        const char* section;  // starts a section of the sidebar
+        const char* title;    // in the title band
     };
-    const float header_h = 72 * s, seg_h = 38 * s, seg_pad = 24 * s;
-    float seg_total = 0;
-    for (int i = 0; i < ntabs; ++i)
-        seg_total += fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, kTabNames[i]).x + 2 * seg_pad;
-    const float sy = a.y + (header_h - seg_h) * 0.5f;
-    float tx = (a.x + b.x) * 0.5f - seg_total * 0.5f;
-    const float seg_x0 = tx;
-    if (ntabs > 1) dl->AddRectFilled(ImVec2(tx - 3 * s, sy - 3 * s), ImVec2(tx + seg_total + 3 * s, sy + seg_h + 3 * s), IM_COL32(0, 0, 0, 70), seg_h);
-    for (int i = 0; i < ntabs; ++i) {
-        const char* name = kTabNames[i];
-        const bool on = current == i;
-        const ImVec2 ts = fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, name);
-        const float w = ts.x + 2 * seg_pad;
-        ImGui::SetCursorScreenPos(ImVec2(tx, sy));
-        ImGui::PushID(name);
-        if (ImGui::InvisibleButton("tab", ImVec2(w, seg_h), ImGuiButtonFlags_NoNavFocus) && !on) select_tab(i);
-        const bool hov = ImGui::IsItemHovered();
-        ImGui::PopID();
-        if (on && ntabs > 1) dl->AddRectFilled(ImVec2(tx, sy), ImVec2(tx + w, sy + seg_h), IM_COL32(255, 236, 200, 34), seg_h * 0.5f);
-        else if (hov && ntabs > 1) dl->AddRectFilled(ImVec2(tx, sy), ImVec2(tx + w, sy + seg_h), kHover, seg_h * 0.5f);
-        dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(tx + seg_pad, sy + (seg_h - ts.y) * 0.5f), on ? kText : hov ? kSoft : kDim, name);
-        tx += w;
+    static constexpr PageInfo kPages[] = {
+        {"Display", "Settings", "Display"},  {"Graphics", nullptr, "Graphics"}, {"Controls", nullptr, "Controls"},
+        {"Gameplay", nullptr, "Gameplay"},   {"Mods", "Content", "Mods"},       {"Quests", nullptr, "Quests"},
+        {"System", "Cha-Cha", "System"},
+    };
+    const bool mods = is_mods_page(page);
+    if (mods && quests_stale) refresh_quests();  // also applies the pack modes
+    const int npages = static_cast<int>(Page::Count), current = static_cast<int>(page);
+    const auto select_page = [&](int i) {
+        show_page(static_cast<Page>(i));
+        g_sound.play(Sfx::Tab);
+    };
+    const float pad = 32 * s, header_h = 68 * s, footer_h = 64 * s;
+
+    // title band: Cha-Cha's name, the page's title, the close button
+    const ImVec2 t0(a.x, a.y + 12 * s), t1(b.x, a.y + header_h - 8 * s);
+    if (sk) sk->bar(dl, skin::kBandCross, t0, t1, 14, 14);
+    const float tcy = (t0.y + t1.y) * 0.5f;
+    {
+        const char* brand = "CHA-CHA";
+        const ImVec2 bs = fonts.note->CalcTextSizeA(fonts.note->FontSize, FLT_MAX, 0, brand);
+        dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(a.x + pad, tcy - bs.y * 0.5f), sk ? kGold : kAmber, brand);
+        const char* title = kPages[current].title;
+        const ImVec2 ts = fonts.menu->CalcTextSizeA(fonts.menu->FontSize, FLT_MAX, 0, title);
+        dl->AddText(fonts.menu, fonts.menu->FontSize, ImVec2(a.x + pad + bs.x + 20 * s, tcy - ts.y * 0.5f), kText, title);
     }
-    if (ntabs > 1) {  // which buttons switch tabs
-        const std::string lp = input::pad_prompt("l"), rp = input::pad_prompt("r");
-        const bool pad = !lp.empty() && !rp.empty();
-        const float cy = sy + seg_h * 0.5f;
-        const float lw = key_cap(dl, ImVec2(0, 0), pad ? lp : "Q", false);
-        key_cap(dl, ImVec2(seg_x0 - 16 * s - lw, cy), pad ? lp : "Q", true);
-        key_cap(dl, ImVec2(seg_x0 + seg_total + 16 * s, cy), pad ? rp : "E", true);
-    }
-    if (!capturing) {  // LB / RB, Q / E
-        int step = 0;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1) || ImGui::IsKeyPressed(ImGuiKey_Q, false)) step = -1;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1) || ImGui::IsKeyPressed(ImGuiKey_E, false)) step = 1;
-        if (step) select_tab((current + step + ntabs) % ntabs);
-    }
-    // close button: a round header button
-    const float cr = 18 * s;
-    const ImVec2 cc(b.x - 32 * s - cr, a.y + header_h * 0.5f);  // on the content's right edge, like Apply
+    const float cr = 16 * s;
+    const ImVec2 cc(b.x - pad - cr, tcy);
     ImGui::SetCursorScreenPos(ImVec2(cc.x - cr, cc.y - cr));
     const bool close = ImGui::InvisibleButton("close", ImVec2(2 * cr, 2 * cr), ImGuiButtonFlags_NoNavFocus);
     {
         const bool hov = ImGui::IsItemHovered();
-        dl->AddCircleFilled(cc, cr, hov ? IM_COL32(255, 236, 200, 40) : kFill);
+        if (sk) dl->AddCircleFilled(cc, cr, hov ? IM_COL32(214, 180, 112, 70) : IM_COL32(0, 0, 0, 90));
+        else dl->AddCircleFilled(cc, cr, hov ? IM_COL32(255, 236, 200, 40) : kFill);
         const float x = 6 * s;
-        const ImU32 col = hov ? kText : kSoft;
+        const ImU32 col = hov ? kText : sk ? kGold : kSoft;
         dl->AddLine(ImVec2(cc.x - x, cc.y - x), ImVec2(cc.x + x, cc.y + x), col, 2.0f * s);
         dl->AddLine(ImVec2(cc.x - x, cc.y + x), ImVec2(cc.x + x, cc.y - x), col, 2.0f * s);
     }
@@ -1281,19 +1322,65 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
         return;
     }
 
+    // the pages, down the left
+    const float top = a.y + header_h + 8 * s, fy = b.y - footer_h;
+    const float side_w = std::clamp(pw * 0.19f, 180 * s, 240 * s), item_h = fonts.body->FontSize + 18 * s;
+    const float sx = a.x + pad;
+    float y = top + 4 * s;
+    for (int i = 0; i < npages; ++i) {
+        const PageInfo& pi = kPages[i];
+        if (pi.section) {
+            if (i) y += 12 * s;
+            dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(sx + 18 * s, y), sk ? IM_COL32(214, 180, 112, 170) : kDim, pi.section);
+            y += fonts.note->FontSize + 8 * s;
+        }
+        const bool on = current == i;
+        const ImVec2 r0(sx, y), r1(sx + side_w, y + item_h);
+        ImGui::SetCursorScreenPos(r0);
+        ImGui::PushID(pi.name);
+        if (ImGui::InvisibleButton("page", ImVec2(side_w, item_h), ImGuiButtonFlags_NoNavFocus) && !on) select_page(i);
+        const bool hov = ImGui::IsItemHovered();
+        ImGui::PopID();
+        ImU32 col = on ? kText : hov ? kSoft : kDim;
+        if (on && sk) {  // the game's woven bar, its cursor in front
+            sk->bar(dl, skin::kBarWeave, r0, r1, 6, 6);
+            dl->AddRect(r0, r1, IM_COL32(214, 180, 112, 150));
+            const float ch = item_h * 0.62f, cw = ch * skin::kCursor.w() / skin::kCursor.h();
+            sk->image(dl, skin::kCursor, ImVec2(r0.x - cw * 0.55f, (r0.y + r1.y - ch) * 0.5f), ImVec2(r0.x + cw * 0.45f, (r0.y + r1.y + ch) * 0.5f));
+        } else if (on) {
+            dl->AddRectFilled(r0, r1, IM_COL32(255, 236, 200, 34), item_h * 0.5f);
+        } else if (hov) {
+            dl->AddRectFilled(r0, r1, sk ? IM_COL32(214, 180, 112, 26) : kHover, sk ? 0.0f : item_h * 0.5f);
+        }
+        dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(r0.x + 24 * s, r0.y + (item_h - fonts.body->FontSize) * 0.5f), col, pi.name);
+        y += item_h + 2 * s;
+    }
+    {  // which buttons change page, under the list
+        const std::string lp = input::pad_prompt("l"), rp = input::pad_prompt("r");
+        const bool pad_keys = !lp.empty() && !rp.empty();
+        const float hy = y + 20 * s + 13 * s;
+        float hx = sx + 18 * s;
+        hx += key_cap(dl, ImVec2(hx, hy), pad_keys ? lp : "Q", true) + 6 * s;
+        hx += key_cap(dl, ImVec2(hx, hy), pad_keys ? rp : "E", true) + 10 * s;
+        dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(hx, hy - fonts.note->FontSize * 0.5f), kDim, "Page");
+    }
+    if (!capturing) {  // LB / RB, Q / E
+        int step = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1) || ImGui::IsKeyPressed(ImGuiKey_Q, false)) step = -1;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1) || ImGui::IsKeyPressed(ImGuiKey_E, false)) step = 1;
+        if (step) select_page((current + step + npages) % npages);
+    }
+    const float cx0 = sx + side_w + pad;  // the rows start here
+    dl->AddLine(ImVec2(cx0 - pad * 0.5f, top + 4 * s), ImVec2(cx0 - pad * 0.5f, fy - 16 * s), sk ? IM_COL32(214, 180, 112, 50) : kHairline);
+
     if (!draft_open) {
         draft = settings;
         draft_open = true;
     }
-    // body: groups of rows left (scrolling), the description right; INPUT uses the full width for its table
-    const bool full = !mods && tab == Tab::Input;
-    const float footer_h = 64 * s;
-    // one spacing scale (4 / 8 / 16 / 24 / 32): the content sits 32 in from the panel's edges, rows end 16 before the
-    // scroll bar, the description pane starts 32 after the rows
-    const float pad = 32 * s, top = a.y + header_h, body_h = b.y - top - footer_h - 16 * s;
-    // the cards keep the same 32 margin on both sides: to the panel's edge on the left, to the panel's edge or the
-    // description pane on the right; the scroll bar sits in the middle of that right margin
-    const float cards_w = full ? pw - 2 * pad : pw * split - pad * 1.5f;
+    // body: groups of rows (scrolling), the description right; Controls uses the full width for its table
+    const bool full = page == Page::Controls;
+    const float body_h = fy - top - 16 * s, room = b.x - pad - cx0;
+    const float cards_w = full ? room : room * 0.58f - pad * 0.5f;
     const float col_w = cards_w + pad * 0.5f + ImGui::GetStyle().ScrollbarSize * 0.5f;
     PanelLayout p;
     p.label = fonts.body;
@@ -1301,44 +1388,59 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
     p.small = fonts.note;
     p.scale = s;
     p.row_h = fonts.body->FontSize + 28 * s;
-    p.confirm_applies = !mods && tab != Tab::Input && !(draft == settings);  // INPUT's rows take effect at once
-    ImGui::SetCursorScreenPos(ImVec2(a.x + pad, top));
+    p.confirm_applies = !mods && page != Page::Controls && !(draft == settings);  // Controls' rows take effect at once
+    ImGui::SetCursorScreenPos(ImVec2(cx0, top));
     ImGui::BeginChild("rows", ImVec2(col_w, body_h), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground);
-    p.x = ImGui::GetCursorScreenPos().x;
-    p.w = cards_w;
+    const float hang = sk ? 30 * s : 0.0f;  // room for the selection outline's scroll ends
+    p.x = ImGui::GetCursorScreenPos().x + hang;
+    p.w = cards_w - 2 * hang;
     ImGui::Dummy(ImVec2(1, 4 * s));
     if (refocus) {
         ImGui::SetKeyboardFocusHere();
         refocus = false;
     }
-    if (mods && mods_tab == ModsTab::Mods) {
-        draw_tab_mods(p);
-    } else if (mods) {
-        draw_tab_quests(p);
-    } else if (tab == Tab::General) {
-        draw_tab_general(p);
-    } else if (tab == Tab::Video) {
-        draw_tab_video(p);
-    } else {
-        draw_tab_input(p, p.w);
+    switch (page) {
+        case Page::Display: draw_page_display(p); break;
+        case Page::Graphics: draw_page_graphics(p); break;
+        case Page::Controls: draw_tab_input(p, p.w); break;
+        case Page::Gameplay: draw_page_gameplay(p); break;
+        case Page::Mods: draw_tab_mods(p); break;
+        case Page::Quests: draw_tab_quests(p); break;
+        default: draw_page_system(p); break;
     }
     ImGui::EndChild();
-    if (!full) {  // description of the selected row
-        const float dx = a.x + pad + cards_w + pad, wrap = b.x - pad - dx;
-        const float ty = top + 4 * s + fonts.note->FontSize + 8 * s;  // level with the first card
+    if (!full) {  // description of the selected row, on the game's parchment page
+        const float px0 = cx0 + cards_w + pad, px1 = b.x - pad + 8 * s;
+        const ImVec2 d0(px0, top + 4 * s), d1(px1, fy - 12 * s);
+        float dx = px0, wrap = px1 - px0, ty = top + 4 * s + fonts.note->FontSize + 8 * s, bottom_y = fy - pad;
+        ImU32 title_col = kText, body_col = kSoft;
+        if (sk) {
+            sk->image(dl, skin::kPage, d0, d1);
+            // the parchment inside the page's leather edge (right and bottom)
+            const float w = d1.x - d0.x, h = d1.y - d0.y;
+            dx = d0.x + w * 0.07f;  // the leather starts at 87 % of the width and 98 % of the height
+            wrap = w * 0.74f;
+            ty = d0.y + h * 0.05f;
+            bottom_y = d1.y - h * 0.06f;
+            title_col = kInkRed;
+            body_col = kInk;
+        }
         if (p.sel_title) {
-            dl->AddText(fonts.menu, fonts.menu->FontSize, ImVec2(dx, ty), kText, p.sel_title);
-            const float text_y = ty + fonts.menu->FontSize + 12 * s;
+            dl->AddText(fonts.menu, fonts.menu->FontSize, ImVec2(dx, ty), title_col, p.sel_title, nullptr, wrap);
+            const float title_h = fonts.menu->CalcTextSizeA(fonts.menu->FontSize, FLT_MAX, wrap, p.sel_title).y;
+            if (sk) dl->AddLine(ImVec2(dx, ty + title_h + 6 * s), ImVec2(dx + wrap, ty + title_h + 6 * s), IM_COL32(110, 36, 26, 90), 1.5f * s);
+            const float text_y = ty + title_h + 16 * s;
             const char* desc = p.sel_desc ? p.sel_desc : "";
-            dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(dx, text_y), kSoft, desc, nullptr, wrap);
+            dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(dx, text_y), body_col, desc, nullptr, wrap);
             // a quest's or pack's picture below its text, fitted to the space left
             if (const LauncherImage* img = image(p.sel_image)) {
-                const float y = text_y + fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, wrap, desc).y + 24 * s;
-                const float room_h = b.y - footer_h - pad - y;
+                const float iy = text_y + fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, wrap, desc).y + 24 * s;
+                const float room_h = bottom_y - iy;
                 const float k = std::min(wrap / img->w, room_h / img->h);
                 if (k > 0 && room_h > 40 * s) {
-                    const ImVec2 i0(dx, y), i1(i0.x + img->w * k, y + img->h * k);
-                    dl->AddImageRounded(img->id(), i0, i1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 10 * s);
+                    const ImVec2 i0(dx, iy), i1(i0.x + img->w * k, iy + img->h * k);
+                    dl->AddImageRounded(img->id(), i0, i1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, sk ? 0.0f : 10 * s);
+                    if (sk) dl->AddRect(i0, i1, IM_COL32(52, 38, 26, 160), 0, 0, 1.5f * s);
                 }
             }
         }
@@ -1346,35 +1448,44 @@ void Launcher::Impl::draw_panel(ImVec2 size) {
                        settings.vsync != boot_settings.vsync || (!sources.empty() && sources != boot_sources))) {
             const char* note = "Internal resolution, frame rate, VSync and game changes apply on the next start.";
             const float nh = fonts.note->CalcTextSizeA(fonts.note->FontSize, FLT_MAX, wrap - 40 * s, note).y + 24 * s;
-            const ImVec2 n0(dx, b.y - footer_h - pad - nh), n1(b.x - pad, b.y - footer_h - pad);
-            dl->AddRectFilled(n0, n1, IM_COL32(236, 178, 84, 26), 10 * s);
-            dl->AddCircleFilled(ImVec2(n0.x + 20 * s, n0.y + nh * 0.5f), 4 * s, kAmber);
-            dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(n0.x + 36 * s, n0.y + 12 * s), kText, note, nullptr, wrap - 40 * s);
+            const ImVec2 n0(dx, bottom_y - nh), n1(dx + wrap, bottom_y);
+            dl->AddRectFilled(n0, n1, sk ? IM_COL32(110, 36, 26, 36) : IM_COL32(236, 178, 84, 26), sk ? 0.0f : 10 * s);
+            dl->AddCircleFilled(ImVec2(n0.x + 20 * s, n0.y + nh * 0.5f), 4 * s, sk ? kInkRed : kAmber);
+            dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(n0.x + 36 * s, n0.y + 12 * s), sk ? kInk : kText, note, nullptr, wrap - 40 * s);
         }
     }
     // footer: the control guide; unapplied changes and APPLY (Start on a controller) on the right
-    const float fy = b.y - footer_h;
-    dl->AddRectFilled(ImVec2(a.x + 1, fy), ImVec2(b.x - 1, b.y - 1), IM_COL32(0, 0, 0, 46), r - 1, ImDrawFlags_RoundCornersBottom);
-    dl->AddLine(ImVec2(a.x + 1, fy), ImVec2(b.x - 1, fy), kHairline);
+    if (sk) {
+        sk->bar(dl, skin::kBandDiamond, ImVec2(a.x, fy + 6 * s), ImVec2(b.x, b.y - 6 * s), 14, 14);
+    } else {
+        dl->AddRectFilled(ImVec2(a.x + 1, fy), ImVec2(b.x - 1, b.y - 1), IM_COL32(0, 0, 0, 46), r - 1, ImDrawFlags_RoundCornersBottom);
+        dl->AddLine(ImVec2(a.x + 1, fy), ImVec2(b.x - 1, fy), kHairline);
+    }
     draw_guide(dl, ImVec2(a.x + pad, fy + footer_h * 0.5f), footer_h, p.sel_changes, p.confirm_applies && p.sel_value);
     if (mods) return;  // the quests apply at once
     if (p.apply && !(draft == settings)) apply();  // A / Enter on a Value row
     const bool dirty = !(draft == settings);
     const float bh = 40 * s;
     const ImVec2 ls = fonts.body->CalcTextSizeA(fonts.body->FontSize, FLT_MAX, 0, "Apply");
-    const float bw = ls.x + 48 * s;
+    const float bw = ls.x + (sk ? 72 : 48) * s;
     const ImVec2 b0(b.x - pad - bw, fy + (footer_h - bh) * 0.5f), b1(b0.x + bw, b0.y + bh);
     ImGui::SetCursorScreenPos(b0);
     ImGui::BeginDisabled(!dirty);
     const bool clicked = ImGui::InvisibleButton("apply", ImVec2(bw, bh), ImGuiButtonFlags_EnableNav);
     const bool sel = dirty && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
     ImGui::EndDisabled();
-    dl->AddRectFilled(b0, b1, dirty ? (sel ? IM_COL32(246, 192, 104, 255) : kAmber) : kFill, bh * 0.5f);
-    dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(b0.x + (bw - ls.x) * 0.5f, b0.y + (bh - ls.y) * 0.5f), dirty ? kOnAmber : kOff, "Apply");
+    if (sk) {  // the woven bar with a gold rim; faint while there is nothing to apply
+        sk->bar(dl, skin::kBarWeave, b0, b1, 6, 6, dirty ? IM_COL32_WHITE : IM_COL32(255, 255, 255, 70));
+        dl->AddRect(b0, b1, dirty ? (sel ? kText : kGold) : kGoldDim, 0, 0, sel ? 2.0f * s : 1.0f * s);
+        dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(b0.x + (bw - ls.x) * 0.5f, b0.y + (bh - ls.y) * 0.5f), dirty ? kText : kOff, "Apply");
+    } else {
+        dl->AddRectFilled(b0, b1, dirty ? (sel ? IM_COL32(246, 192, 104, 255) : kAmber) : kFill, bh * 0.5f);
+        dl->AddText(fonts.body, fonts.body->FontSize, ImVec2(b0.x + (bw - ls.x) * 0.5f, b0.y + (bh - ls.y) * 0.5f), dirty ? kOnAmber : kOff, "Apply");
+    }
     if (dirty) {
         const char* note = "Unapplied changes";
         const ImVec2 ns = fonts.note->CalcTextSizeA(fonts.note->FontSize, FLT_MAX, 0, note);
-        dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(b0.x - 16 * s - ns.x, fy + (footer_h - ns.y) * 0.5f), kAmber, note);
+        dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(b0.x - 16 * s - ns.x, fy + (footer_h - ns.y) * 0.5f), sk ? kGold : kAmber, note);
     }
     if (dirty && (clicked || ImGui::IsKeyPressed(ImGuiKey_GamepadStart) || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter))))
         apply();
@@ -1396,7 +1507,7 @@ float Launcher::Impl::draw_guide(ImDrawList* dl, ImVec2 at, float, bool changes,
         items = {{"Esc", "Cancel"}, {"Delete", "Clear"}};
     } else {
         // on a Value row with unapplied changes, A / Enter applies (left / right change the value)
-        items.push_back({pad ? sel : "Enter", confirm_applies ? "Apply" : panel == Panel::Settings && tab == Tab::Input ? "Rebind" : "Select"});
+        items.push_back({pad ? sel : "Enter", confirm_applies ? "Apply" : page == Page::Controls ? "Rebind" : "Select"});
         if (changes) items.push_back({"<>", "Change"});
         if (settings_tab && !confirm_applies) items.push_back({pad ? (apply_key.empty() ? "+" : apply_key) : "Ctrl+Enter", "Apply"});
         items.push_back({pad ? back : "Esc", "Close"});
@@ -1405,7 +1516,7 @@ float Launcher::Impl::draw_guide(ImDrawList* dl, ImVec2 at, float, bool changes,
     for (const Item& it : items) {
         x += key_cap(dl, ImVec2(x, at.y), it.key, true) + 8 * scale;
         const ImVec2 ts = fonts.note->CalcTextSizeA(fonts.note->FontSize, FLT_MAX, 0, it.what);
-        dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(x, at.y - ts.y * 0.5f), kSoft, it.what);
+        dl->AddText(fonts.note, fonts.note->FontSize, ImVec2(x, at.y - ts.y * 0.5f), g_skin ? kText : kSoft, it.what);
         x += ts.x + 24 * scale;
     }
     return x - at.x;
@@ -1416,6 +1527,9 @@ float Launcher::Impl::draw_guide(ImDrawList* dl, ImVec2 at, float, bool changes,
 // name. Returns its width; draw false only measures.
 float Launcher::Impl::key_cap(ImDrawList* dl, ImVec2 at, const std::string& key, bool draw) {
     const float s = scale, h = 26 * s, cy = at.y, line = 1.8f * s;
+    if (g_skin) {  // the game's own glyph where it has one (A B X Y + - L R ZL ZR; "<>" is its d-pad)
+        if (const float w = g_skin->glyph(dl, key == "<>" ? "DPAD" : key, ImVec2(at.x, cy), h + 4 * s, draw); w > 0) return w;
+    }
     const bool ps = key == "Cross" || key == "Circle" || key == "Square" || key == "Triangle";
     if (ps || key == "A" || key == "B" || key == "X" || key == "Y") {
         if (!draw) return h;
@@ -1453,47 +1567,10 @@ float Launcher::Impl::key_cap(ImDrawList* dl, ImVec2 at, const std::string& key,
     return w;
 }
 
-void Launcher::Impl::draw_tab_general(PanelLayout& p) {
-    const std::string game_name = game ? "Monster Hunter 3 Ultimate (v" + std::to_string(game->update.version) + ")" : "None";
-    group_begin(p, "Game");
-    info_row(p, "Game", game_name, "Your own dump of the game: a .wua file, or the game and update folders. Nothing is copied.");
-    info_row(p, "Data folder", short_path(paths.data), "Where settings, saves, caches and input.ini are kept.");
-    if (button_row(p, "Change game...", "Pick a .wua file. Takes effect on the next start once the game runs.", !dialog.pending)) {
-        sources.clear();
-        static const SDL_DialogFileFilter filters[] = {{"Wii U archive (*.wua)", "wua"}, {"All files", "*"}};
-        dialog.pending = true;
-        SDL_ShowOpenFileDialog(&DialogResult::callback, &dialog, window, filters, 2, nullptr, false);
-    }
-    if (button_row(p, "Choose a game folder...", "Pick a dumped game or update folder (code, content, meta).", !dialog.pending)) {
-        dialog.pending = true;
-        SDL_ShowOpenFolderDialog(&DialogResult::callback, &dialog, window, nullptr, false);
-    }
-    group_end(p);
-    group_begin(p, "Startup");
-    switch_row(p, "Skip boot notices", draft.skip_boot_notices,
-               "Answers the controller notice and the create-save prompts before the title screen by itself.");
-    group_end(p);
-    group_begin(p, "Gameplay");
-    switch_row(p, "Monster HP scaling", draft.monster_hp_scaling,
-               "Port Tanzia quests are made for four hunters. On: with fewer hunters monsters have less HP (1 hunter 65%, "
-               "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
-               "Takes effect for monsters that appear after the change.");
-    group_end(p);
-    if (mode == Mode::InGame) {  // issue #10: no way out but closing the window, which fullscreen hides
-        group_begin(p, "Session");
-        if (button_row(p, quit_armed ? "Quit now" : "Quit game",
-                       "Closes Cha-Cha. Progress since your last save in the game is lost. Select it twice to quit.")) {
-            if (quit_armed) quit_requested = true;
-            quit_armed = true;
-        }
-        group_end(p);
-    }
-}
-
-// Window size and internal resolution are independent: the game renders at its internal resolution and the picture
-// is scaled to whatever the window (or screen) is.
-void Launcher::Impl::draw_tab_video(PanelLayout& p) {
-    group_begin(p, "Display");
+// Display: how the picture reaches the screen (window, scaling) and how fast it is drawn. Window size and internal
+// resolution are independent: the game renders at its internal resolution and the picture is scaled to the window.
+void Launcher::Impl::draw_page_display(PanelLayout& p) {
+    group_begin(p, "Screen");
     int mode_i = static_cast<int>(std::find(kDisplayModes.begin(), kDisplayModes.end(), draft.display_mode) - kDisplayModes.begin()) % 3;
     if (cycle(value_row(p, "Display mode", kDisplayNames[static_cast<size_t>(mode_i)],
                         "Windowed, borderless (fills the screen at desktop resolution) or exclusive fullscreen (on Wayland "
@@ -1509,16 +1586,6 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
                         draft.display_mode == "windowed"),
               size_i, static_cast<int>(sizes.size())))
         draft.window_size = sizes[static_cast<size_t>(size_i)];
-    int scale_i = 2;
-    for (size_t i = 0; i < kScales.size(); ++i)
-        if (std::abs(kScales[i] - draft.render_scale) < 0.01f) scale_i = static_cast<int>(i);
-    const float s = kScales[static_cast<size_t>(scale_i)];
-    scale_desc = "The resolution the game renders at, independent of the window: " + std::to_string(static_cast<int>(1280 * s)) + "x" +
-                 std::to_string(static_cast<int>(720 * s)) + " (" + kScaleNames[static_cast<size_t>(scale_i)] +
-                 " the native 1280x720). Higher than your screen supersamples (sharper, slower); lower saves GPU time.";
-    if (cycle(value_row(p, "Internal resolution", kScaleNames[static_cast<size_t>(scale_i)], scale_desc.c_str()), scale_i,
-              static_cast<int>(kScales.size())))
-        draft.render_scale = kScales[static_cast<size_t>(scale_i)];
     int sharp = draft.sharp_scaling ? 1 : 0;
     if (cycle(value_row(p, "Scaling", sharp ? "Sharp" : "Smooth",
                         "How the game's picture is fitted to the window or screen. Smooth blends neighbouring pixels (soft "
@@ -1526,23 +1593,44 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
                         "the internal resolution. The game itself has no anti-aliasing."),
               sharp, 2))
         draft.sharp_scaling = sharp != 0;
+    group_end(p);
+
+    group_begin(p, "Performance");
+    int scale_i = 2;
+    for (size_t i = 0; i < kScales.size(); ++i)
+        if (std::abs(kScales[i] - draft.render_scale) < 0.01f) scale_i = static_cast<int>(i);
+    const float s = kScales[static_cast<size_t>(scale_i)];
+    scale_desc = "The resolution the game renders at, independent of the window: " + std::to_string(static_cast<int>(1280 * s)) + "x" +
+                 std::to_string(static_cast<int>(720 * s)) + " (" + kScaleNames[static_cast<size_t>(scale_i)] +
+                 " the native 1280x720). Higher than your screen supersamples (sharper, slower); lower saves GPU time. "
+                 "Applies on the next start.";
+    if (cycle(value_row(p, "Internal resolution", kScaleNames[static_cast<size_t>(scale_i)], scale_desc.c_str()), scale_i,
+              static_cast<int>(kScales.size())))
+        draft.render_scale = kScales[static_cast<size_t>(scale_i)];
     static const std::vector<int> kFps = {0, 30, 60, 120, 144, 240, -1};
     static const std::vector<std::string> kFpsNames = {"Display refresh", "30", "60", "120", "144", "240", "Unlimited"};
     int fps = static_cast<int>(std::find(kFps.begin(), kFps.end(), draft.fps_limit) - kFps.begin());
     if (fps >= static_cast<int>(kFps.size())) fps = 0;
-    if (cycle(value_row(p, "Frame rate limit", kFpsNames[static_cast<size_t>(fps)], "The most frames per second the game draws."), fps,
-              static_cast<int>(kFps.size())))
+    if (cycle(value_row(p, "Frame rate limit", kFpsNames[static_cast<size_t>(fps)],
+                        "The most frames per second the game draws. Applies on the next start."),
+              fps, static_cast<int>(kFps.size())))
         draft.fps_limit = kFps[static_cast<size_t>(fps)];
-    switch_row(p, "VSync", draft.vsync, "Waits for the display's refresh: no tearing, a little more latency.");
+    switch_row(p, "VSync", draft.vsync, "Waits for the display's refresh: no tearing, a little more latency. Applies on the next start.");
     group_end(p);
+}
 
-    group_begin(p, "Picture");
+// Graphics: what the world looks like - the overall look, the effects (the game's and Cha-Cha's), texture packs.
+void Launcher::Impl::draw_page_graphics(PanelLayout& p) {
+    group_begin(p, "Look");
     int look = draft.look == "tri" ? 1 : 0;
     if (cycle(value_row(p, "Look", look ? "Tri (Wii)" : "Original",
                         "Original is MH3U as released. Tri gives the world the look of Monster Hunter Tri on the Wii: softer, "
                         "muted colour, milky shadows, a gentle glow and haze in the distance. Menus and the HUD stay as they are."),
               look, 2))
         draft.look = look ? "tri" : "original";
+    group_end(p);
+
+    group_begin(p, "The game's effects");
     switch_row(p, "Bloom", draft.bloom, "The game's glow around bright light.");
     int dof = draft.depth_of_field == "enhanced" ? 2 : draft.depth_of_field == "off" ? 1 : 0;
     static const std::vector<std::string> kDof = {"Original", "Off", "Enhanced"};
@@ -1550,6 +1638,9 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
                         "Original: the game's own (cutscenes). Enhanced also softens the distance during play, focused on your hunter."),
               dof, 3))
         draft.depth_of_field = dof == 2 ? "enhanced" : dof == 1 ? "off" : "original";
+    group_end(p);
+
+    group_begin(p, "Added by Cha-Cha");
     switch_row(p, "Ambient occlusion", draft.ambient_occlusion, "Soft contact shadows where surfaces meet. Not in the original game.");
     switch_row(p, "Global illumination", draft.global_illumination,
                "Light bounces between surfaces: sunlit ground and walls tint what is next to them. Not in the original game.");
@@ -1568,6 +1659,60 @@ void Launcher::Impl::draw_tab_video(PanelLayout& p) {
         toast(dumping ? "Dumping textures to " + dump_folder() : "Texture dump off - " + std::to_string(dumps_shown) + " files so far in " + dump_folder());
     }
     group_end(p);
+}
+
+// Gameplay: changes to how the game plays, and what happens before the title screen.
+void Launcher::Impl::draw_page_gameplay(PanelLayout& p) {
+    group_begin(p, "Hunting");
+    switch_row(p, "Monster HP scaling", draft.monster_hp_scaling,
+               "Port Tanzia quests are made for four hunters. On: with fewer hunters monsters have less HP (1 hunter 65%, "
+               "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
+               "Takes effect for monsters that appear after the change.");
+    group_end(p);
+    group_begin(p, "Startup");
+    switch_row(p, "Skip boot notices", draft.skip_boot_notices,
+               "Answers the controller notice and the create-save prompts before the title screen by itself.");
+    group_end(p);
+}
+
+// System: the game Cha-Cha runs, where its files are, and leaving the game.
+void Launcher::Impl::draw_page_system(PanelLayout& p) {
+    const std::string game_name = game ? "MH3U (v" + std::to_string(game->update.version) + ")" : "None";
+    group_begin(p, "Game");
+    info_row(p, "Game", game_name, "Your own dump of Monster Hunter 3 Ultimate: a .wua file, or the game and update folders. Nothing is copied.");
+    if (button_row(p, "Change game...", "Pick a .wua file. Takes effect on the next start once the game runs.", !dialog.pending)) {
+        sources.clear();
+        static const SDL_DialogFileFilter filters[] = {{"Wii U archive (*.wua)", "wua"}, {"All files", "*"}};
+        dialog.pending = true;
+        SDL_ShowOpenFileDialog(&DialogResult::callback, &dialog, window, filters, 2, nullptr, false);
+    }
+    if (button_row(p, "Choose a game folder...", "Pick a dumped game or update folder (code, content, meta).", !dialog.pending)) {
+        dialog.pending = true;
+        SDL_ShowOpenFolderDialog(&DialogResult::callback, &dialog, window, nullptr, false);
+    }
+    group_end(p);
+    group_begin(p, "Files");
+    static std::string data_desc;
+    {
+        const auto u = paths.data.u8string();
+        data_desc = "Where settings, saves, caches, input.ini, mods and quests are kept.\n\n" + std::string(u.begin(), u.end());
+    }
+    if (button_row(p, "Data folder", data_desc.c_str(), true, short_path(paths.data, 26))) {
+        std::string url = "file:///" + std::string(reinterpret_cast<const char*>(paths.data.u8string().c_str()));
+        std::replace(url.begin(), url.end(), '\\', '/');
+        SDL_OpenURL(url.c_str());
+    }
+    info_row(p, "Version", std::string("Cha-Cha ") + MH3U_VERSION, "The build of Cha-Cha you are running.");
+    group_end(p);
+    if (mode == Mode::InGame) {  // issue #10: no way out but closing the window, which fullscreen hides
+        group_begin(p, "Session");
+        if (button_row(p, quit_armed ? "Quit now" : "Quit game",
+                       "Closes Cha-Cha. Progress since your last save in the game is lost. Select it twice to quit.")) {
+            if (quit_armed) quit_requested = true;
+            quit_armed = true;
+        }
+        group_end(p);
+    }
 }
 
 // MODS -> QUESTS. Packs (top-level folders of <data>/quests) have a mode: All keeps every quest of the pack installed
@@ -2001,8 +2146,14 @@ void Launcher::Impl::draw_keyboard(ImVec2 size) {
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     bg->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, 90));
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(a, b, kPanelBg, 8.0f);
-    dl->AddRect(a, b, kPanelEdge, 8.0f, 0, 1.5f);
+    if (g_skin) {  // carved wood in the game's gold-trimmed frame, as the settings panel
+        g_skin->cover(dl, skin::kWood, a, b);
+        dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, 60));
+        g_skin->frame(dl, skin::kFrameGold, ImVec2(a.x - 6 * scale, a.y - 6 * scale), ImVec2(b.x + 6 * scale, b.y + 6 * scale), 14, 14 * scale);
+    } else {
+        dl->AddRectFilled(a, b, kPanelBg, 8.0f);
+        dl->AddRect(a, b, kPanelEdge, 8.0f, 0, 1.5f);
+    }
     // the text, with a caret and the game's length limit
     const ImVec2 f0(a.x + pad, a.y + pad), f1(b.x - pad, a.y + pad + field_h);
     dl->AddRectFilled(f0, f1, IM_COL32(0, 0, 0, 120), 4.0f);

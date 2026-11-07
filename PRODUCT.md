@@ -19,12 +19,16 @@ their dump, set display, graphics and input options, and install DLC quests, the
 
 ## Capabilities and Constraints
 
-- Settings panel tabs: General, Video, Input; Mods panel: Quests. Changes wait for Apply (Input applies at once).
+- One panel with pages down the left (user 2026-11-07: more structure): Settings - Display, Graphics, Controls, Gameplay;
+  Content - Mods, Quests; Cha-Cha - System. L / R (Q / E) change page. Changes wait for Apply (Controls apply at once).
 - Every screen must work fully with a controller, using the player's own bindings (input.ini / the Input tab):
   the game's A selects, B goes back, L / R switch tabs, + applies, the d-pad moves and changes values.
 - Button prompts must follow the bindings, the controller type (Xbox / PlayStation / Nintendo names) and the
   Nintendo / Xbox layout option; with no controller connected, keyboard keys are shown.
-- System fonts only (Bahnschrift); nothing from the game and no bundled assets in the UI.
+- Drawn with the game's own GUI textures (user 2026-11-07), read from the player's dump at start and never shipped or
+  written to disk (runtime/boot/game_skin.*): carved wood, the gold-trimmed frame, dark patterned bands, the menu
+  cursor, the parchment page for descriptions, the controller glyphs. Without a game yet, the flat warm-brown look.
+  System fonts for text (Bahnschrift); no bundled assets.
 - Same panel before the game and over it; over the game it sits on a dimmed frame.
 
 ## Brand Commitments

@@ -1110,9 +1110,18 @@ std::string pad_prompt(const std::string& target) {
     if (g_pads.empty()) return {};
     const SDL_GamepadType type = SDL_GetGamepadType(g_pads.begin()->second.pad);
     const bool ps = type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5;
-    const bool nintendo = type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
+    // the Nintendo layout names the buttons as printed on a Nintendo pad (right A, bottom B, top X, left Y; + -
+    // L R ZL ZR), also on pads that report Xbox labels (third-party Nintendo-style pads)
+    const bool nintendo = !ps && (g_cfg.nintendo_layout || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO ||
+                                  type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR);
     for (const auto& [src, mask] : g_cfg.pad) {
         if (mask != t.mask) continue;
+        if (nintendo) {
+            if (src == SDL_GAMEPAD_BUTTON_SOUTH) return "B";
+            if (src == SDL_GAMEPAD_BUTTON_EAST) return "A";
+            if (src == SDL_GAMEPAD_BUTTON_WEST) return "Y";
+            if (src == SDL_GAMEPAD_BUTTON_NORTH) return "X";
+        }
         if (src == kPadLeftTrigger) return ps ? "L2" : nintendo ? "ZL" : "LT";
         if (src == kPadRightTrigger) return ps ? "R2" : nintendo ? "ZR" : "RT";
         switch (SDL_GetGamepadButtonLabelForType(type, static_cast<SDL_GamepadButton>(src))) {

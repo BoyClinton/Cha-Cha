@@ -270,7 +270,9 @@ reachable than a pure decomp.
 
 ### Phase 5.5 – In-game menus instead of ImGui (user 2026-10-28)
 No launcher overlay and no Dear ImGui: the game starts as the game, and Cha-Cha's settings live in the game's own
-menus, drawn with its own widgets. Order (user): the GFX tab first. Item Sets (`src/game/item_sets.cpp`) is the
+menus, drawn with its own widgets. Order (user): the GFX tab first.
+- [x] Interim (user 2026-11-07): the ImGui panel restructured into pages (Display, Graphics, Controls, Gameplay,
+  Mods, Quests, System) and drawn with the game's own GUI textures read from the dump (runtime/boot/game_skin.*) Item Sets (`src/game/item_sets.cpp`) is the
 model for adding to a game menu; MH3U_TRACE_TEXT finds a menu's code from its labels.
 - [ ] Pause menu (village / field): a third tab **GFX** after Hunter / Info, an Options-style list (label left, value
   box right, help box below, page arrows) holding the graphics settings (resolution, frame rate, VSync, look, GI, AO,

@@ -52,7 +52,7 @@ You need your own **Monster Hunter 3 Ultimate (US) with update v32** (a `.wua` f
 3. Run it and choose your game on the setup screen.
 
 The first start translates the game's shaders (a few seconds, once), then the game starts by itself. **F1** or
-**Select + Options** on a controller opens the settings: General, Video, Input, **Mods** and **Quests** tabs (LB / RB or Q / E switch), **Quit game** in General; **F2** opens Mods directly. **Damage Numbers** comes included: switch it on or off in MODS → Mods.
+**Select + Options** on a controller opens the settings: pages for Display, Graphics, Controls, Gameplay, **Mods**, **Quests** and System down the left (LB / RB or Q / E change page), **Quit game** in System; **F2** opens Mods directly. The menus are drawn with the game's own GUI textures, read from your dump when Cha-Cha starts; none are included in the release, and before a game is chosen the menus are drawn plainly. **Damage Numbers** comes included: switch it on or off on the Mods page.
 
 **Adding mods:** put each mod's folder into the `mods` folder of your data folder (`data\mods` next to
 `Cha-Cha.exe` on Windows, `~/.local/share/Cha-Cha/mods` on Linux) and restart Cha-Cha.

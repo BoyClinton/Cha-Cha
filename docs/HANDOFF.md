@@ -89,7 +89,7 @@ at the end of the session that shipped 0.1.0.
 - Windows MSVC: `cmake -S . -B build/cmake`, `cmake --build build/cmake --config Release`; clang-cl: `build/clang`
   (`-T ClangCL`), faster for the generated code. CMake/ctest live in VS's
   `Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin`. Run `build/cmake/runtime/boot/Release/Cha-Cha.exe`.
-- Windowed UI captures (ask the user first): `MH3U_LAUNCHER_OPEN=settings:video|input|general` or `mods`,
+- Windowed UI captures (ask the user first): `MH3U_LAUNCHER_OPEN=settings:display|graphics|controls|gameplay|system` or `mods` (`mods:mods`),
   `MH3U_SHOT=6`, `MH3U_EXIT_AFTER_SECONDS=7` → `build/shot_6.bmp`; convert with System.Drawing.
 - Linux (WSL2 `Ubuntu-22.04`, user `boycl`): toolchain installed (clang 15, Ninja, `/opt/cmake` 3.31.6,
   `/opt/vulkan/1.4.363.0` LunarG SDK, libvulkan-dev, libavcodec-dev, SDL3 deps). Build tree `~/cha-cha-build`
