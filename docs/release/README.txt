@@ -17,11 +17,11 @@ Command line: Cha-Cha --install <dump>  records the dump without the setup scree
 
 In game: F1 opens the settings, F2 the mods (DLC quests and mods), F3 cycles the
 GamePad screen view, F11 switches fullscreen / window. Settings > Input > Camera speed slows the camera down;
-Settings > General > Monster HP scaling switches the Port Tanzia HP scaling off.
+Settings > Gameplay > Monster HP scaling switches the Port Tanzia HP scaling off.
 
 Mods: one folder each in the mods folder of the data folder (data\mods here).
 Damage Numbers comes with Cha-Cha (the damage of every hit over the monster);
-switch mods on or off and change their settings in MODS > Mods (F2).
+switch mods on or off and change their settings on the Mods page (F2).
 
 Controls: keyboard + mouse or any controller SDL supports (played as a Wii U Pro
 Controller). Key bindings: input.ini in the data folder (see input.example.ini).
@@ -30,6 +30,8 @@ Requirements: Windows 10/11 x64 and a Vulkan 1.3 graphics driver. SDL3 is
 included; nothing else needs installing.
 
 This archive contains no game assets, disc image, game executable or saves.
+The menus are drawn with the game's own GUI textures, read from your dump
+when Cha-Cha starts; none are included here.
 Only the US release with update v32 works: the recompiled code is specific to
 that executable, and the setup screen checks it.
 

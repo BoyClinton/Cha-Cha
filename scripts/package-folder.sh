@@ -76,15 +76,17 @@ one this was built on, use the AppImage instead.
 This folder
   Cha-Cha.ini     settings (the launcher's SETTINGS page writes it)
   game/           your dump
-  mods/           mods: each in its own folder, switched on and off in MODS -> Mods (F2 in game)
+  mods/           mods: each in its own folder, switched on and off on the Mods page (F2 in game)
   cache/          translated shaders and pipelines (made on first start)
   save/           your saves
-  quests/         event and challenge quests (MODS -> Quests)
+  quests/         event and challenge quests (the Quests page)
   texture_replacements/   texture packs
   log.txt         what Cha-Cha printed (when not started from a terminal)
   licenses/       licenses of Cha-Cha and the libraries it ships
 
-Keys: F1 settings, F2 mods, F3 GamePad screen, F11 fullscreen / window. Settings -> Input: bindings, mouse sensitivity, camera speed.
+Keys: F1 settings, F2 mods, F3 GamePad screen, F11 fullscreen / window. Settings -> Controls: bindings, mouse sensitivity, camera speed.
+
+Contains no game files: the menus are drawn with the game's own GUI textures, read from your dump at start.
 
 Mods: see mods/damage-numbers/README.md for an example. Making mods: docs/modding.md in Cha-Cha's source.
 
