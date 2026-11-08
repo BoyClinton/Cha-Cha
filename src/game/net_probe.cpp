@@ -296,7 +296,7 @@ PPC_FUNC(swap_with_jump) {
     // in for the NPC, which it only keeps. Logs the screen's state: uIDLobbyOnline (sID +0xE8) +0x3F4 state, +0x408 cursor.
     static const std::string ferry = env("MH3U_NET_PROBE_FERRY");
     if (!ferry.empty()) {
-        const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers), sid = ppc::ld32(base, 0x10314578);
+        const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers);
         if (std::strtoul(ferry.c_str(), nullptr, 10) == g_swaps) {
             const ppc::Context saved = ctx;
             ctx.r[3] = ppc::ld32(base, 0x103147A0);
