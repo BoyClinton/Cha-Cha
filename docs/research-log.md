@@ -1020,3 +1020,7 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 ## 2026-11-08 - Hub movement crosses once the area id is 1B/1 (fork)
 - Sender 0x022627CC refuses *0x10315C80 +0x115/+0x116 = 1B/0, receiver 0x02262DA0 needs 1B/1; debug jumps give 1B/0. Writing 1B/1:
   the client's unit on the host reads the client's exact position (-1335.5, -137.5, -494.6). Not drawn yet; the write loses collision.
+
+## 2026-11-08 - Two hunters on screen (fork)
+- Setting sLobby +0x5452 and +0x5465 to 1 before the area change to aHarborRoomGuild builds stage 1B/1. Both headless copies show both
+  hunters, and a client step arrives with the exact position on both. Requests and area change still come from the probe.

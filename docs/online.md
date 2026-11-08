@@ -237,17 +237,18 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
   client walks to -995, -137.5, -272, its unit on the host stays at the default -1600, -137.5, -366. After the first burst only
   size 32 and 40 packets flow, so movement is not being sent. `aHarborSquare` / `aHarborRoomSquare` only build 1 unit.
 - **Hunter data does cross:** when the copies loaded different hunters, both Player Lists read "T e s t" and "Silvers".
-- **Hub movement is gated by the area id.** Hub position goes out through 0x02798F68 -> 0x022627CC (from 0x0279A388) and comes in
-  through 0x022648C4 -> 0x02262DA0. The sender refuses area 1B/0 (`*0x10315C80` +0x115 / +0x116) and the receiver needs 1B/1. Debug
-  jumps leave both copies on 1B/0. With 1B/1 written by the probe (`MH3U_NET_PROBE_HUB=frame:1b:1`), **movement crosses:** the client
-  ended at -1335.5, -137.5, -494.6 and its unit on the host read exactly that, and a longer walk tracked along the same route.
-  The write is a hack: it changes the id, not the loaded stage, and collision is lost (Y stays -137.5; hunters walk out of bounds).
-- **The moved unit is still not drawn.** At that position the host's screen shows the tent but no second hunter, with the unit's
-  flags unchanged. Whether the stage, the unit's model, or a draw flag is responsible is not known. uPlayer::vf42 (0x02797EF8) tests
-  1B/1 and is a place to start.
+- **Both hunters are visible when the area is built on stage 1B/1.** The Harbor areas take the stage from `sLobby` (*0x103147A0) +0x5450:
+  +1 stage, +2 and +0x15 sub-area (0x0214CE3C fills them from `sGame` +0x58 == 1), passed to the stage setter 0x02190C50 through
+  0x0214CEE0. Debug jumps leave sub-area 0. `MH3U_NET_PROBE_SUB=1` writes +2 and +0x15 before the jump to `aHarborRoomGuild`
+  (0x1030C918): both copies then read 1B/1, spawn at 210, 6.3, -330 on real ground, and **each screen shows both hunters**. A short
+  client step gives 409.3, 6.3, -373.2 on both copies.
+- Why the stage matters: the hub position sender 0x022627CC refuses 1B/0 and the receiver 0x02262DA0 needs 1B/1. The hunter record
+  handler 0x0226429C only applies the appearance on 1B/1, and parts stay hidden until their load states finish (0x02847ADC,
+  static reading). `MH3U_NET_PROBE_HUB=frame:1b:1`, writing the id after the area is built, moves the unit but never draws it, and
+  loses collision. Keep it as a diagnostic only.
 - Ruled out: `sGame` +0x61, +0x48 (already 1 and 2 before any write); `sAppProcedure` +0xC3C, forcing it changes nothing in the hub
   (it gates 0x02254D3C / 0x02256080, set by quest-area code, so that is the quest channel (?)). 0x0218D9D8 is a table lookup, not a stage load.
-- Still unknown: what really sets the area id to 1B/1. The only stores found are in aFreeQuest::vf5 and 0x02133D70.
+- Still unknown: what sets `sGame` +0x58 to 1 on the game's own route into the hall. Many functions write +0x58; the right one is not identified.
 - Quest start, static reading, nothing run: 0x0214E2B8 launches at 0x0214E8A8 when sCtx (*0x103147A0) +0x522C is nonzero (quest id?),
   broadcasts type 0x25 through 0x02265070, and each copy changes area to aQuestArea (0x1030CEA8) on its own.
 - **Testing trap:** headless copies read physically attached controllers. A plugged-in pad walked hunters with no script, through

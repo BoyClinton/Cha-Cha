@@ -205,6 +205,17 @@ PPC_FUNC(swap_with_jump) {
     for (const AreaJump& jump : g_jumps) {
         if (jump.frame != g_swaps) continue;
         const uint32_t g_area_dti = jump.dti;
+        // MH3U_NET_PROBE_SUB=n: the sub-area the Harbor areas load: sLobby (*0x103147A0) +0x5450, +1 stage, +2 and +0x15 sub-area,
+        // as 0x0214CE3C fills them; their vf5 pass +1 and +2 to the stage setter 0x02190C50 through 0x0214CEE0
+        static const std::string sub = env("MH3U_NET_PROBE_SUB");
+        if (!sub.empty()) {
+            const uint32_t info = ppc::ld32(base, 0x103147A0) + 0x5450;
+            const uint8_t n = static_cast<uint8_t>(std::strtoul(sub.c_str(), nullptr, 10));
+            std::printf("net: stage info was %X/%X (+15=%X), sub-area now %u\n", ppc::ld8(base, info + 1), ppc::ld8(base, info + 2),
+                        ppc::ld8(base, info + 0x15), n);
+            ppc::st8(base, info + 2, n);
+            ppc::st8(base, info + 0x15, n);
+        }
         const ppc::Context saved = ctx;
         const uint32_t system = ppc::ld32(base, kAreaSystem);
         ctx.r[3] = system;
