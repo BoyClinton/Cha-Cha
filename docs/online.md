@@ -1,8 +1,26 @@
-# Online play – findings and options
+# Online play
 
-Status: research (2026-10-28). Decision (user, 2026-10-28): **option B**, in Phase 6 (the last phase) of the
-roadmap. Nothing implemented yet. Our HLE stubs `nn_ac`, `nsysnet` and `nn_act` to
-"offline" (ROADMAP Phase 2), and the game plays fine without a network.
+**Status (2026-11-08, branch `online-backend`): works between copies in automated headless tests, not yet played by a person, and not released.**
+Settings -> Gameplay -> Online has Host, Join and Leave. Copies meet over UDP on 127.0.0.1, or on the network with "Play over the network" on (off by default).
+`scripts/online-two-copies.sh` starts two windows. Sections below are in the order they were found; older ones can be out of date, "Two copies" and later hold.
+
+| | State |
+|---|---|
+| Host / Join from town, Player List, both hunters visible, positions match | Seen working |
+| Guest leaves and rejoins; host leaves and the session ends for the guest | Seen working |
+| Guest follows the host's quest; member barrier clears | Seen working, with the depart press imitated by the probe |
+| Large monster: one copy controls it, the other follows its route, control moves between members | Seen working |
+| Damage: same HP on both copies, whether the attacker controls the monster or not | Seen working (HP 1433 -> 1379, 1433 -> 1382) |
+| Back in the hall with session and Player List after a quest ended | Seen once per copy; why that quest ended was not checked |
+| The real quest counter and its depart button | **Not tried: needs a person** |
+| A second quest in one session | **Not tried** (logic for it is written) |
+| Carving, rewards screens, finishing a hunt by killing the monster, chat | **Not tried** |
+| Two PCs | **Not tried.** Network mode has only run with both copies on one PC |
+| Three or four players, host leaving during a quest | **Not tried** |
+| The game's own door to its online menus | **Not found**: Cha-Cha's buttons replace it |
+
+Small monsters are local to each copy by the game's own data (state +0x9C bit 8 unset): their positions differ, as designed.
+Testing trap: copies read any attached controller, in or out of focus. Headless tests need `SDL_GAMECONTROLLER_IGNORE_DEVICES`.
 
 ## What the game uses
 
@@ -261,13 +279,13 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
   hunter reads the same exact position on both copies, about 180 packets a second in all, 80-104 bytes.
   Not done: the real join handshake (how a guest's bit reaches the party; 0x02251380 and the 0x022646F4 mode 2 path are the leads). Monsters, damage,
   and finishing a quest are untested: 1101 is a gathering quest.
-- **Monsters do not stay in sync yet** (quest 2201, both hunters walked into zone 1/3, the world log's monster lines). The same small monsters (kind 27)
-  load on both copies with the same HP and start 26-192 units apart at the first shared sample, then drift to as much as 2,277 apart by the end of the run.
-  Each copy appears to run its own. Enemy setup 0x020FA158 calls 0x02119A90 and the host check 0x02261D48 (`sEnemy`-side +0x45A?), and the
-  receiver 0x0225AFFC has more message families (0x22584C4, 0x0225639C, 0x02258E70, 0x02259C4C), so sync seems designed in; not known why it is not
-  running. Only small monsters were compared, no large monster or damage yet.
-- Untested: more than two copies, a member leaving while others stay (the "member left" message is received but not acted on),
-  a host leaving, session slot 33 (request 0x305), LAN.
+- **Monsters.** `sEnemy` +0x34: slots 0, 1 large, 2 on small. state = unit +0x1BE0: +0xEB zone, +0x8B8 HP, +0x9C bit 8 shared (from the monster's data), +0xFF this copy controls
+  it, +0x101 the controlling member (0x025A3A1C). Unit +0x40 position. Quests 2201 and 2301 have no large monster; 1407 does. Online, only the host spawns it (0x0216D998 -> 0x020F2E44 -> message 0x11 / 0xF;
+  receiver 0x0225A714). With quest 1407 the guest's copy follows the host's route exactly, and HP drops match. Copies' frame counters differ, so compare routes, not frames.
+- **Quests together.** The game's party messages (object at sLobby +0x4E20, dispatcher 0x0224E3E8) do not reach a guest: a guest's join (0x021E355C mode 2) returns 2 with empty entries. Not known why.
+  So `net_backend.cpp` watches the host's sLobby +0x522C (quest) and +0x54AE (bit 8 depart), sends them over its own wire, and fills each copy's party mask (entry +0xB) from the session. The host's own launch
+  state machine 0x0214E2B8 runs by itself after a depart; guests do its steps. The depart recomputes the party, so the mask is filled again then and the table rebuilt (0x0225B238).
+- Untested: session slot 33 (request 0x305).
 
 **The real menu route (static reading, nothing run; `?` = inferred).**
 - `sLobbyNetwork` setters of +0x8B0: 0x02267D38 bit 0x2, called by the `uIDLobbyRelayLobby` runner 0x02731134; 0x02267D48 bit 0x4,

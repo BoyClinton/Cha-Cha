@@ -212,7 +212,8 @@ void players_tick(uint8_t* base) {
             if (!monster) continue;
             const uint32_t state = ppc::ld32(base, monster + 0x1BE0);
             // state +0x9C bit 8: shared between members; +0xFF this copy controls it; +0x101 the controlling member (0x025A3A1C)
-            std::printf("net:   monster %u id %04X shared=%u mine=%u owner=%d kind %u pos %.1f %.1f %.1f hp %d/%d\n", i, state ? ppc::ld16(base, state + 0x1C) : 0xFFFF,
+            std::printf("net:   monster %u zone %u part0 %d id %04X shared=%u mine=%u owner=%d kind %u pos %.1f %.1f %.1f hp %d/%d\n", i, state ? ppc::ld8(base, state + 0xEB) : 255,
+                        state ? static_cast<int32_t>(ppc::ld32(base, state + 0x8EC)) : 0, state ? ppc::ld16(base, state + 0x1C) : 0xFFFF,
                         state ? (ppc::ld32(base, state + 0x9C) >> 3) & 1 : 9, state ? ppc::ld8(base, state + 0xFF) : 9,
                         state ? static_cast<int8_t>(ppc::ld8(base, state + 0x101)) : -9,
                         ppc::ld8(base, monster + 0xE33), ppc::ldf32(base, monster + 0x40),
@@ -284,19 +285,42 @@ PPC_FUNC(swap_with_jump) {
         ctx = saved;
         ctx.r[1] = r1;
     }
-    // MH3U_NET_PROBE_CHASE=frame: from then on my hunter stands beside large monster slot 0, to test damage without walking
+    // MH3U_NET_PROBE_CHASE=frame: from then on my hunter follows large monster slot 0: to its zone (state +0xEB) with the game's zone change, and
+    // beside it once there, to test damage without walking
     static const std::string chase = env("MH3U_NET_PROBE_CHASE");
     if (!chase.empty() && g_swaps >= std::strtoul(chase.c_str(), nullptr, 10)) {
         const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers), enemies = ppc::ld32(base, 0x10313260);
-        const uint32_t me = players ? ppc::ld32(base, players + 0x40 + ppc::ld8(base, game + 0x4B) * 4) : 0;
+        const int8_t slot = static_cast<int8_t>(ppc::ld8(base, game + 0x4B));
+        const uint32_t me = players && slot >= 0 ? ppc::ld32(base, players + 0x40 + static_cast<uint32_t>(slot) * 4) : 0;
         const uint32_t monster = enemies ? ppc::ld32(base, enemies + 0x34) : 0;
-        if (me && monster && ppc::ld32(base, me + 0xE30)) {
+        const uint32_t state = monster ? ppc::ld32(base, monster + 0x1BE0) : 0;
+        if (me && state && ppc::ld32(base, me + 0xE30)) {
             const uint32_t pad = ppc::ld32(base, me + 0xE30);
-            const float mx = ppc::ldf32(base, monster + 0x40), my = ppc::ldf32(base, monster + 0x44), mz = ppc::ldf32(base, monster + 0x48);
-            if (my < 500.0f) {  // on the ground
-                ppc::stf32(base, pad + 0xE0, mx + 150.0f);
-                ppc::stf32(base, pad + 0xE4, my);
-                ppc::stf32(base, pad + 0xE8, mz + 150.0f);
+            const uint8_t zone = ppc::ld8(base, state + 0xEB), here = ppc::ld8(base, game + 0x186);
+            static uint32_t last_hop = 0;
+            if (zone != here && zone != 0xFF && g_swaps - last_hop > 900 && (ppc::ld8(base, game + 0x196) == 2 || ppc::ld8(base, game + 0x196) == 3)) {
+                last_hop = g_swaps;
+                std::printf("net: swap %u chase: monster in zone %u, I am in %u\n", g_swaps, zone, here);
+                const ppc::Context saved = ctx;
+                const uint32_t frame = static_cast<uint32_t>(ctx.r[1]) - 0x40;
+                ppc::st32(base, frame, static_cast<uint32_t>(ctx.r[1]));
+                ctx.r[1] = frame;
+                ppc::stf32(base, frame + 0x10, ppc::ldf32(base, monster + 0x40) + 150.0f);
+                ppc::stf32(base, frame + 0x14, ppc::ldf32(base, monster + 0x44));
+                ppc::stf32(base, frame + 0x18, ppc::ldf32(base, monster + 0x48) + 150.0f);
+                ctx.r[3] = game;
+                ctx.r[4] = zone;
+                ctx.r[5] = frame + 0x10;
+                ctx.r[6] = 0;
+                sub_02118F8C(ctx, base);
+                const uint64_t r1 = ctx.r[1];
+                ctx = saved;
+                ctx.r[1] = r1;
+                ctx.r[1] = saved.r[1];
+            } else if (zone == here && g_swaps % 240 == 0 && g_swaps - last_hop > 900 && ppc::ldf32(base, monster + 0x44) < 500.0f) {
+                ppc::stf32(base, pad + 0xE0, ppc::ldf32(base, monster + 0x40) + 150.0f);
+                ppc::stf32(base, pad + 0xE4, ppc::ldf32(base, monster + 0x44));
+                ppc::stf32(base, pad + 0xE8, ppc::ldf32(base, monster + 0x48) + 150.0f);
             }
         }
     }

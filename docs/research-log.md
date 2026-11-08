@@ -1036,3 +1036,7 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 ## 2026-11-08 - Monsters load on both copies but drift apart (fork)
 - Quest 2201, zone 1/3: same kind 27 monsters and HP on both copies, positions diverge from 26-192 to as much as 2,277 units over the run. Not yet known whether
   small monsters are synced at all, or whether a missing flag stops it; no large monster or damage compared. Details in docs/online.md "Two copies".
+
+## 2026-11-08 - Monster sync and damage work between copies (fork)
+- Quest 1407: large monster has one controller at a time, the other copy follows its route exactly, and HP matches while either copy attacks (attacker as controller, 1433 -> 1379; attacker not controller, 1433 -> 1382).
+  Hunters reach it by reading state +0xEB and calling 0x02118F8C. Table of what is and is not tried: top of docs/online.md.

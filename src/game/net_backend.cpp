@@ -1133,8 +1133,24 @@ void follow_depart(ppc::Context& ctx, uint8_t* base, uint32_t number) {
 void quest_tick(ppc::Context& ctx, uint8_t* base) {
     const uint32_t lobby = ppc::ld32(base, kLobby);
     if (!lobby) return;
+    // Back from a quest: ready for the next one. The game can leave the last quest's number and depart bit set, so only a new press counts.
+    static bool away = false, depart_was_set = false;
+    const bool in_hall = on_stage(base, kHarborStage, 1);
+    if (!in_hall) {
+        away = true;
+        return;
+    }
+    if (away) {
+        away = false;
+        g_departed = false;
+        g_posted_quest = g_want_host ? ppc::ld16(base, lobby + 0x522C) : 0;
+        depart_was_set = (ppc::ld8(base, lobby + 0x54AE) & 8) != 0;
+        std::printf("net: back in the hall\n");
+    }
     if (g_want_host) {
         const uint32_t number = ppc::ld16(base, lobby + 0x522C), mode = ppc::ld8(base, lobby + 0x54AE);
+        const bool depart_set = (mode & 8) != 0, depart_pressed = depart_set && !depart_was_set;
+        depart_was_set = depart_set;
         if (number == 0 || !(mode & 1)) {
             if (g_posted_quest) {
                 g_posted_quest = 0;
@@ -1153,7 +1169,7 @@ void quest_tick(ppc::Context& ctx, uint8_t* base) {
             std::printf("net: posted quest %u to the others\n", number);
             broadcast_quest(kQuestPosted, number);
         }
-        if ((mode & 8) && !g_departed) {
+        if (depart_pressed && !g_departed) {
             g_departed = true;
             // the depart call (0x0225111C) recomputes the party, so the others go back in, and the table the launch uses is built again (0x0225B238)
             const ppc::Context saved = ctx;
