@@ -161,6 +161,14 @@ void lobby_network_tick(uint8_t* base) {
 
 // Who is in the world: sPlayer (*0x10314B80) +0x40, 8 unit pointers (docs/online.md); +0xE30 its pad block, whose +0xE0 is the position (src/game/play_log.cpp).
 constexpr uint32_t kPlayers = 0x10314B80;
+constexpr uint32_t kQuestAreaVtable = 0x100027B8;
+
+// aQuestArea::vf5 (entry 6): remembers the area, to log how far its loading has got
+uint32_t g_quest_area = 0;
+PPC_FUNC(quest_area_step) {
+    g_quest_area = static_cast<uint32_t>(ctx.r[3]);
+    sub_02021F90(ctx, base);
+}
 
 void players_tick(uint8_t* base) {
     if (g_swaps % 300 != 0) return;
@@ -187,6 +195,17 @@ void players_tick(uint8_t* base) {
             ppc::st8(base, areas + 0x116, static_cast<uint8_t>(hub_sub));
         }
     }
+    {
+        const uint32_t proc = ppc::ld32(base, 0x103A2DB0), lobby = ppc::ld32(base, 0x103147A0);
+        std::printf("net:   quest %u, sGame+4A=%d proc +C3B=%u +C3C=%u table %u/%u %u/%u arrived %02X%02X sync %02X%02X\n", ppc::ld16(base, lobby + 0x522C),
+                    static_cast<int8_t>(ppc::ld8(base, game + 0x4A)), ppc::ld8(base, proc + 0xC3B), ppc::ld8(base, proc + 0xC3C), ppc::ld8(base, proc + 0xC40),
+                    ppc::ld8(base, proc + 0xC41), ppc::ld8(base, proc + 0xC40 + 0xD0), ppc::ld8(base, proc + 0xC41 + 0xD0), ppc::ld8(base, proc + 0xF84),
+                    ppc::ld8(base, proc + 0xF85), ppc::ld8(base, proc + 0xF8C), ppc::ld8(base, proc + 0xF8D));
+    }
+    if (g_quest_area)
+        std::printf("net:   quest area %08X +5=%u +6=%u +48=%d; sGame +158=%u +1B7=%u +3BC=%d\n", g_quest_area, ppc::ld8(base, g_quest_area + 5),
+                    ppc::ld8(base, g_quest_area + 6), static_cast<int8_t>(ppc::ld8(base, g_quest_area + 0x48)), ppc::ld8(base, game + 0x158),
+                    ppc::ld8(base, game + 0x1B7), static_cast<int32_t>(ppc::ld32(base, game + 0x3BC)));
     for (uint32_t i = 0; i < 8; ++i) {
         const uint32_t unit = ppc::ld32(base, players + 0x40 + i * 4);
         if (!unit) continue;
@@ -202,6 +221,58 @@ PPC_FUNC(swap_with_jump) {
     lobby_network_tick(base);
     players_tick(base);
     ++g_swaps;
+    // MH3U_NET_PROBE_POST="frame:number": post a quest as the quest counter does: 0x021E355C(sLobby, my pad block, number, 1), as
+    // 0x021E44D4 calls it. Guests get it through the message dispatcher (0x022646F4 calls it with mode 2).
+    static const std::string post = env("MH3U_NET_PROBE_POST");
+    uint32_t post_at = 0, post_number = 0;
+    if (!post.empty() && std::sscanf(post.c_str(), "%u:%u", &post_at, &post_number) == 2 && post_at == g_swaps) {
+        const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers);
+        const uint32_t me = ppc::ld32(base, players + 0x40 + ppc::ld8(base, game + 0x4B) * 4);
+        const ppc::Context saved = ctx;
+        std::printf("net: swap %u posting quest %u\n", g_swaps, post_number);
+        ctx.r[3] = ppc::ld32(base, 0x103147A0);
+        ctx.r[4] = ppc::ld32(base, me + 0xE30);
+        ctx.r[5] = post_number;
+        ctx.r[6] = 1;
+        sub_021E355C(ctx, base);
+        std::printf("net: posted, result %08X\n", static_cast<uint32_t>(ctx.r[3]));
+        const uint64_t r1 = ctx.r[1];
+        ctx = saved;
+        ctx.r[1] = r1;
+    }
+    // MH3U_NET_PROBE_QUEST="frame:number": the launch step of the hall's state machine (0x0214E8A8) without its menus
+    static const std::string quest = env("MH3U_NET_PROBE_QUEST");
+    uint32_t quest_at = 0, quest_number = 0;
+    if (!quest.empty() && std::sscanf(quest.c_str(), "%u:%u", &quest_at, &quest_number) == 2 && quest_at == g_swaps) {
+        const uint32_t game_quest = ppc::ld32(base, 0x101FDB9C) + 0x34, lobby = ppc::ld32(base, 0x103147A0);
+        std::printf("net: swap %u starting quest %u\n", g_swaps, quest_number);
+        const ppc::Context saved = ctx;
+        ppc::st16(base, lobby + 0x522C, static_cast<uint16_t>(quest_number));  // read by aQuest::vf5 through 0x02178EE0
+        ppc::st16(base, lobby + 0x54AC, static_cast<uint16_t>(quest_number));  // as the quest select 0x021E355C does
+        ppc::st8(base, lobby + 0x5450, 0);
+        ctx.r[3] = ppc::ld32(base, 0x10314890);  // the launch step's calls, in its order
+        sub_021512E8(ctx, base);
+        ctx.r[3] = ppc::ld32(base, 0x10315F50);
+        sub_02197EBC(ctx, base);
+        ctx.r[3] = ppc::ld32(base, 0x1031537C);
+        sub_02166A1C(ctx, base);
+        ppc::st32(base, game_quest + 0x24, 1);
+        ppc::st32(base, game_quest + 0x30, quest_number);
+        ppc::st8(base, lobby + 0x154, 0);
+        ppc::st8(base, lobby + 0x5234, 0);
+        const uint32_t system = ppc::ld32(base, kAreaSystem);
+        ctx.r[3] = system;
+        ctx.r[4] = 0x1030CEA8;  // aQuestArea
+        ppc::call_indirect(ctx, base, ppc::ld32(base, ppc::ld32(base, system) + 0x5C));
+        ctx.r[3] = ppc::ld32(base, 0x1031537C);
+        sub_021788E4(ctx, base);
+        ctx.r[3] = ppc::ld32(base, kLobbyNetwork);  // the launch step's broadcast, message type 0x25 (0x0214E9A0)
+        ctx.r[4] = 1;
+        sub_02265070(ctx, base);
+        const uint64_t r1 = ctx.r[1];
+        ctx = saved;
+        ctx.r[1] = r1;
+    }
     for (const AreaJump& jump : g_jumps) {
         if (jump.frame != g_swaps) continue;
         const uint32_t g_area_dti = jump.dti;
@@ -286,6 +357,11 @@ void register_net_probe(uint8_t* base, const std::vector<std::string>& fp_import
     trace_vtable(base, "Uds::P2p", 0x100F30FC, 11, 15);
     trace_vtable(base, "Nex::P2p", 0x100F36DC, 11, 15);
     trace_vtable(base, "Snow::P2p", 0x100F3E5C, 11, 15);
+    {
+        constexpr uint32_t kQuestAreaFake = 0x7FEFF000;
+        ppc::register_indirect(kQuestAreaFake, &quest_area_step);
+        ppc::st32(base, kQuestAreaVtable + 6 * 8 + 4, kQuestAreaFake);
+    }
     g_previous_hook = ppc::import_trace_hook;
     ppc::import_trace_hook = &import_hook;
     if (online) register_online(fp_imports);

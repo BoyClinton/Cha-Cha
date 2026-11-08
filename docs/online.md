@@ -249,11 +249,13 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
 - Ruled out: `sGame` +0x61, +0x48 (already 1 and 2 before any write); `sAppProcedure` +0xC3C, forcing it changes nothing in the hub
   (it gates 0x02254D3C / 0x02256080, set by quest-area code, so that is the quest channel (?)). 0x0218D9D8 is a table lookup, not a stage load.
 - Still unknown: what sets `sGame` +0x58 to 1 on the game's own route into the hall. Many functions write +0x58; the right one is not identified.
-- Quest start, static reading, nothing run: 0x0214E2B8 launches at 0x0214E8A8 when sCtx (*0x103147A0) +0x522C is nonzero (quest id?),
-  broadcasts type 0x25 through 0x02265070, and each copy changes area to aQuestArea (0x1030CEA8) on its own.
-- **Testing trap:** headless copies read physically attached controllers. A plugged-in pad walked hunters with no script, through
-  doors, reloading the area and blanking data (the "grey emblem" and empty-name runs may come from this). Exclude it:
-  `SDL_GAMECONTROLLER_IGNORE_DEVICES=0xVID/0xPID`. Runs before this finding are not reliable about position.
+- **Quest launch (probe, `MH3U_NET_PROBE_QUEST=frame:number`).** Doing the steps of 0x0214E8A8 on both copies shows the game's "Launching
+  Quest..." and the quest map loads: `aQuestArea` (0x1030CEA8) reaches +5=2 and stays there, on the network barrier at `sAppProcedure`
+  +0xF84 / +0xF8C (static reading: members send category 0x11 type 0xA through 0x0225C078, the host answers type 0xB through 0x0225C108).
+  `sGame` +0x4B is 255 there and the party table `sAppProcedure` +0xC40 + i*0xD0 is empty, so the host check 0x02261D48 cannot pass (?).
+- **Quest post (probe, `MH3U_NET_PROBE_POST=frame:number`).** 0x021E355C(sLobby, my pad block, number, 1) is the quest select. On the host in
+  the hall it returns 0, sets +0x522C and `sAppProcedure` +0xC3B, and `sGame` +0x4A. The party table stays empty and the guest sees nothing yet.
+  Guests are meant to get it through the dispatcher (0x022646F4 calls it with mode 2, static reading). Next: how the party table is filled.
 - Untested: more than two copies, a member leaving while others stay (the "member left" message is received but not acted on),
   a host leaving, session slot 33 (request 0x305), LAN.
 

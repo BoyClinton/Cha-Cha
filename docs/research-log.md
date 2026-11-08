@@ -1024,3 +1024,7 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 ## 2026-11-08 - Two hunters on screen (fork)
 - Setting sLobby +0x5452 and +0x5465 to 1 before the area change to aHarborRoomGuild builds stage 1B/1. Both headless copies show both
   hunters, and a client step arrives with the exact position on both. Requests and area change still come from the probe.
+
+## 2026-11-08 - Quest launch reaches the member barrier (fork)
+- Probe imitates the launch step 0x0214E8A8 (quest 1101 on both copies): "Launching Quest...", quest map loads, aQuestArea stops at +5=2, the
+  network barrier. Party table sAppProcedure +0xC40 empty, sGame +0x4B = 255. Details in docs/online.md "Two copies".
