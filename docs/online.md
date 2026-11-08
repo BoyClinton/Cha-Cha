@@ -232,12 +232,27 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
 - P2p open: the u16 at arg + 0xE is the member index + 1 (the value stored at info +0xC8), not a node number.
 
 **Not working or not known:**
-- **The other hunter was not seen in the world.** The client walked by script while the host took screenshots, and the host
-  showed no second hunter. That traffic looks like heartbeats only, so position data is probably not flowing. Likely something
-  more is needed above the session, such as the lobby operations below, but that is not established.
-- On the host in that run, the world was replaced by a grey emblem backdrop, with the Player List and prompts drawn over it.
-  Cause unknown. An earlier run with the same steps, but no walking script, showed the plaza on both copies, so what the
-  screen shows after these area jumps is not consistent.
+- **The other hunter is parked, not missing.** Measured with `MH3U_NET_PROBE`'s world log, entering `aHarborRoomGuild` (0x1030C918)
+  in state 10: `sPlayer` (*0x10314B80) +0x40 holds 4 `uPlayerTest` units on both copies, one per member slot (pad +0x3C byte). As the
+  client walks to -995, -137.5, -272, its unit on the host stays at the default -1600, -137.5, -366. After the first burst only
+  size 32 and 40 packets flow, so movement is not being sent. `aHarborSquare` / `aHarborRoomSquare` only build 1 unit.
+- **Hunter data does cross:** when the copies loaded different hunters, both Player Lists read "T e s t" and "Silvers".
+- **Hub movement is gated by the area id.** Hub position goes out through 0x02798F68 -> 0x022627CC (from 0x0279A388) and comes in
+  through 0x022648C4 -> 0x02262DA0. The sender refuses area 1B/0 (`*0x10315C80` +0x115 / +0x116) and the receiver needs 1B/1. Debug
+  jumps leave both copies on 1B/0. With 1B/1 written by the probe (`MH3U_NET_PROBE_HUB=frame:1b:1`), **movement crosses:** the client
+  ended at -1335.5, -137.5, -494.6 and its unit on the host read exactly that, and a longer walk tracked along the same route.
+  The write is a hack: it changes the id, not the loaded stage, and collision is lost (Y stays -137.5; hunters walk out of bounds).
+- **The moved unit is still not drawn.** At that position the host's screen shows the tent but no second hunter, with the unit's
+  flags unchanged. Whether the stage, the unit's model, or a draw flag is responsible is not known. uPlayer::vf42 (0x02797EF8) tests
+  1B/1 and is a place to start.
+- Ruled out: `sGame` +0x61, +0x48 (already 1 and 2 before any write); `sAppProcedure` +0xC3C, forcing it changes nothing in the hub
+  (it gates 0x02254D3C / 0x02256080, set by quest-area code, so that is the quest channel (?)). 0x0218D9D8 is a table lookup, not a stage load.
+- Still unknown: what really sets the area id to 1B/1. The only stores found are in aFreeQuest::vf5 and 0x02133D70.
+- Quest start, static reading, nothing run: 0x0214E2B8 launches at 0x0214E8A8 when sCtx (*0x103147A0) +0x522C is nonzero (quest id?),
+  broadcasts type 0x25 through 0x02265070, and each copy changes area to aQuestArea (0x1030CEA8) on its own.
+- **Testing trap:** headless copies read physically attached controllers. A plugged-in pad walked hunters with no script, through
+  doors, reloading the area and blanking data (the "grey emblem" and empty-name runs may come from this). Exclude it:
+  `SDL_GAMECONTROLLER_IGNORE_DEVICES=0xVID/0xPID`. Runs before this finding are not reliable about position.
 - Untested: more than two copies, a member leaving while others stay (the "member left" message is received but not acted on),
   a host leaving, session slot 33 (request 0x305), LAN.
 

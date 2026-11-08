@@ -707,6 +707,7 @@ PPC_FUNC(p2p_open) {
 
 // counters for the log, every kStatsFrames P2p updates
 constexpr uint32_t kStatsFrames = 1200;
+std::map<uint32_t, uint64_t> g_sent_sizes;  // (size << 16 | first two bytes) -> packets, to see what kinds of packet flow
 uint64_t g_sent_packets = 0, g_sent_bytes = 0, g_received_packets = 0, g_received_bytes = 0;  // guarded by g_wire
 
 // P2p slot 11, every frame. Delivery as Snow's (0x02E76C04): the packet in +0xC8, then 0x02E5C920(this, peer, buffer, size).
@@ -744,6 +745,9 @@ PPC_FUNC(p2p_update) {
         std::printf("net: totals: sent %llu packets %llu bytes, received %llu packets %llu bytes\n",
                     static_cast<unsigned long long>(g_sent_packets), static_cast<unsigned long long>(g_sent_bytes),
                     static_cast<unsigned long long>(g_received_packets), static_cast<unsigned long long>(g_received_bytes));
+        for (const auto& [kind, count] : g_sent_sizes)
+            std::printf("net:   size %u head %04X: %llu\n", kind >> 16, kind & 0xFFFF, static_cast<unsigned long long>(count));
+        g_sent_sizes.clear();
     }
     ctx.r[3] = self;
 }
@@ -765,6 +769,7 @@ PPC_FUNC(p2p_send) {
                 send_to_port(port->second, kData, base + data, size);
                 ++g_sent_packets;
                 g_sent_bytes += size;
+                ++g_sent_sizes[(size << 16) | ppc::ld16(base, data)];
             }
         }
     }

@@ -22,6 +22,15 @@
 namespace mh3u::game {
 namespace {
 
+std::string env(const char* name) {  // empty when not set
+    char* v = nullptr;
+    size_t n = 0;
+    std::string out;
+    if (_dupenv_s(&v, &n, name) == 0 && v) out = v;
+    std::free(v);
+    return out;
+}
+
 struct Traced {
     uint32_t original;
     const char* cls;
@@ -51,15 +60,6 @@ PPC_FUNC(traced_slot) {
     if (log)
         std::printf("net: %s[%d] this=%08X r4=%08X r5=%08X r6=%08X lr=%08X -> %08X\n", t.cls, t.slot, r3, r4, r5, r6,
                     static_cast<uint32_t>(ctx.lr), static_cast<uint32_t>(ctx.r[3]));
-}
-
-std::string env(const char* name) {  // empty when not set
-    char* v = nullptr;
-    size_t n = 0;
-    std::string out;
-    if (_dupenv_s(&v, &n, name) == 0 && v) out = v;
-    std::free(v);
-    return out;
 }
 
 void trace_vtable(uint8_t* base, const char* cls, uint32_t vtable, int first, int last) {
@@ -159,8 +159,48 @@ void lobby_network_tick(uint8_t* base) {
         }
 }
 
+// Who is in the world: sPlayer (*0x10314B80) +0x40, 8 unit pointers (docs/online.md); +0xE30 its pad block, whose +0xE0 is the position (src/game/play_log.cpp).
+constexpr uint32_t kPlayers = 0x10314B80;
+
+void players_tick(uint8_t* base) {
+    if (g_swaps % 300 != 0) return;
+    const uint32_t players = ppc::ld32(base, kPlayers), net = ppc::ld32(base, kLobbyNetwork);
+    if (!players || !net) return;
+    std::printf("net: swap %u world: lobby +34=%u +8B4=%u +964=%08X", g_swaps, ppc::ld8(base, net + 0x34), ppc::ld8(base, net + 0x8B4),
+                ppc::ld32(base, net + 0x964));
+    for (uint32_t m = 0; m < 4; ++m) std::printf(" m%u=%u", m, ppc::ld8(base, net + 0x70 + m * 0x148));
+    // the hub's send and receive gates (0x0279A388, 0x022648C4): sGame +0x48, +0x49, +0x4B my member, +0x61;
+    // *0x10315C80 +0x115 / +0x116 area ids; lobby +0x72 per member
+    const uint32_t game = ppc::ld32(base, 0x101FDB9C), areas = ppc::ld32(base, 0x10315C80);
+    std::printf(" sGame+48=%u +49=%u +4B=%u +61=%u area=%X/%X lobby+72:%u,%u\n", ppc::ld8(base, game + 0x48), ppc::ld8(base, game + 0x49),
+                ppc::ld8(base, game + 0x4B), ppc::ld8(base, game + 0x61), areas ? ppc::ld8(base, areas + 0x115) : 0,
+                areas ? ppc::ld8(base, areas + 0x116) : 0, ppc::ld8(base, net + 0x72), ppc::ld8(base, net + 0x72 + 0x148));
+    // MH3U_NET_PROBE_HUB="frame[:area:sub]": what aHarbor::vf5 stores (0x0201ACFC), which a debug area jump skips
+    static const std::string hub = env("MH3U_NET_PROBE_HUB");
+    uint32_t hub_at = 0, hub_area = 0, hub_sub = 0;
+    const int hub_fields = hub.empty() ? 0 : std::sscanf(hub.c_str(), "%u:%x:%x", &hub_at, &hub_area, &hub_sub);
+    if (hub_fields >= 1 && g_swaps >= hub_at) {
+        ppc::st8(base, game + 0x61, 1);
+        ppc::st8(base, game + 0x48, 2);
+        if (hub_fields == 3 && areas) {
+            ppc::st8(base, areas + 0x115, static_cast<uint8_t>(hub_area));
+            ppc::st8(base, areas + 0x116, static_cast<uint8_t>(hub_sub));
+        }
+    }
+    for (uint32_t i = 0; i < 8; ++i) {
+        const uint32_t unit = ppc::ld32(base, players + 0x40 + i * 4);
+        if (!unit) continue;
+        const uint32_t pad = ppc::ld32(base, unit + 0xE30);
+        if (!pad) continue;
+        std::printf("net:   unit %u at %08X flags %08X pad+3C=%u pos %.1f %.1f %.1f\n", i, unit, ppc::ld32(base, unit + 0xC),
+                    ppc::ld32(base, pad + 0x3C), ppc::ldf32(base, pad + 0xE0), ppc::ldf32(base, pad + 0xE4),
+                    ppc::ldf32(base, pad + 0xE8));
+    }
+}
+
 PPC_FUNC(swap_with_jump) {
     lobby_network_tick(base);
+    players_tick(base);
     ++g_swaps;
     for (const AreaJump& jump : g_jumps) {
         if (jump.frame != g_swaps) continue;

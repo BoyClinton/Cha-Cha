@@ -1010,3 +1010,13 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 - src/game/net_backend.cpp over UDP on 127.0.0.1 (47800-47807): search, join, P2p send / receive. Both headless copies show
   two rows in the Player List and hold state 10. P2p open's arg + 0xE is member index + 1. The other hunter was not seen in
   the world; traffic is about 2 packets a second. Details and the menu route in docs/online.md "Two copies".
+
+## 2026-11-08 - The other hunter is parked; a plugged-in pad spoiled earlier runs (fork)
+- Attached controller drove headless copies (8BitDo pad): hunters walked unscripted and changed area. With it ignored
+  (SDL_GAMECONTROLLER_IGNORE_DEVICES) the host's hunter stands still. Earlier position results and the grey screen are suspect.
+- aHarborRoomGuild builds 4 uPlayerTest units; a remote member's unit stays at the default -1600, -137.5, -366. Forcing
+  sAppProcedure +0xC3C (gate of 0x02254D3C / 0x02256080) changes nothing in the hub. Details in docs/online.md "Two copies".
+
+## 2026-11-08 - Hub movement crosses once the area id is 1B/1 (fork)
+- Sender 0x022627CC refuses *0x10315C80 +0x115/+0x116 = 1B/0, receiver 0x02262DA0 needs 1B/1; debug jumps give 1B/0. Writing 1B/1:
+  the client's unit on the host reads the client's exact position (-1335.5, -137.5, -494.6). Not drawn yet; the write loses collision.
