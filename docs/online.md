@@ -253,9 +253,14 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
   Quest..." and the quest map loads: `aQuestArea` (0x1030CEA8) reaches +5=2 and stays there, on the network barrier at `sAppProcedure`
   +0xF84 / +0xF8C (static reading: members send category 0x11 type 0xA through 0x0225C078, the host answers type 0xB through 0x0225C108).
   `sGame` +0x4B is 255 there and the party table `sAppProcedure` +0xC40 + i*0xD0 is empty, so the host check 0x02261D48 cannot pass (?).
-- **Quest post (probe, `MH3U_NET_PROBE_POST=frame:number`).** 0x021E355C(sLobby, my pad block, number, 1) is the quest select. On the host in
-  the hall it returns 0, sets +0x522C and `sAppProcedure` +0xC3B, and `sGame` +0x4A. The party table stays empty and the guest sees nothing yet.
-  Guests are meant to get it through the dispatcher (0x022646F4 calls it with mode 2, static reading). Next: how the party table is filled.
+- **Quest post (probe, `MH3U_NET_PROBE_POST=frame:number`).** 0x021E355C(sLobby, my pad block, number, 1) is the quest select. It creates the
+  party and returns 0, but `sAppProcedure` +0xC40 stays empty: 0x0225B238 builds that table from the party's bitmask (entry 0x9C4 each, +0xB).
+- **Two copies in one quest (probe, `MH3U_NET_PROBE_PARTY=frame:host_member:mask`, standing in for the join handshake).** Both copies post quest
+  1101, then each sets its party mask to 3, runs 0x0225B238 and sets `sGame` +0x4A to the host's member, then launches. The barrier clears
+  (`aQuestArea` +5=3), `sGame` +0x4B is 0 / 1, +0xC3C = 1, and both copies are in the quest (timer, party list with two names). The client's
+  hunter reads the same exact position on both copies, about 180 packets a second in all, 80-104 bytes.
+  Not done: the real join handshake (how a guest's bit reaches the party; 0x02251380 and the 0x022646F4 mode 2 path are the leads). Monsters, damage,
+  and finishing a quest are untested: 1101 is a gathering quest.
 - Untested: more than two copies, a member leaving while others stay (the "member left" message is received but not acted on),
   a host leaving, session slot 33 (request 0x305), LAN.
 

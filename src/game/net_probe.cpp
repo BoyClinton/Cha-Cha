@@ -240,6 +240,35 @@ PPC_FUNC(swap_with_jump) {
         ctx = saved;
         ctx.r[1] = r1;
     }
+    // MH3U_NET_PROBE_PARTY="frame:host_member:mask": both copies' party says who is in: my entry (0x9C4 each, from 0x02250C58) +0xB = mask,
+    // then the game's table builder 0x0225B238, and sGame +0x4A = the party's host. Stands in for the join handshake.
+    static const std::string party = env("MH3U_NET_PROBE_PARTY");
+    uint32_t party_at = 0, party_host = 0, party_mask = 0;
+    if (!party.empty() && std::sscanf(party.c_str(), "%u:%u:%x", &party_at, &party_host, &party_mask) == 3 && party_at == g_swaps) {
+        const ppc::Context saved = ctx;
+        const uint32_t lobby = ppc::ld32(base, 0x103147A0), game = ppc::ld32(base, 0x101FDB9C), proc = ppc::ld32(base, 0x103A2DB0);
+        const uint32_t party_object = ppc::ld32(base, lobby + 0x4E20);
+        if (party_object) {
+            ctx.r[3] = party_object;
+            sub_02250C58(ctx, base);
+            const uint32_t entries = static_cast<uint32_t>(ctx.r[3]);
+            ctx.r[3] = ppc::ld32(base, 0x103A33E8);
+            sub_0226EFEC(ctx, base);
+            const uint32_t me = static_cast<uint32_t>(ctx.r[3]);
+            ppc::st8(base, entries + me * 0x9C4 + 0xB, static_cast<uint8_t>(party_mask));
+            ctx.r[3] = proc;
+            sub_0225B238(ctx, base);
+            ppc::st8(base, game + 0x4A, static_cast<uint8_t>(party_host));
+            std::printf("net: swap %u party: member %u, entry +4A=%d, table count %u, rows %d %d\n", g_swaps, me,
+                        static_cast<int8_t>(ppc::ld8(base, entries + me * 0x9C4 + 0x4A)), ppc::ld8(base, proc + 0xC3A),
+                        static_cast<int8_t>(ppc::ld8(base, proc + 0xC41)), static_cast<int8_t>(ppc::ld8(base, proc + 0xC41 + 0xD0)));
+        } else {
+            std::printf("net: swap %u party: no party object\n", g_swaps);
+        }
+        const uint64_t r1 = ctx.r[1];
+        ctx = saved;
+        ctx.r[1] = r1;
+    }
     // MH3U_NET_PROBE_QUEST="frame:number": the launch step of the hall's state machine (0x0214E8A8) without its menus
     static const std::string quest = env("MH3U_NET_PROBE_QUEST");
     uint32_t quest_at = 0, quest_number = 0;
