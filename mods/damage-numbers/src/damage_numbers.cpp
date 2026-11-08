@@ -9,6 +9,9 @@
 //   uCoord (uEnemy derives from it): +0x40 mPos, +0x50 mQuat, +0x60 mScale; uBaseModel +0x158 mBoundaryScale,
 //   +0x15C mBoundaryCenter (the model's bounds, local).
 // The parts' damage is read before the check and the HP after it, so a number only shows when HP really went down.
+// In an online session only the copy that controls a monster takes damage off in the check; the others get the new HP in a network
+// message, between checks, with no parts to read. So each monster's HP is remembered from one check to the next, and a drop between
+// checks shows as one number.
 #include "chacha_plugin.h"
 
 #include <algorithm>
@@ -132,11 +135,48 @@ void before_check(void*, ChaChaCall* call) {
     for (int i = 0; i < 8; ++i) t_before.parts[i] = static_cast<int16_t>(chacha_ld16(api->guest_base, state + 0x8EC + 2 * i));
 }
 
+// HP after each monster's last check. Few monsters exist at once, and a check is once a frame per monster.
+struct LastHp {
+    uint32_t enemy, state;
+    int32_t hp;
+};
+std::mutex g_last_m;
+std::vector<LastHp> g_last;
+
+// The drop since this monster's last check (0 for a monster not seen before, or one reused for another), and remembers its HP now.
+int32_t drop_since_last_check(uint32_t enemy, uint32_t state, int32_t hp_before_check, int32_t hp_now) {
+    std::lock_guard g(g_last_m);
+    for (LastHp& l : g_last)
+        if (l.enemy == enemy) {
+            const int32_t drop = l.state == state ? l.hp - hp_before_check : 0;
+            l.state = state;
+            l.hp = hp_now;
+            return std::max(drop, 0);
+        }
+    if (g_last.size() >= 32) g_last.erase(g_last.begin());
+    g_last.push_back({enemy, state, hp_now});
+    return 0;
+}
+
 void after_check(void*, ChaChaCall* call) {
     const Before b = t_before;
     t_before.enemy = 0;
     if (!b.enemy || b.enemy != call->arg_r[0]) return;
     const int32_t hp = static_cast<int32_t>(chacha_ld32(api->guest_base, b.state + 0x8B8));
+    if (const int32_t remote = drop_since_last_check(b.enemy, b.state, b.hp, hp); remote > 0 && b.hp > 0) {
+        float centre[3];
+        body_centre(b.enemy, centre);
+        static std::atomic<int> logged_remote{0};
+        if (logged_remote < 12) {
+            ++logged_remote;
+            char msg[120];
+            std::snprintf(msg, sizeof msg, "network hit: em%03u HP %d -> %d", chacha_ld8(api->guest_base, b.enemy + 0xE33), b.hp + remote, b.hp);
+            api->log(self, msg);
+        }
+        const double now = api->time();
+        std::lock_guard g(g_m);
+        g_popups.push_back({{centre[0], centre[1], centre[2]}, frand() * 40.0f, remote, false, now});
+    }
     const int32_t lost = b.hp - hp;
     if (lost <= 0) return;  // nothing taken off (healing, a hit that did not count)
     int sum = 0;

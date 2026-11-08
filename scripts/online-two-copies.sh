@@ -13,6 +13,10 @@ if [ ! -d "$second" ]; then
     cp "$data/input.ini" "$second/" 2>/dev/null || true
     cp -r "$data/save" "$second/" 2>/dev/null || true
 fi
+# mods follow the first copy each time, so both have the same ones
+rm -rf "$second/mods"
+cp -r "$data/mods" "$second/" 2>/dev/null || true
+cp "$data/mods.ini" "$second/" 2>/dev/null || true
 ignore=""
 if [ -e /sys/class/input/js0/device/id/vendor ]; then
     ignore="0x$(cat /sys/class/input/js0/device/id/vendor)/0x$(cat /sys/class/input/js0/device/id/product)"
