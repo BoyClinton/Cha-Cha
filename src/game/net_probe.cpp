@@ -6,6 +6,7 @@
 //
 // MH3U_NET_PROBE=online also answers nn_ac / nn_act / nn_fp as a connected, signed-in console. Values are invented; only
 // what the game accepts matters here. Status: wip.
+#define _CRT_SECURE_NO_WARNINGS  // sscanf, on the debug variables only
 #include "net_probe.h"
 
 #include <cstdio>
@@ -109,10 +110,14 @@ PPC_FUNC(fp_async_ok) {
     ctx.r[3] = 0;
 }
 
-// MH3U_NET_PROBE_AREA="frame:dti_hex": at that swap, the game's own area change, (*0x103D2EF4)->slot 11(DTI of the area),
+// MH3U_NET_PROBE_AREA="frame:dti_hex;frame:dti_hex": at that swap, the game's own area change, (*0x103D2EF4)->slot 11(DTI of the area),
 // as aGalleryMenu::vf7 does it (0x02018EB0). Saves walking there in headless runs.
 ppc::GuestFunction g_swap = nullptr;
-uint32_t g_area_frame = 0, g_area_dti = 0, g_swaps = 0;
+struct AreaJump {
+    uint32_t frame, dti;
+};
+std::vector<AreaJump> g_jumps;
+uint32_t g_swaps = 0;
 constexpr uint32_t kAreaSystem = 0x103D2EF4;
 
 // sLobbyNetwork (*0x103A2F90): +0x38 state, +0x44 request bits (the online screen sets them: 0x2 at 026AE5E4, then 0x4 or 0x8).
@@ -122,6 +127,7 @@ constexpr uint32_t kLobbyNetwork = 0x103A2F90;
 struct FlagPoke {
     uint32_t frame, bits;
     bool internet;
+    int join_index = -1;  // "frame:j:index": the result to join (+0x8C4), then request bit 0x20
 };
 std::vector<FlagPoke> g_pokes;
 
@@ -146,6 +152,7 @@ void lobby_network_tick(uint8_t* base) {
     }
     for (const FlagPoke& p : g_pokes)
         if (p.frame == g_swaps) {
+            if (p.join_index >= 0) ppc::st32(base, net + 0x8C4, static_cast<uint32_t>(p.join_index));
             const uint32_t field = p.internet ? 0x8B0 : 0x44;
             ppc::st32(base, net + field, ppc::ld32(base, net + field) | p.bits);
             std::printf("net: swap %u set request bits %02X at +%X\n", g_swaps, p.bits, field);
@@ -154,7 +161,10 @@ void lobby_network_tick(uint8_t* base) {
 
 PPC_FUNC(swap_with_jump) {
     lobby_network_tick(base);
-    if (++g_swaps == g_area_frame) {
+    ++g_swaps;
+    for (const AreaJump& jump : g_jumps) {
+        if (jump.frame != g_swaps) continue;
+        const uint32_t g_area_dti = jump.dti;
         const ppc::Context saved = ctx;
         const uint32_t system = ppc::ld32(base, kAreaSystem);
         ctx.r[3] = system;
@@ -233,10 +243,19 @@ void register_net_probe(uint8_t* base, const std::vector<std::string>& fp_import
 void register_net_probe_jump() {
     if (env("MH3U_NET_PROBE").empty()) return;
     const std::string area = env("MH3U_NET_PROBE_AREA"), flags = env("MH3U_NET_PROBE_FLAGS");
-    std::sscanf(area.c_str(), "%u:%x", &g_area_frame, &g_area_dti);
+    for (const char* q = area.c_str(); q && *q;) {
+        AreaJump j{};
+        if (std::sscanf(q, "%u:%x", &j.frame, &j.dti) == 2) g_jumps.push_back(j);
+        q = std::strchr(q, ';');
+        if (q) ++q;
+    }
     for (const char* q = flags.c_str(); q && *q;) {
         FlagPoke p{};
-        if (std::sscanf(q, "%u:i:%x", &p.frame, &p.bits) == 2) {
+        if (std::sscanf(q, "%u:j:%d", &p.frame, &p.join_index) == 2) {
+            p.internet = true;
+            p.bits = 0x20;
+            g_pokes.push_back(p);
+        } else if (std::sscanf(q, "%u:i:%x", &p.frame, &p.bits) == 2) {
             p.internet = true;
             g_pokes.push_back(p);
         } else if (std::sscanf(q, "%u:%x", &p.frame, &p.bits) == 2) {

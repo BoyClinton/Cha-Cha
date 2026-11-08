@@ -999,3 +999,14 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   0x1030C748 is an abstract parent and hangs on Now Loading. aHarborGuild 0x1030C830 came up at the same spot.
 - sLobbyNetwork (*0x103A2F90) +0x8B0 bit 0x2 starts Internet: Snow::Context comes up, OSReport "Success to network
   initialize.", fails at AcquireNexServiceToken with GameID 0x10104D00, shuts down cleanly. +0x44 bit 0x2 starts Local (Uds).
+
+## 2026-11-08 - Solo backend: the game's Player List with no server (fork)
+- src/game/net_backend.cpp (MH3U_NET_BACKEND=solo): Snow vtable entries Context 34 / 35 and Session 29 go to host code.
+  Internet machine reaches state 10 (in session); leave returns to 17. Area change to aHarborRoomSquare 0x1030CA00 shows the
+  Player List. Requests set by the probe, not by the game's menus. Details in docs/online.md "Solo backend".
+- sLobbyNetwork +0x8AC states: 17 signed-in hub (0x4 -> 2 -> 3 session hub), 3: 0x8 -> 4, 0x10 -> 5, 0x20 -> 7, 10 in session.
+
+## 2026-11-08 - Two copies in one Player List (fork)
+- src/game/net_backend.cpp over UDP on 127.0.0.1 (47800-47807): search, join, P2p send / receive. Both headless copies show
+  two rows in the Player List and hold state 10. P2p open's arg + 0xE is member index + 1. The other hunter was not seen in
+  the world; traffic is about 2 packets a second. Details and the menu route in docs/online.md "Two copies".

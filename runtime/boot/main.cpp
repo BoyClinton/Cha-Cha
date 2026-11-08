@@ -15,6 +15,7 @@
 #include "filters.h"
 #include "camera_speed.h"
 #include "movie_skip.h"
+#include "net_backend.h"
 #include "net_probe.h"
 #include "play_log.h"
 #include "windpress.h"
@@ -491,6 +492,7 @@ int main(int argc, char** argv) {
     });
     game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
+    game::register_net_backend(mem.base());  // MH3U_NET_BACKEND (docs/online.md)
     {  // MH3U_NET_PROBE: logs the network backend's calls (docs/online.md)
         std::vector<std::string> fp_imports;
         for (const auto& im : img->imports)

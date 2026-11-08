@@ -168,8 +168,8 @@ option A; unverified. The game server id is 0x10104D00, printed by the game (pro
 **Plan.** Each step proves the next is worth doing:
 1. Probe: log the factories, the requests and the mode; report online from `nn_ac` / `nn_act` / `nn_fp`; try to enter
    the Gathering Hall. Settles which kind is requested and which gates exist.
-2. Solo backend: factories return a guest object built with the base constructors, with its vtable pointing at host
-   functions (`call_indirect` already supports this). Create always succeeds. Goal: stand in an online hall alone.
+2. Solo backend: entries of Snow's vtables point at host functions (`register_indirect`); the game still constructs
+   the Snow objects, so no factory override or code regeneration is needed. Done, see "Solo backend" below.
 3. Two instances on one PC: search / join over loopback, then P2p send / receive.
 4. Quest together, then LAN broadcast discovery.
 
@@ -184,8 +184,8 @@ requests were set by the probe, not through the game's menus: the real door has 
   Internet: 02266E88, state +0x8AC, requests +0x8B0, opens it in mode 4. Bit 0x2 starts either. Both go 0 -> 1 -> 11,
   and to 13 on failure, then shut down cleanly with no crash. (0225F0D4 uses mode 2, 022732D0 mode 3: not looked at.)
 - **Local (bit 0x2 at +0x44) -> `Uds::Context`.** Fails when `nn_uds` Initialize fails.
-- **Internet (bit 0x2 at +0x8B0) -> `Snow::Context`.** Confirms mode 4 means Snow for the context. The session kind is
-  still not seen: no Session object was created in either run.
+- **Internet (bit 0x2 at +0x8B0) -> `Snow::Context`.** Confirms mode 4 means Snow for the context. The session was not seen in these runs: the
+  failure comes first. With the solo backend it is `Snow::Session` and `Snow::P2p`.
 - **Slots confirmed by these runs.** Context 24 runs once at creation, 11 every frame, 34 polled during sign-in, 35 polled
   during sign-out, then the destructor.
 - **Internet sign-in order with `online` answers:** `nn_fp` Initialize, `nn_ac` Initialize / Connect / GetAssignedAddress,
@@ -194,3 +194,60 @@ requests were set by the probe, not through the game's menus: the real door has 
   AcquireNexServiceToken, which still fails: OSReport `GameID:10104d00 Success:0`. That is the first gate left.
 - **Consequence for option B.** Snow's sign-in calls the system libraries itself, so the replacement context answers
   slot 34 with "signed in" and none of this needs faking in the shipped path.
+
+## Solo backend (2026-11-08)
+
+`src/game/net_backend.cpp`, off unless `MH3U_NET_BACKEND` is set (`solo` at the time; see "Two copies" below). It replaced three slots of Snow's vtables and no others:
+Context 34 (sign-in), Context 35 (sign-out), Session 29 (create). Create adds this machine as member 0, host, through the
+game's own add-member routine 02E784C4 (a kind-4 `MtNetUniqueId` from a 16-bit node number, as Snow's event handler builds
+it), then fires the listeners Snow fires. Session +0x77D / +0x77E stay 0, so Snow's event polling (02E7872C) returns at
+once and Snow's leave (slot 32) skips its server call. Nothing is sent anywhere.
+
+**Seen in headless runs** (Port Tanzia by area change, requests set by the probe at +0x8B0: 0x2 sign in, 0x4 session stage,
+0x8 create, 0x40 leave):
+- Internet states 0 -> 1 -> 11 -> 17 (signed in, hub) -> 2 -> 3 (session hub) -> 4 -> 9 -> 10 (in session). Leave: 15 -> 16,
+  Session and P2p destroyed, back to 17.
+- With a session, area change to `aHarborRoomSquare` (0x1030CA00) shows the game's Player List with the hunter's name, and
+  Toggle names / Start chatting. "Start chatting" also shows in Port Tanzia, and is still there after leaving (state 17).
+- Request 0x301 -> slot 29 and options through slots 14 / 15 are now confirmed by running (sizes 0x90 and 0x204).
+
+**Not done or not known:**
+- The requests are set by the probe. The game's own menu has not been used, so create ran with empty options and capacity 0.
+- `sLobbyNetwork` state 4 needs its caller's arguments (02271C90): search and join (bits 0x10, 0x20) are untried.
+- `cCafeTransport`: no problem seen alone, but alone it may have nothing to send. Still the main risk.
+- P2p: only slots 11 and 14 are called so far; send and receive have not run.
+
+## Two copies (2026-11-08)
+
+Same file, `MH3U_NET_BACKEND=1`. One UDP socket per copy on the first free port of 47800-47807, **bound to 127.0.0.1**: nothing
+leaves the machine. Search asks every port in the range; the host answers. Messages: search request / reply, join request /
+reply, member added, member left, data. Slots replaced: Context 12, 34, 35; Session 11, 29, 30, 31, 32; P2p 11, 13, 14, 15. Join
+does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B8B8), which never touch the server.
+
+**Seen in two headless copies on this PC** (same save copied twice, requests set by the probe, area changes by the probe):
+- The client's search found the host's session, it joined as member 1 of 2, and both copies reached state 10 and stayed there.
+- **Both copies show the game's Player List with two rows.**
+- About 2 packets a second each way at roughly 40 bytes, for over two minutes; sent and received counts agree, allowing for
+  the packets in flight when each total is printed.
+- P2p open: the u16 at arg + 0xE is the member index + 1 (the value stored at info +0xC8), not a node number.
+
+**Not working or not known:**
+- **The other hunter was not seen in the world.** The client walked by script while the host took screenshots, and the host
+  showed no second hunter. That traffic looks like heartbeats only, so position data is probably not flowing. Likely something
+  more is needed above the session, such as the lobby operations below, but that is not established.
+- On the host in that run, the world was replaced by a grey emblem backdrop, with the Player List and prompts drawn over it.
+  Cause unknown. An earlier run with the same steps, but no walking script, showed the plaza on both copies, so what the
+  screen shows after these area jumps is not consistent.
+- Untested: more than two copies, a member leaving while others stay (the "member left" message is received but not acted on),
+  a host leaving, session slot 33 (request 0x305), LAN.
+
+**The real menu route (static reading, nothing run; `?` = inferred).**
+- `sLobbyNetwork` setters of +0x8B0: 0x02267D38 bit 0x2, called by the `uIDLobbyRelayLobby` runner 0x02731134; 0x02267D48 bit 0x4,
+  from `uIDLobbyRelayList` 0x027251EC; 0x02267DAC bit 0x8, 0x02267DF4 bit 0x10 and 0x02267E50 / 0x02267E64 bit 0x20, all from
+  `uIDLobbyRelayList` 0x02725298; 0x02266BB4 bit 0x40. 0x02267E90-0x02267F78 set "lobby op" bits at +0x954, which likely lead to
+  states 22-30 (02271EC4 ...), Snow's lobby calls. Those are not replaced yet.
+- 0x02265DB4 is an event callback (?), referenced from data at 0x10028D6C, not a request setter.
+- `uIDLobbyOnline` (id 0x40) creates the RelayLobby child (id 0x79) in slot 0x026AC5E4; its states 0x1E / 0x1F drive it. Its Local
+  states use the +0x44 setters. What opens id 0x40, which NPC or door, is **not found**.
+- `nn_fp` GetMyPresence is called directly by the UI at 0x0272A280. `nn_fp` has no HLE, so that call aborts the game: it needs
+  implementing before the real menu can work.
