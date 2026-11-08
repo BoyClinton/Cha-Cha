@@ -110,3 +110,87 @@ Mapped from the recompiled code (factories and constructors found by their vtabl
   Hall asks for, and what it does when the stubs say offline. (2) Name the 102 virtual slots from the Nex / Snow
   implementations (what each takes and returns, which listener callbacks they fire). (3) A loopback backend between
   two instances on this PC, then LAN broadcast discovery.
+
+## The 102 backend slots, mapped (2026-11-08)
+
+Static reading of the recompiled code only: nothing here has been run. Slot = vtable entry index (entry 0 is the
+typeinfo, so `symbols.txt`'s `vfN` is slot N+1); a virtual call loads offset `slot*8+4`. `?` = inferred, not proven.
+
+**The real size.** 102 entries, but entries 0-10 are typeinfo / `MtNetObject` plumbing and the last ones of Session
+(37-41) and P2p (16-19) and Context (36-39) are inherited code that works for any backend. Pure virtuals (all pointing
+at 0x03122C18 in the base): Context 11-35, Session 11-36, P2p 11-15 = **56**. Going by the Nex versions, about half of
+those are one-liners or no-ops: **about 21 hold real logic, 8 copy structs out, 27 are trivial.**
+
+**The base class does the hard part.** `MtNetSession` already has the request queue, the rule for which requests may
+overlap (slot 38, 0x02E60C74) and a helper for every listener callback (0x02E61238-0x02E630C0, member +0xB8). A new
+backend reuses these guest functions, so the 44 listener slots (26 + 10 + 8) need no new code.
+
+**Session requests.** The engine queues a code (`02E602A0`, controller at +0x4C), and slot 39 (0x02E61048) runs the
+handler for it, called again until the request finishes:
+
+| Code | Queued by | Args | Slot | Uds / Nex / Snow size | Meaning |
+|---|---|---|---|---|---|
+| 0x301 | 02E61E2C | 4 | 29 | 488 / 526 / 311 | create session (`CREATE OPTION`; wrapper copies the option in via slot 14 first) |
+| 0x302 | 02E61E70 | 3 | 30 | **stub** / 328 / 218 | search? (`SEARCH OPTION`; result = count + 100 entries of 0x744 bytes, 02E61C5C) |
+| 0x303 | 02E61E94 | 1 | 31 | **stub** / 763 / 584 | join? |
+| 0x304 | 02E61EB0 | 0 | 32 | 141 / 138 / 95 | leave? (queued from the teardown path, 02E62260) |
+| 0x305 | 02E61EC8 | 1 | 33 | 113 / 174 / 17 | ? |
+| 0x306 / 0x307 / 0x308 | 02E61EE4 / 02E61EFC / 02E61F14 | 0 | 34 / 35 / 36 | 9 / 33 / 29 (same in all three) | small: fire listener 24 / 25 / 26 |
+
+Other Session slots: 11 update? (per frame, wrapped by base 02E62260 / 02E6246C), 12 compare two entries?, 13 flag read,
+14 set create option (0x90 bytes at +0x20E0), 15 set attribute? (wrapper 02987D00, from 0226A930), 16-21 copy state out
+(sizes 0x674, 0x204), 22 flag, 23 no-op in all three, 24 member connected? (fires listeners 5, 7, 14), 25-27 packet /
+member handling (Uds 26 parses packets through `MtNetBuffer`; error 0x80050031 in 27), 28 finish-or-fail wrapper.
+
+**Context.** Slots 34 and 35 are the sign-in? and sign-out? state machines (399 and 122 instructions on Nex; Uds polls
+`02E5A47C`, fails with 0x80000012). 11 update?, 12, 18 and 25 are small; 26-33 are `return` in all three backends, and
+13-17, 19-24 are getters and flags.
+
+**P2p (the data plane, only 5 slots).** 11 send? (packet limit 0x5C8, error 0x80030036), 12 state read?, 13 receive?,
+14 close? (handles reset to -1), 15 open state machine? (requests; 0x80030002).
+
+**Who gets which kind.** `sMH3NetworkManager`? (by address range) +0x190 is the mode: mode 1 pairs with kind 3 (Uds), mode 4 with kind 0x10
+(Snow), per 0226EA3C. So online is Snow, and Snow / Nex / Uds are the only three to replace or imitate. The three
+factories are called from 0x02985090 (session) and 0x02CD0D78 (context); 0x02E4DAB0 is the P2p factory? (same args,
+result goes to the Transport).
+
+**What goes around the interface.** Calls from outside into the backend range are nearly all the shared base classes,
+storage and time. The exceptions, which a replacement backend must also answer:
+- `cCafeTransport` ctor / dtor (02246DA0 / 02246EC8) register a callback with Snow (02E53A64 / 02E53A70). **Unknown
+  what it carries.** It sits under `sLobbyNetwork`, so it could be the Gathering Hall's avatars. This is the main risk.
+- `sLobbyNetwork` slot 6 (02266E88) calls 02E4DEC8 / 02E4DF0C / 02E4DF50 (Snow state).
+- `cNetStorage` (02249874) calls 02E4DC6C.
+
+**Config found on the way.** 02E4D124 fills default NEX settings with `0903b15042641c7908ff88eaa565f861` and
+`deed2a88` (NEX access key?), plus 0x481 (meaning unknown; `sNetwork` ctor 02BC4890 passes it too). Only useful for
+option A; unverified. The game server id is 0x10104D00, printed by the game (probe below).
+
+**Plan.** Each step proves the next is worth doing:
+1. Probe: log the factories, the requests and the mode; report online from `nn_ac` / `nn_act` / `nn_fp`; try to enter
+   the Gathering Hall. Settles which kind is requested and which gates exist.
+2. Solo backend: factories return a guest object built with the base constructors, with its vtable pointing at host
+   functions (`call_indirect` already supports this). Create always succeeds. Goal: stand in an online hall alone.
+3. Two instances on one PC: search / join over loopback, then P2p send / receive.
+4. Quest together, then LAN broadcast discovery.
+
+## Probe results (2026-11-08)
+
+`src/game/net_probe.cpp`, off unless `MH3U_NET_PROBE` is set (`1` logs, `online` also reports a signed-in console;
+`MH3U_NET_PROBE_AREA="frame:dti"` changes area, `MH3U_NET_PROBE_FLAGS="frame:bits"` or `"frame:i:bits"` sets request bits).
+Run headless on a copy of a save: area change to `aHarborSquare` (0x1030CAE8) at swap 3500, request at swap 6000. The
+requests were set by the probe, not through the game's menus: the real door has not been walked through yet.
+
+- **Two state machines in `sLobbyNetwork`.** Local: 02260834, state +0x38, requests +0x44, opens the manager in mode 1.
+  Internet: 02266E88, state +0x8AC, requests +0x8B0, opens it in mode 4. Bit 0x2 starts either. Both go 0 -> 1 -> 11,
+  and to 13 on failure, then shut down cleanly with no crash. (0225F0D4 uses mode 2, 022732D0 mode 3: not looked at.)
+- **Local (bit 0x2 at +0x44) -> `Uds::Context`.** Fails when `nn_uds` Initialize fails.
+- **Internet (bit 0x2 at +0x8B0) -> `Snow::Context`.** Confirms mode 4 means Snow for the context. The session kind is
+  still not seen: no Session object was created in either run.
+- **Slots confirmed by these runs.** Context 24 runs once at creation, 11 every frame, 34 polled during sign-in, 35 polled
+  during sign-out, then the destructor.
+- **Internet sign-in order with `online` answers:** `nn_fp` Initialize, `nn_ac` Initialize / Connect / GetAssignedAddress,
+  socket_lib_init, NSSLInit, curl_global_init_mem, `nn_act` GetAccountId, `nn_fp` IsInitialized / SetNotificationHandler,
+  OSReport "Success to network initialize.", IsApplicationConnected, GetPrincipalId, HasNfsAccount, then
+  AcquireNexServiceToken, which still fails: OSReport `GameID:10104d00 Success:0`. That is the first gate left.
+- **Consequence for option B.** Snow's sign-in calls the system libraries itself, so the replacement context answers
+  slot 34 with "signed in" and none of this needs faking in the shipped path.

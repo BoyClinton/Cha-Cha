@@ -983,3 +983,19 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 - **Network backends.** See docs/online.md "Local play": session factory 0x02E4D9AC (kind 3 Uds, 4 Nex, 0x10 / 0x11
   Snow), context factory 0x02E4D844, kind from nNetwork::SessionDriver +0x60; the Wii U's nn_uds can only host (no
   Scan / Connect imports), so instance-to-instance play needs a replacement for the Nex / Snow backend.
+
+## 2026-11-08 - The 102 network backend slots (fork)
+- Read from the recompiled C++ (asm comments), v32 hash checked. Full map in docs/online.md "The 102 backend slots".
+- 56 pure virtuals (Context 11-35, Session 11-36, P2p 11-15; base entry 0x03122C18), about 21 with real logic. Session
+  requests 0x301-0x308 run slots 29-36 (dispatch 0x02E61048, overlap rules 0x02E60C74). Uds stubs slots 30 / 31, the
+  search? / join? handlers: more evidence the Uds path can only host. Base helpers fire every session listener.
+- Mode 4 pairs with kind 0x10 (Snow) in 0226EA3C. Open risk: `cCafeTransport` registers directly with Snow.
+- Static only; no runtime probe yet.
+
+## 2026-11-08 - Network probe: Internet path runs to the NEX token (fork)
+- src/game/net_probe.cpp (MH3U_NET_PROBE, off by default; no game code regenerated: vtable entries go to a host tracer
+  through ppc::register_indirect). Details in docs/online.md "Probe results".
+- Area change: (*0x103D2EF4)->slot 11(DTI), as aGalleryMenu::vf7 does. aHarborSquare 0x1030CAE8 loads Port Tanzia; aHarbor
+  0x1030C748 is an abstract parent and hangs on Now Loading. aHarborGuild 0x1030C830 came up at the same spot.
+- sLobbyNetwork (*0x103A2F90) +0x8B0 bit 0x2 starts Internet: Snow::Context comes up, OSReport "Success to network
+  initialize.", fails at AcquireNexServiceToken with GameID 0x10104D00, shuts down cleanly. +0x44 bit 0x2 starts Local (Uds).

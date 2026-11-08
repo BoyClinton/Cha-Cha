@@ -15,6 +15,7 @@
 #include "filters.h"
 #include "camera_speed.h"
 #include "movie_skip.h"
+#include "net_probe.h"
 #include "play_log.h"
 #include "windpress.h"
 #include "grab_escape.h"
@@ -490,6 +491,12 @@ int main(int argc, char** argv) {
     });
     game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
+    {  // MH3U_NET_PROBE: logs the network backend's calls (docs/online.md)
+        std::vector<std::string> fp_imports;
+        for (const auto& im : img->imports)
+            if (!im.data && im.rpl.rfind("nn_fp", 0) == 0) fp_imports.push_back(im.name);
+        game::register_net_probe(mem.base(), fp_imports);
+    }
     // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
     plugins::set_toast([](const std::string& msg) {
         if (g_launcher) g_launcher->post_toast(msg);
@@ -549,6 +556,7 @@ int main(int argc, char** argv) {
     }
     if (headless) game::set_camera_speed(input::control_options().camera_speed);
     gfx::register_gx2(r);
+    game::register_net_probe_jump();
     audio::register_ax(r, !headless);
 
     std::atomic<bool> guest_done{false}, pipelines_ready{false};
