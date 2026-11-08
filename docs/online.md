@@ -261,6 +261,11 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
   hunter reads the same exact position on both copies, about 180 packets a second in all, 80-104 bytes.
   Not done: the real join handshake (how a guest's bit reaches the party; 0x02251380 and the 0x022646F4 mode 2 path are the leads). Monsters, damage,
   and finishing a quest are untested: 1101 is a gathering quest.
+- **Monsters do not stay in sync yet** (quest 2201, both hunters walked into zone 1/3, the world log's monster lines). The same small monsters (kind 27)
+  load on both copies with the same HP and start 26-192 units apart at the first shared sample, then drift to as much as 2,277 apart by the end of the run.
+  Each copy appears to run its own. Enemy setup 0x020FA158 calls 0x02119A90 and the host check 0x02261D48 (`sEnemy`-side +0x45A?), and the
+  receiver 0x0225AFFC has more message families (0x22584C4, 0x0225639C, 0x02258E70, 0x02259C4C), so sync seems designed in; not known why it is not
+  running. Only small monsters were compared, no large monster or damage yet.
 - Untested: more than two copies, a member leaving while others stay (the "member left" message is received but not acted on),
   a host leaving, session slot 33 (request 0x305), LAN.
 

@@ -202,6 +202,16 @@ void players_tick(uint8_t* base) {
                     ppc::ld8(base, proc + 0xC41), ppc::ld8(base, proc + 0xC40 + 0xD0), ppc::ld8(base, proc + 0xC41 + 0xD0), ppc::ld8(base, proc + 0xF84),
                     ppc::ld8(base, proc + 0xF85), ppc::ld8(base, proc + 0xF8C), ppc::ld8(base, proc + 0xF8D));
     }
+    // monsters: sEnemy (*0x10313260) +0x34; unit +0xE33 kind, +0x40 position (as the damage numbers mod reads it); +0x1BE0 state: +0x8B8 HP, +0x8BC max
+    if (const uint32_t enemies = ppc::ld32(base, 0x10313260))
+        for (uint32_t i = 0; i < 8; ++i) {
+            const uint32_t monster = ppc::ld32(base, enemies + 0x34 + i * 4);
+            if (!monster) continue;
+            const uint32_t state = ppc::ld32(base, monster + 0x1BE0);
+            std::printf("net:   monster %u kind %u pos %.1f %.1f %.1f hp %d/%d\n", i, ppc::ld8(base, monster + 0xE33), ppc::ldf32(base, monster + 0x40),
+                        ppc::ldf32(base, monster + 0x44), ppc::ldf32(base, monster + 0x48),
+                        state ? static_cast<int32_t>(ppc::ld32(base, state + 0x8B8)) : -1, state ? static_cast<int32_t>(ppc::ld32(base, state + 0x8BC)) : -1);
+        }
     if (g_quest_area)
         std::printf("net:   quest area %08X +5=%u +6=%u +48=%d; sGame +158=%u +1B7=%u +3BC=%d\n", g_quest_area, ppc::ld8(base, g_quest_area + 5),
                     ppc::ld8(base, g_quest_area + 6), static_cast<int8_t>(ppc::ld8(base, g_quest_area + 0x48)), ppc::ld8(base, game + 0x158),

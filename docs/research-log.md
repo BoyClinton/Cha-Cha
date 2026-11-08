@@ -1032,3 +1032,7 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 ## 2026-11-08 - Two copies inside one quest (fork)
 - 0x0225B238 builds the party table from the party mask (+0xB). With the mask set to 3 by the probe on both copies, then the launch step, the member
   barrier clears: both copies enter quest 1101 with two names in the party list and identical hunter positions. Join handshake still skipped.
+
+## 2026-11-08 - Monsters load on both copies but drift apart (fork)
+- Quest 2201, zone 1/3: same kind 27 monsters and HP on both copies, positions diverge from 26-192 to as much as 2,277 units over the run. Not yet known whether
+  small monsters are synced at all, or whether a missing flag stops it; no large monster or damage compared. Details in docs/online.md "Two copies".
