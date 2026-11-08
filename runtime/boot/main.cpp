@@ -501,6 +501,9 @@ int main(int argc, char** argv) {
         game::register_net_probe(mem.base(), fp_imports);
     }
     // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
+    game::net_set_toast([](const std::string& msg) {
+        if (g_launcher) g_launcher->post_toast(msg);
+    });
     plugins::set_toast([](const std::string& msg) {
         if (g_launcher) g_launcher->post_toast(msg);
     });

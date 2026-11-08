@@ -1040,3 +1040,6 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 ## 2026-11-08 - Monster sync and damage work between copies (fork)
 - Quest 1407: large monster has one controller at a time, the other copy follows its route exactly, and HP matches while either copy attacks (attacker as controller, 1433 -> 1379; attacker not controller, 1433 -> 1382).
   Hunters reach it by reading state +0xEB and calling 0x02118F8C. Table of what is and is not tried: top of docs/online.md.
+
+## 2026-11-08 - Neko is the door to online (fork)
+- uIDLobbyOnline is Neko's Destination list, and it has the game's Network Mode row. Its real flow signs in on our backend up to "Start Network Mode?". Multi rows now Host / Join, Network Mode Leave, closing with the game's own cancel. Details in docs/online.md "Neko's menu".

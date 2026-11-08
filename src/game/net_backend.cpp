@@ -40,6 +40,8 @@
 #endif
 
 #include "functions.h"
+#include "menu_mouse.h"
+#include "text_trace.h"
 
 namespace mh3u::game {
 namespace {
@@ -934,9 +936,16 @@ bool g_want_host = false;
 int g_step_frames = 0, g_search_tries = 0;
 ppc::GuestFunction g_swap = nullptr;
 
-void set_status(const std::string& text) {
+void (*g_toast)(const std::string&) = nullptr;
+constexpr uint32_t kFacilityText = 0x67;
+
+// tell: also on screen, for what the player has to know
+void set_status(const std::string& text, bool tell = false) {
     std::lock_guard g(g_status_lock);
-    if (g_status != text) std::printf("net: %s\n", text.c_str());
+    if (g_status != text) {
+        std::printf("net: %s\n", text.c_str());
+        if (tell && g_toast) g_toast(text);
+    }
     g_status = text;
 }
 
@@ -946,7 +955,7 @@ void go(Step step) {
 }
 
 void fail(const std::string& text) {
-    set_status(text);
+    set_status(text, true);
     go(Step::Idle);
 }
 
@@ -1006,7 +1015,7 @@ void take_request(uint8_t* base) {
     const uint32_t game = ppc::ld32(base, kGame);
     if (g_step != Step::Idle) return;
     if (game && ppc::ld8(base, game + 0x196) >= 2) {
-        set_status("Finish the quest first");
+        set_status("Finish the quest first", true);
         return;
     }
     if (const bool lan = g_want_lan.load(); g_socket != kNoSocket && lan != g_lan) {
@@ -1216,11 +1225,12 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
     const bool timed_out = g_step_frames > kStepTimeoutFrames;
     switch (step) {
         case Step::ToHarbor:
+            if (ppc::ld8(base, ppc::ld32(base, kLobby) + 0x5450) != 0) break;  // Neko's menu still closing
             if (on_stage(base, kHarborStage, 0) || on_stage(base, kHarborStage, 1)) {
                 go(Step::SignIn);
                 break;
             }
-            set_status("Going to Port Tanzia");
+            set_status("Going to Port Tanzia", true);
             set_sub_area(base, 0);
             change_area(ctx, base, kHarborSquare);
             go(Step::WaitHarbor);
@@ -1257,12 +1267,12 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
             else if (timed_out) fail("Could not open a session");
             break;
         case Step::Create:
-            set_status("Creating a session");
+            set_status("Creating a session", true);
             request_bits(base, net, kRequestCreate);
             go(Step::WaitInSession);
             break;
         case Step::Search:
-            set_status("Looking for a session");
+            set_status("Looking for a session", true);
             request_bits(base, net, kRequestSearch);
             go(Step::WaitSearch);
             break;
@@ -1282,7 +1292,7 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
             break;
         }
         case Step::Join:
-            set_status("Joining");
+            set_status("Joining", true);
             ppc::st32(base, net + 0x8C4, 0);
             request_bits(base, net, kRequestJoin);
             go(Step::WaitInSession);
@@ -1300,7 +1310,7 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
             break;
         case Step::WaitHall:
             if (on_stage(base, kHarborStage, 1) && hunter_ready(base)) {
-                set_status(g_want_host ? "Hosting" : "In a session");
+                set_status(g_want_host ? "Hosting a hunt: others can join from Neko" : "Joined the hunt", true);
                 go(Step::InHall);
             } else if (timed_out) {
                 fail("Could not enter the hall");
@@ -1316,7 +1326,7 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
             }
             break;
         case Step::Leave:
-            set_status("Leaving");
+            set_status("Leaving", true);
             request_bits(base, net, kRequestLeave);
             go(Step::WaitLeave);
             break;
@@ -1341,7 +1351,31 @@ PPC_FUNC(swap_with_session) {
 
 }  // namespace
 
+// Neko's destination list (uIDLobbyOnline, docs/online.md): its Multi rows are for local play with the 3DS game, which cannot work here, so they and
+// Network Mode are the online ones. Rows: 0 Moga Village, 1, 2 Solo, 3, 4 Multi, 5 Network Mode.
+constexpr uint32_t kRowHost = 3, kRowJoin = 4, kRowLeave = 5;
+
+FerryChoice ferry_choice(uint32_t row) {
+    const bool idle = g_step == Step::Idle;
+    if (idle) {
+        if (row == kRowHost || row == kRowJoin) {
+            g_requested = static_cast<int>(row == kRowHost ? NetRequest::Host : NetRequest::Join);
+            return FerryChoice::Close;
+        }
+        return row == kRowLeave ? FerryChoice::Refuse : FerryChoice::Game;
+    }
+    if (row == kRowLeave) {
+        g_requested = static_cast<int>(NetRequest::Leave);
+        return FerryChoice::Close;
+    }
+    return FerryChoice::Refuse;
+}
+
+bool ferry_row_usable(uint32_t row) { return (g_step == Step::Idle) == (row != kRowLeave); }
+
 void net_request(NetRequest request) { g_requested = static_cast<int>(request); }
+
+void net_set_toast(void (*toast)(const std::string&)) { g_toast = toast; }
 
 void net_configure(bool lan, const std::string& host_address) {
     g_want_lan = lan;
@@ -1366,6 +1400,12 @@ void register_net_backend_tick() {
 
 void register_net_backend(uint8_t* base, const std::vector<std::string>& fp_imports) {
     register_fp(fp_imports);
+    set_ferry_choice(&ferry_choice, &ferry_row_usable);
+    set_text(kFacilityText, 0x239, "Online");
+    // the callers tell apart the rows that share a text (0x026AD480)
+    set_text(kFacilityText, 0x23C, "Host a Hunt", 0x026AD568);
+    set_text(kFacilityText, 0x23D, "Join a Hunt", 0x026AD594);
+    set_text(kFacilityText, 0x24C, "Leave Online", 0x026AD5C0);
     replace_slot(base, kSnowContext, 12, &context_unique_id);
     replace_slot(base, kSnowContext, 34, &context_sign_in);
     replace_slot(base, kSnowContext, 35, &context_sign_out);

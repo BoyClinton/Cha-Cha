@@ -24,4 +24,9 @@ bool menu_click();
 // A, as a click on an item gives (the menu moves its cursor to the item first).
 void menu_confirm();
 
+// Neko's destination list: asked for each decide press with the cursor's row. Game: the game handles it; Close: the menu closes; Refuse: the buzzer.
+// usable: whether rows 3, 4 and 5 look usable.
+enum class FerryChoice { Game, Close, Refuse };
+void set_ferry_choice(FerryChoice (*choice)(uint32_t row), bool (*usable)(uint32_t row));
+
 }  // namespace mh3u::game

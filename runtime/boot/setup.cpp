@@ -1672,17 +1672,11 @@ void Launcher::Impl::draw_page_gameplay(PanelLayout& p) {
                "Takes effect for monsters that appear after the change.");
     group_end(p);
     group_begin(p, "Online (experimental)");
-    info_row(p, "Status", game::net_status(), "Play together with other copies of Cha-Cha. The host picks the quest and the others follow.");
+    info_row(p, "Status", game::net_status(), "Talk to Neko: Host a Hunt or Join a Hunt, in his Destination list. The host picks the quest and the others follow.");
     switch_row(p, "Play over the network", draft.online_lan,
                "Off: only copies on this PC can meet, and nothing leaves it. On: copies on your network can too. Other players' data then "
                "reaches the game, so use it only on networks and with people you trust. Saves with Apply; used at the next Host or Join.");
-    if (button_row(p, "Host session", "Starts a session and takes you to the online hall. Use it in town, not during a quest.",
-                   game::net_can_request(game::NetRequest::Host)))
-        game::net_request(game::NetRequest::Host);
-    if (button_row(p, "Join session", "Looks for a session and joins the first one found. Use it in town, not during a quest.",
-                   game::net_can_request(game::NetRequest::Join)))
-        game::net_request(game::NetRequest::Join);
-    if (button_row(p, "Leave session", "Leaves the session and goes back to Port Tanzia.", game::net_can_request(game::NetRequest::Leave)))
+    if (button_row(p, "Leave session", "Leaves the session and goes back to Port Tanzia. Neko's Leave Online does the same.", game::net_can_request(game::NetRequest::Leave)))
         game::net_request(game::NetRequest::Leave);
     group_end(p);
     group_begin(p, "Startup");

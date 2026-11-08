@@ -1,7 +1,7 @@
 # Online play
 
 **Status (2026-11-08, branch `online-backend`): works between copies in automated headless tests, not yet played by a person, and not released.**
-Settings -> Gameplay -> Online has Host, Join and Leave. Copies meet over UDP on 127.0.0.1, or on the network with "Play over the network" on (off by default).
+Talk to Neko: his Destination list has an Online section with Host a Hunt, Join a Hunt and Leave Online. Settings -> Gameplay -> Online has the status, Leave, and "Play over the network" (off by default: copies meet over UDP on 127.0.0.1).
 `scripts/online-two-copies.sh` starts two windows. Sections below are in the order they were found; older ones can be out of date, "Two copies" and later hold.
 
 | | State |
@@ -17,7 +17,8 @@ Settings -> Gameplay -> Online has Host, Join and Leave. Copies meet over UDP on
 | Carving, rewards screens, finishing a hunt by killing the monster, chat | **Not tried** |
 | Two PCs | **Not tried.** Network mode has only run with both copies on one PC |
 | Three or four players, host leaving during a quest | **Not tried** |
-| The game's own door to its online menus | **Not found**: Cha-Cha's buttons replace it |
+| Neko's menu opens and its rows Host, Join, Leave work | Seen working, with the menu opened and the cursor placed by the probe; talking to him and the d-pad not tried by script |
+| The game's own Network Mode flow past "Start Network Mode?" | **Replaced, not implemented**: Yes leads to the lobby browser, which needs Snow's lobby operations (Internet states 22-30) |
 
 Small monsters are local to each copy by the game's own data (state +0x9C bit 8 unset): their positions differ, as designed.
 Testing trap: copies read any attached controller, in or out of focus. Headless tests need `SDL_GAMECONTROLLER_IGNORE_DEVICES`.
@@ -297,3 +298,11 @@ does the exchange itself, then hands over to Snow's own phases 4 and up (0x02E7B
   states use the +0x44 setters. What opens id 0x40, which NPC or door, is **not found**.
 - `nn_fp` GetMyPresence is called directly by the UI at 0x0272A280. `nn_fp` has no HLE, so that call aborts the game: it needs
   implementing before the real menu can work.
+
+## Neko's menu (2026-11-08)
+
+Neko's Destination list is `uIDLobbyOnline` (screen 0x40, layout `GUI\\world\\sho_net1`, created at startup: `sID::IDLobby::vf7` 0x021BA284): this is the game's door to online. Talking to him: `uLobbyNpc` 0x02798F68 ->
+`sLobby::startFerry` 0x021CBA58 (mode 0x28) -> driver 0x021CBD24. The screen's states are in 0x026B1DAC (+0x3F4); state 9 is the list (0x026AD984, overridden by `ferry_list` in menu_mouse.cpp). Rows: 0 Moga, 1, 2 Solo, 3, 4 Multi, 5 Network Mode.
+Multi is local play with the 3DS game, which cannot work here, so rows 3, 4, 5 are Host, Join, Leave: `ferry_choice` in net_backend.cpp answers a decide press, and closing turns the press into the game's cancel for one call. Rows are painted by what is usable now
+(`FUN_026ACBB8`). Text: group 0x67, 0x239 "Multi", 0x23C / 0x23D rows (shared with Solo, told apart by caller), 0x24C Network Mode.
+Row 5 in the game's own flow: state 0x10 -> "Start Network Mode?" -> 0x1C, 0x1D, child `uIDLobbyRelayLobby` (0x02731134), which signs in on our backend (Internet state 17). Past Yes it wants the lobby browser, not implemented; the rows above replace it.

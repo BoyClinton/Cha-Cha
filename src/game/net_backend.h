@@ -16,6 +16,7 @@ void net_configure(bool lan, const std::string& host_address);
 
 enum class NetRequest { Host, Join, Leave };
 void net_request(NetRequest request);  // from any thread; takes effect on the next frame
+void net_set_toast(void (*toast)(const std::string&));  // a short message over the game
 std::string net_status();              // one line for the settings page
 bool net_can_request(NetRequest request);
 }  // namespace mh3u::game

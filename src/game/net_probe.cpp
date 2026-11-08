@@ -164,6 +164,13 @@ void lobby_network_tick(uint8_t* base) {
 constexpr uint32_t kPlayers = 0x10314B80;
 constexpr uint32_t kQuestAreaVtable = 0x100027B8;
 
+// uIDLobbyOnline::vf63 (entry 64), Neko's ferry menu: remembers the screen, to log its state
+uint32_t g_online_screen = 0;
+PPC_FUNC(online_screen_step) {
+    g_online_screen = static_cast<uint32_t>(ctx.r[3]);
+    sub_026B25C8(ctx, base);
+}
+
 // aQuestArea::vf5 (entry 6): remembers the area, to log how far its loading has got
 uint32_t g_quest_area = 0;
 PPC_FUNC(quest_area_step) {
@@ -284,6 +291,39 @@ PPC_FUNC(swap_with_jump) {
         const uint64_t r1 = ctx.r[1];
         ctx = saved;
         ctx.r[1] = r1;
+    }
+    // MH3U_NET_PROBE_FERRY=frame: opens Neko's menu as talking to him does (0x02798F68): sLobby::startFerry 0x021CBA58(sLobby, the NPC, 0). My own unit stands
+    // in for the NPC, which it only keeps. Logs the screen's state: uIDLobbyOnline (sID +0xE8) +0x3F4 state, +0x408 cursor.
+    static const std::string ferry = env("MH3U_NET_PROBE_FERRY");
+    if (!ferry.empty()) {
+        const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers), sid = ppc::ld32(base, 0x10314578);
+        if (std::strtoul(ferry.c_str(), nullptr, 10) == g_swaps) {
+            const ppc::Context saved = ctx;
+            ctx.r[3] = ppc::ld32(base, 0x103147A0);
+            ctx.r[4] = ppc::ld32(base, players + 0x40 + ppc::ld8(base, game + 0x4B) * 4);
+            ctx.r[5] = 0;
+            sub_021CBA58(ctx, base);
+            std::printf("net: swap %u opened the ferry menu\n", g_swaps);
+            const uint64_t r1 = ctx.r[1];
+            ctx = saved;
+            ctx.r[1] = r1;
+        }
+        // MH3U_NET_PROBE_ROW="frame:row": puts the list's cursor on a row (+0x404, +0x408), as a person would with the d-pad
+        static const std::string row_env = env("MH3U_NET_PROBE_ROW");
+        uint32_t row_at = 0, row = 0;
+        if (g_online_screen && !row_env.empty() && std::sscanf(row_env.c_str(), "%u:%u", &row_at, &row) == 2 && row_at == g_swaps) {
+            ppc::st32(base, g_online_screen + 0x404, row);
+            ppc::st32(base, g_online_screen + 0x408, row);
+            std::printf("net: swap %u cursor on row %u\n", g_swaps, row);
+        }
+        static uint32_t last_screen = 0xFFFFFFFF;
+        const uint32_t lobby = ppc::ld32(base, 0x103147A0);
+        const uint32_t now = (g_online_screen ? ppc::ld32(base, g_online_screen + 0x3F4) << 16 | ppc::ld8(base, g_online_screen + 0x408) << 8 : 0) | ppc::ld8(base, lobby + 0x5450);
+        if (now != last_screen) {
+            std::printf("net: swap %u ferry: screen state %X cursor %u; lobby mode %02X phase %u, +144=%u; place %u\n", g_swaps, now >> 16, (now >> 8) & 0xFF, now & 0xFF,
+                        ppc::ld8(base, lobby + 0x9624), ppc::ld32(base, lobby + 0x144), g_online_screen ? ppc::ld32(base, g_online_screen + 0x400) : 0);
+            last_screen = now;
+        }
     }
     // MH3U_NET_PROBE_CHASE=frame: from then on my hunter follows large monster slot 0: to its zone (state +0xEB) with the game's zone change, and
     // beside it once there, to test damage without walking
@@ -528,6 +568,9 @@ void register_net_probe(uint8_t* base, const std::vector<std::string>& fp_import
         constexpr uint32_t kQuestAreaFake = 0x7FEFF000;
         ppc::register_indirect(kQuestAreaFake, &quest_area_step);
         ppc::st32(base, kQuestAreaVtable + 6 * 8 + 4, kQuestAreaFake);
+        constexpr uint32_t kOnlineScreenFake = 0x7FEFF004;
+        ppc::register_indirect(kOnlineScreenFake, &online_screen_step);
+        ppc::st32(base, 0x1005FDC8 + 64 * 8 + 4, kOnlineScreenFake);
     }
     g_previous_hook = ppc::import_trace_hook;
     ppc::import_trace_hook = &import_hook;
