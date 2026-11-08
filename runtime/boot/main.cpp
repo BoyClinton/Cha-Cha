@@ -497,6 +497,7 @@ int main(int argc, char** argv) {
         for (const auto& im : img->imports)
             if (!im.data && im.rpl.rfind("nn_fp", 0) == 0) fp_imports.push_back(im.name);
         game::register_net_backend(mem.base(), fp_imports);
+        game::net_configure(settings.online_lan, settings.online_host);
         game::register_net_probe(mem.base(), fp_imports);
     }
     // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them

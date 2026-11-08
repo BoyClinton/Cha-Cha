@@ -284,6 +284,22 @@ PPC_FUNC(swap_with_jump) {
         ctx = saved;
         ctx.r[1] = r1;
     }
+    // MH3U_NET_PROBE_CHASE=frame: from then on my hunter stands beside large monster slot 0, to test damage without walking
+    static const std::string chase = env("MH3U_NET_PROBE_CHASE");
+    if (!chase.empty() && g_swaps >= std::strtoul(chase.c_str(), nullptr, 10)) {
+        const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers), enemies = ppc::ld32(base, 0x10313260);
+        const uint32_t me = players ? ppc::ld32(base, players + 0x40 + ppc::ld8(base, game + 0x4B) * 4) : 0;
+        const uint32_t monster = enemies ? ppc::ld32(base, enemies + 0x34) : 0;
+        if (me && monster && ppc::ld32(base, me + 0xE30)) {
+            const uint32_t pad = ppc::ld32(base, me + 0xE30);
+            const float mx = ppc::ldf32(base, monster + 0x40), my = ppc::ldf32(base, monster + 0x44), mz = ppc::ldf32(base, monster + 0x48);
+            if (my < 500.0f) {  // on the ground
+                ppc::stf32(base, pad + 0xE0, mx + 150.0f);
+                ppc::stf32(base, pad + 0xE4, my);
+                ppc::stf32(base, pad + 0xE8, mz + 150.0f);
+            }
+        }
+    }
     // MH3U_NET_PROBE_QJOIN="frame:number:entry": the real join: 0x021E355C(sLobby, my pad block, number, 2), party entry index at sLobby +0x6B38 +0x374
     static const std::string qjoin = env("MH3U_NET_PROBE_QJOIN");
     uint32_t qjoin_at = 0, qjoin_number = 0, qjoin_entry = 0;

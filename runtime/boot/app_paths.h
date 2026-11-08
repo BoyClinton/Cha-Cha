@@ -52,6 +52,8 @@ struct Settings {
     int fps_limit = 0;              // 0 = display refresh rate, -1 = unlimited, else frames per second
     bool vsync = false;             // FIFO presentation (no tearing, waits for the display)
     bool monster_hp_scaling = true; // Port Tanzia monsters' HP follows the hunters on the quest (src/game/monster_hp.cpp)
+    bool online_lan = false;         // Online: use the network, not only this PC
+    std::string online_host;         // Online: a host's IPv4 address that Join also asks, for hosts a broadcast cannot reach
     bool operator==(const Settings&) const = default;
 };
 Settings load_settings(const AppPaths& p);

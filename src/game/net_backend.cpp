@@ -5,7 +5,8 @@
 // code is regenerated. Addresses: build v32.
 //
 // Copies find each other over UDP: each binds the first free port of a small range, a search asks every port of the
-// range, and the host answers. Bound to 127.0.0.1 for now, so nothing leaves this machine.
+// range, and the host answers. Bound to 127.0.0.1 unless the player turns LAN on (net_configure): then it binds every interface, and a search
+// also broadcasts and can ask one address directly. Incoming game packets go to the game's own parsers: LAN is for networks you trust.
 //
 // A session is asked for with net_request (Settings -> Gameplay -> Online): session_tick runs what the game's own menus would, one
 // step a frame, then enters the online stage. The game's own door to the online menus is not found yet (docs/online.md).
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <ctime>
 #include <deque>
@@ -64,9 +66,15 @@ struct Header {
     uint16_t node;  // the sender
 };
 
+struct Peer {
+    uint32_t ip;  // network order
+    uint16_t port;
+};
+
 struct MemberWire {
     uint32_t index;
     uint16_t node, port;
+    uint32_t ip;  // network order, as the host sees the member
     uint8_t is_host, pad[3];
 };
 constexpr int kMaxMembers = 4;
@@ -88,18 +96,25 @@ using Socket = int;
 constexpr Socket kNoSocket = -1;
 #endif
 
+std::atomic<int> g_requested{-1};
+std::atomic<bool> g_want_lan{false};
+std::atomic<uint32_t> g_want_direct_ip{0};
 std::mutex g_wire;  // everything below up to "Guest helpers"
 Socket g_socket = kNoSocket;
 uint16_t g_node = 0, g_port = 0;
-std::map<uint16_t, uint16_t> g_peer_ports;  // node -> port
+std::map<uint16_t, Peer> g_peers;  // node -> where it is
+bool g_lan = false;           // bound to every interface, searches by broadcast too
+uint32_t g_direct_ip = 0;     // a host to ask directly (network order), 0 = none
 std::map<uint16_t, std::deque<std::vector<uint8_t>>> g_rx;
 struct Found {
-    uint16_t node, port;
+    uint16_t node;
+    Peer peer;
     SearchRep info;
 };
 std::vector<Found> g_found;
 struct Joiner {
-    uint16_t node, port;
+    uint16_t node;
+    Peer peer;
 };
 std::deque<Joiner> g_join_queue;
 std::deque<MemberWire> g_member_adds;
@@ -127,10 +142,14 @@ bool open_socket() {
 #else
     fcntl(g_socket, F_SETFL, fcntl(g_socket, F_GETFL, 0) | O_NONBLOCK);
 #endif
+    if (g_lan) {
+        const int on = 1;
+        setsockopt(g_socket, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&on), sizeof on);
+    }
     for (int i = 0; i < kPortCount; ++i) {
         sockaddr_in a{};
         a.sin_family = AF_INET;
-        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_addr.s_addr = htonl(g_lan ? INADDR_ANY : INADDR_LOOPBACK);
         a.sin_port = htons(static_cast<uint16_t>(kFirstPort + i));
         if (bind(g_socket, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0) {
             g_port = static_cast<uint16_t>(kFirstPort + i);
@@ -140,7 +159,16 @@ bool open_socket() {
     return false;
 }
 
-void send_to_port(uint16_t port, MessageType type, const void* payload, size_t size) {
+void close_socket() {
+#ifdef _WIN32
+    closesocket(g_socket);
+#else
+    close(g_socket);
+#endif
+    g_socket = kNoSocket;
+}
+
+void send_to(const Peer& to, MessageType type, const void* payload, size_t size) {
     uint8_t buffer[sizeof(Header) + sizeof(SearchRep) + kMaxPacket];
     if (g_socket == kNoSocket || size > sizeof buffer - sizeof(Header)) return;
     const Header h{kMagic, type, 0, g_node};
@@ -148,8 +176,8 @@ void send_to_port(uint16_t port, MessageType type, const void* payload, size_t s
     if (size) std::memcpy(buffer + sizeof h, payload, size);
     sockaddr_in a{};
     a.sin_family = AF_INET;
-    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    a.sin_port = htons(port);
+    a.sin_addr.s_addr = to.ip;
+    a.sin_port = htons(to.port);
     sendto(g_socket, reinterpret_cast<const char*>(buffer), static_cast<int>(sizeof h + size), 0,
            reinterpret_cast<sockaddr*>(&a), sizeof a);
 }
@@ -167,10 +195,10 @@ void wire_poll() {
         Header h;
         std::memcpy(&h, buffer, sizeof h);
         if (h.magic != kMagic || h.node == g_node) continue;
-        const uint16_t port = ntohs(from.sin_port);
+        const Peer sender{from.sin_addr.s_addr, ntohs(from.sin_port)};
         const uint8_t* payload = buffer + sizeof h;
         const size_t size = static_cast<size_t>(got) - sizeof h;
-        g_peer_ports[h.node] = port;
+        g_peers[h.node] = sender;
         switch (h.type) {
             case kSearchReq:
                 if (g_hosting && g_members.size() < g_capacity) {
@@ -179,7 +207,7 @@ void wire_poll() {
                     rep.members = static_cast<uint32_t>(g_members.size());
                     std::memcpy(rep.create_option, g_create_option.data(), kCreateOptionSize);
                     std::memcpy(rep.search_option, g_search_option.data(), kSearchOptionSize);
-                    send_to_port(port, kSearchRep, &rep, sizeof rep);
+                    send_to(sender, kSearchRep, &rep, sizeof rep);
                 }
                 break;
             case kSearchRep:
@@ -187,18 +215,21 @@ void wire_poll() {
                     bool known = false;
                     for (const Found& f : g_found) known = known || f.node == h.node;
                     if (!known) {
-                        Found f{h.node, port, {}};
+                        Found f{h.node, sender, {}};
                         std::memcpy(&f.info, payload, sizeof f.info);
                         g_found.push_back(f);
                     }
                 }
                 break;
             case kJoinReq:
-                if (g_hosting) g_join_queue.push_back({h.node, port});
+                if (g_hosting) g_join_queue.push_back({h.node, sender});
                 break;
             case kJoinRep:
                 if (size == sizeof(JoinRep)) {
                     std::memcpy(&g_join_reply, payload, sizeof g_join_reply);
+                    for (uint32_t i = 0; i < g_join_reply.count && i < kMaxMembers; ++i)
+                        if (g_join_reply.members[i].ip == htonl(INADDR_LOOPBACK) || g_join_reply.members[i].ip == 0)
+                            g_join_reply.members[i].ip = sender.ip;
                     g_have_join_reply = true;
                 }
                 break;
@@ -206,6 +237,7 @@ void wire_poll() {
                 if (size == sizeof(MemberWire)) {
                     MemberWire m;
                     std::memcpy(&m, payload, sizeof m);
+                    if (m.ip == htonl(INADDR_LOOPBACK)) m.ip = sender.ip;  // on the host's machine: that is the sender's address from here
                     g_member_adds.push_back(m);
                 }
                 break;
@@ -387,7 +419,7 @@ PPC_FUNC(session_create) {
         g_hosting = true;
         // the game's capacity argument can be 0 when nothing asked for a size; the backend's limit then applies
         g_capacity = capacity ? capacity : kMaxMembers;
-        g_members.push_back({0, g_node, g_port, 1, {}});
+        g_members.push_back({0, g_node, g_port, htonl(INADDR_LOOPBACK), 1, {}});
         if (create_option) std::memcpy(g_create_option.data(), base + create_option, kCreateOptionSize);
         if (search_option) std::memcpy(g_search_option.data(), base + search_option, kSearchOptionSize);
     }
@@ -453,7 +485,9 @@ PPC_FUNC(session_search) {
             g_found.clear();
             for (int i = 0; i < kPortCount; ++i) {
                 const uint16_t port = static_cast<uint16_t>(kFirstPort + i);
-                if (port != g_port) send_to_port(port, kSearchReq, nullptr, 0);
+                if (port != g_port) send_to({htonl(INADDR_LOOPBACK), port}, kSearchReq, nullptr, 0);
+                if (g_lan) send_to({htonl(INADDR_BROADCAST), port}, kSearchReq, nullptr, 0);
+                if (g_direct_ip) send_to({g_direct_ip, port}, kSearchReq, nullptr, 0);
             }
         }
         ctx.r[3] = request;
@@ -546,9 +580,9 @@ PPC_FUNC(session_join) {
         unlock_session(ctx, base, self);
         {
             std::lock_guard g(g_wire);
-            const auto port = g_peer_ports.find(host);
+            const auto peer = g_peers.find(host);
             reset_session_state();
-            if (port != g_peer_ports.end()) send_to_port(port->second, kJoinReq, nullptr, 0);
+            if (peer != g_peers.end()) send_to(peer->second, kJoinReq, nullptr, 0);
         }
         std::printf("net: join: asking host node %04X\n", host);
         ctx.r[3] = request;
@@ -568,10 +602,11 @@ PPC_FUNC(session_join) {
             answered = true;
             g_capacity = kMaxMembers;
             g_members.assign(reply.members, reply.members + reply.count);
-            for (const MemberWire& m : g_members) g_peer_ports[m.node] = m.port;
+            for (const MemberWire& m : g_members)
+                if (m.node != g_node) g_peers[m.node] = {m.ip, m.port};
         } else if (++waited % kJoinRetryFrames == 0) {
-            const auto port = g_peer_ports.find(host);
-            if (port != g_peer_ports.end()) send_to_port(port->second, kJoinReq, nullptr, 0);
+            const auto peer = g_peers.find(host);
+            if (peer != g_peers.end()) send_to(peer->second, kJoinReq, nullptr, 0);
         }
     }
     if (!answered) {
@@ -603,17 +638,67 @@ PPC_FUNC(session_join) {
     ctx.r[3] = 0;
 }
 
+// A member has gone: as Snow's event handler does it (0x02E788F4).
+void remove_member(ppc::Context& ctx, uint8_t* base, uint32_t self, uint16_t node) {
+    constexpr uint32_t kMemberArray = 0x790, kMemberBytes = 0x1B8;
+    uint32_t gone = 0;
+    for (uint32_t i = 0; i < kMaxMembers; ++i) {
+        const uint32_t member = self + kMemberArray + i * kMemberBytes;
+        if (ppc::ld8(base, member + 0xD4) && ppc::ld16(base, member + 0xC2) == node) gone = member;
+    }
+    if (!gone) return;
+    const int32_t was = static_cast<int32_t>(ppc::ld32(base, gone + 0x1AC));
+    if (was >= 0) {
+        ctx.r[3] = self;
+        ctx.r[4] = static_cast<uint32_t>(was);
+        sub_02E62BF8(ctx, base);
+    }
+    ppc::st32(base, gone + 0x1A8, 0);
+    ppc::st32(base, gone + 0x1AC, 0xFFFFFFFE);
+    for (uint32_t i = 0; i < kMaxMembers; ++i) {
+        const uint32_t other = self + kMemberArray + i * kMemberBytes;
+        const int32_t connected = static_cast<int32_t>(ppc::ld32(base, other + 0x1AC));
+        if (other == ppc::ld32(base, self + kSelfMember) || connected < 0) continue;
+        ctx.r[3] = self;
+        ctx.r[4] = static_cast<uint32_t>(connected);
+        ctx.r[5] = gone;
+        sub_02E78164(ctx, base);
+    }
+    ctx.r[3] = self;
+    ctx.r[4] = gone;
+    sub_02E78368(ctx, base);
+}
+
 // Session slot 11, every frame: Snow's own, then what arrived over the wire.
 PPC_FUNC(session_update) {
     const uint32_t self = static_cast<uint32_t>(ctx.r[3]);
     sub_02E78B30(ctx, base);
     std::deque<Joiner> joiners;
     std::deque<MemberWire> adds;
+    std::deque<uint16_t> leaves;
+    bool host_left = false;
     {
         std::lock_guard g(g_wire);
         wire_poll();
         joiners.swap(g_join_queue);
         adds.swap(g_member_adds);
+        leaves.swap(g_member_leaves);
+        for (const uint16_t node : leaves) {
+            for (size_t i = 0; i < g_members.size(); ++i)
+                if (g_members[i].node == node) {
+                    host_left = host_left || g_members[i].is_host;
+                    g_members.erase(g_members.begin() + static_cast<std::ptrdiff_t>(i));
+                    break;
+                }
+        }
+    }
+    for (const uint16_t node : leaves) {
+        std::printf("net: node %04X left\n", node);
+        remove_member(ctx, base, self, node);
+    }
+    if (host_left) {  // no host migration: the session is over for this copy too
+        std::printf("net: the host left\n");
+        g_requested = static_cast<int>(NetRequest::Leave);
     }
     for (const Joiner& j : joiners) {
         JoinRep reply{};
@@ -634,16 +719,16 @@ PPC_FUNC(session_update) {
             } else if (g_members.size() >= g_capacity || index >= kMaxMembers) {
                 continue;
             } else {
-                added = {index, j.node, j.port, 0, {}};
+                added = {index, j.node, j.peer.port, j.peer.ip, 0, {}};
                 g_members.push_back(added);
             }
             reply.your_index = index;
             reply.count = static_cast<uint32_t>(g_members.size());
             for (uint32_t i = 0; i < reply.count; ++i) reply.members[i] = g_members[i];
-            send_to_port(j.port, kJoinRep, &reply, sizeof reply);
+            send_to(j.peer, kJoinRep, &reply, sizeof reply);
             if (!again)
                 for (const MemberWire& m : g_members)
-                    if (m.node != g_node && m.node != j.node) send_to_port(m.port, kMemberAdd, &added, sizeof added);
+                    if (m.node != g_node && m.node != j.node) send_to({m.ip, m.port}, kMemberAdd, &added, sizeof added);
             if (again) continue;
         }
         const uint32_t result = add_member(ctx, base, self, added.index, added.node, false, false, false);
@@ -652,7 +737,7 @@ PPC_FUNC(session_update) {
     for (const MemberWire& m : adds) {
         {
             std::lock_guard g(g_wire);
-            g_peer_ports[m.node] = m.port;
+            g_peers[m.node] = {m.ip, m.port};
             g_members.push_back(m);
         }
         add_member(ctx, base, self, m.index, m.node, false, false, false);
@@ -668,7 +753,7 @@ PPC_FUNC(session_leave) {
     if (ctx.r[3] == 0) {
         std::lock_guard g(g_wire);
         for (const MemberWire& m : g_members)
-            if (m.node != g_node) send_to_port(m.port, kMemberLeave, nullptr, 0);
+            if (m.node != g_node) send_to({m.ip, m.port}, kMemberLeave, nullptr, 0);
         reset_session_state();
     }
     ctx.r[3] = self;
@@ -778,9 +863,9 @@ PPC_FUNC(p2p_send) {
         std::lock_guard g(g_wire);
         for (uint32_t i = 0; i < kMaxPeers; ++i) {
             if (g_peer_nodes[i] == 0 || (peer != 0xFFFFFFFF && peer != i)) continue;
-            const auto port = g_peer_ports.find(g_peer_nodes[i]);
-            if (port != g_peer_ports.end()) {
-                send_to_port(port->second, kData, base + data, size);
+            const auto peer = g_peers.find(g_peer_nodes[i]);
+            if (peer != g_peers.end()) {
+                send_to(peer->second, kData, base + data, size);
                 ++g_sent_packets;
                 g_sent_bytes += size;
                 ++g_sent_sizes[(size << 16) | ppc::ld16(base, data)];
@@ -842,7 +927,6 @@ constexpr int kSettleFrames = 120, kStepTimeoutFrames = 3600, kSearchTries = 10,
 
 enum class Step { Idle, ToHarbor, WaitHarbor, SignIn, WaitSignIn, OpenSession, WaitSession, Create, Search, WaitSearch, Join, WaitInSession, ToHall, WaitHall, InHall, Leave, WaitLeave, BackToHarbor };
 
-std::atomic<int> g_requested{-1};
 std::atomic<Step> g_step{Step::Idle};
 std::mutex g_status_lock;
 std::string g_status = "Not connected";
@@ -925,15 +1009,21 @@ void take_request(uint8_t* base) {
         set_status("Finish the quest first");
         return;
     }
+    if (const bool lan = g_want_lan.load(); g_socket != kNoSocket && lan != g_lan) {
+        std::lock_guard g(g_wire);
+        close_socket();
+    }
     if (g_socket == kNoSocket) {
         std::lock_guard g(g_wire);
+        g_lan = g_want_lan;
+        g_direct_ip = g_want_direct_ip;
         if (!open_socket()) {
             fail("No free network port");
             return;
         }
         g_node = static_cast<uint16_t>((static_cast<uint32_t>(std::time(nullptr)) * 31u) ^ (g_port * 257u));
         if (g_node == 0) g_node = 1;
-        std::printf("net: node %04X, UDP port %u (127.0.0.1 only)\n", g_node, g_port);
+        std::printf("net: node %04X, UDP port %u (%s)\n", g_node, g_port, g_lan ? "LAN" : "127.0.0.1 only");
     }
     g_want_host = request == static_cast<int>(NetRequest::Host);
     g_search_tries = 0;
@@ -953,7 +1043,7 @@ void broadcast_quest(MessageType type, uint32_t number) {
     std::lock_guard g(g_wire);
     for (const MemberWire& m : g_members)
         if (m.node != g_node)
-            for (int i = 0; i < kQuestSends; ++i) send_to_port(m.port, type, &number, sizeof number);
+            for (int i = 0; i < kQuestSends; ++i) send_to({m.ip, m.port}, type, &number, sizeof number);
 }
 
 uint32_t my_member(ppc::Context& ctx, uint8_t* base) {
@@ -1236,6 +1326,12 @@ PPC_FUNC(swap_with_session) {
 }  // namespace
 
 void net_request(NetRequest request) { g_requested = static_cast<int>(request); }
+
+void net_configure(bool lan, const std::string& host_address) {
+    g_want_lan = lan;
+    in_addr parsed{};
+    g_want_direct_ip = !host_address.empty() && inet_pton(AF_INET, host_address.c_str(), &parsed) == 1 ? parsed.s_addr : 0;
+}
 
 std::string net_status() {
     std::lock_guard g(g_status_lock);

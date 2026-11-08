@@ -11,6 +11,9 @@ void register_net_backend(uint8_t* base, const std::vector<std::string>& fp_impo
 // Call after the GX2 imports are registered: runs the Host / Join sequence once a frame.
 void register_net_backend_tick();
 
+// Takes effect at the next Host or Join. lan: use the network, not only this PC. host_address: an IPv4 address a Join also asks ("" = none).
+void net_configure(bool lan, const std::string& host_address);
+
 enum class NetRequest { Host, Join, Leave };
 void net_request(NetRequest request);  // from any thread; takes effect on the next frame
 std::string net_status();              // one line for the settings page

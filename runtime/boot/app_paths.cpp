@@ -127,6 +127,8 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "fps_limit") s.fps_limit = v == "unlimited" ? -1 : std::max(0, std::atoi(v.c_str()));
         else if (k == "vsync") s.vsync = on;
         else if (k == "monster_hp_scaling") s.monster_hp_scaling = on;
+        else if (k == "online_lan") s.online_lan = on;
+        else if (k == "online_host") s.online_host = v;
     }
     return s;
 }
@@ -151,6 +153,8 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "vignette=" << (s.vignette ? 1 : 0) << '\n'
       << "texture_packs=" << (s.texture_packs ? 1 : 0) << '\n'
       << "monster_hp_scaling=" << (s.monster_hp_scaling ? 1 : 0) << '\n'
+      << "online_lan=" << (s.online_lan ? 1 : 0) << '\n'
+      << "online_host=" << s.online_host << '\n'
       << "look=" << s.look << '\n'
       << "fps_limit=" << (s.fps_limit < 0 ? std::string("unlimited") : std::to_string(s.fps_limit)) << '\n'
       << "vsync=" << (s.vsync ? 1 : 0) << '\n';
