@@ -492,11 +492,11 @@ int main(int argc, char** argv) {
     });
     game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
-    game::register_net_backend(mem.base());  // MH3U_NET_BACKEND (docs/online.md)
-    {  // MH3U_NET_PROBE: logs the network backend's calls (docs/online.md)
+    {  // the network backend, and MH3U_NET_PROBE, which logs its calls (docs/online.md)
         std::vector<std::string> fp_imports;
         for (const auto& im : img->imports)
             if (!im.data && im.rpl.rfind("nn_fp", 0) == 0) fp_imports.push_back(im.name);
+        game::register_net_backend(mem.base(), fp_imports);
         game::register_net_probe(mem.base(), fp_imports);
     }
     // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
@@ -558,6 +558,7 @@ int main(int argc, char** argv) {
     }
     if (headless) game::set_camera_speed(input::control_options().camera_speed);
     gfx::register_gx2(r);
+    game::register_net_backend_tick();
     game::register_net_probe_jump();
     audio::register_ax(r, !headless);
 

@@ -18,6 +18,7 @@
 #include <string_view>
 
 #include "functions.h"
+#include "net_backend.h"
 
 namespace mh3u::game {
 namespace {
@@ -204,11 +205,17 @@ void players_tick(uint8_t* base) {
     }
     // monsters: sEnemy (*0x10313260) +0x34; unit +0xE33 kind, +0x40 position (as the damage numbers mod reads it); +0x1BE0 state: +0x8B8 HP, +0x8BC max
     if (const uint32_t enemies = ppc::ld32(base, 0x10313260))
+        std::printf("net:   sEnemy host flag +45A=%u +45B=%u\n", ppc::ld8(base, enemies + 0x45A), ppc::ld8(base, enemies + 0x45B));
+    if (const uint32_t enemies = ppc::ld32(base, 0x10313260))
         for (uint32_t i = 0; i < 8; ++i) {
             const uint32_t monster = ppc::ld32(base, enemies + 0x34 + i * 4);
             if (!monster) continue;
             const uint32_t state = ppc::ld32(base, monster + 0x1BE0);
-            std::printf("net:   monster %u kind %u pos %.1f %.1f %.1f hp %d/%d\n", i, ppc::ld8(base, monster + 0xE33), ppc::ldf32(base, monster + 0x40),
+            // state +0x9C bit 8: shared between members; +0xFF this copy controls it; +0x101 the controlling member (0x025A3A1C)
+            std::printf("net:   monster %u id %04X shared=%u mine=%u owner=%d kind %u pos %.1f %.1f %.1f hp %d/%d\n", i, state ? ppc::ld16(base, state + 0x1C) : 0xFFFF,
+                        state ? (ppc::ld32(base, state + 0x9C) >> 3) & 1 : 9, state ? ppc::ld8(base, state + 0xFF) : 9,
+                        state ? static_cast<int8_t>(ppc::ld8(base, state + 0x101)) : -9,
+                        ppc::ld8(base, monster + 0xE33), ppc::ldf32(base, monster + 0x40),
                         ppc::ldf32(base, monster + 0x44), ppc::ldf32(base, monster + 0x48),
                         state ? static_cast<int32_t>(ppc::ld32(base, state + 0x8B8)) : -1, state ? static_cast<int32_t>(ppc::ld32(base, state + 0x8BC)) : -1);
         }
@@ -231,6 +238,18 @@ PPC_FUNC(swap_with_jump) {
     lobby_network_tick(base);
     players_tick(base);
     ++g_swaps;
+    // MH3U_NET_PROBE_SESSION="frame:host|join|leave;...": presses the settings page's buttons
+    static const std::string session = env("MH3U_NET_PROBE_SESSION");
+    for (const char* q = session.c_str(); q && *q;) {
+        uint32_t at = 0;
+        char what[8] = {};
+        if (std::sscanf(q, "%u:%7[a-z]", &at, what) == 2 && at == g_swaps) {
+            const std::string_view w(what);
+            net_request(w == "host" ? NetRequest::Host : w == "join" ? NetRequest::Join : NetRequest::Leave);
+        }
+        q = std::strchr(q, ';');
+        if (q) ++q;
+    }
     // MH3U_NET_PROBE_POST="frame:number": post a quest as the quest counter does: 0x021E355C(sLobby, my pad block, number, 1), as
     // 0x021E44D4 calls it. Guests get it through the message dispatcher (0x022646F4 calls it with mode 2).
     static const std::string post = env("MH3U_NET_PROBE_POST");
@@ -278,6 +297,31 @@ PPC_FUNC(swap_with_jump) {
         const uint64_t r1 = ctx.r[1];
         ctx = saved;
         ctx.r[1] = r1;
+    }
+    // MH3U_NET_PROBE_ZONE="frame:zone;frame:zone": hop to a zone in a quest with the game's own 0x02118F8C(sGame, zone, position, facing)
+    static const std::string zones = env("MH3U_NET_PROBE_ZONE");
+    for (const char* q = zones.c_str(); q && *q;) {
+        uint32_t at = 0, zone = 0;
+        if (std::sscanf(q, "%u:%u", &at, &zone) == 2 && at == g_swaps) {
+            const ppc::Context saved = ctx;
+            const uint32_t game = ppc::ld32(base, 0x101FDB9C);
+            std::printf("net: swap %u zone hop to %u (from %u, phase %u)\n", g_swaps, zone, ppc::ld8(base, game + 0x186), ppc::ld8(base, game + 0x196));
+            const uint32_t frame = static_cast<uint32_t>(ctx.r[1]) - 0x40;
+            ppc::st32(base, frame, static_cast<uint32_t>(ctx.r[1]));
+            ctx.r[1] = frame;
+            for (uint32_t o = 0; o < 12; o += 4) ppc::st32(base, frame + 0x10 + o, 0);  // position 0, 0, 0
+            ctx.r[3] = game;
+            ctx.r[4] = zone;
+            ctx.r[5] = frame + 0x10;
+            ctx.r[6] = 0;
+            sub_02118F8C(ctx, base);
+            ctx.r[1] = saved.r[1];
+            const uint64_t r1 = ctx.r[1];
+            ctx = saved;
+            ctx.r[1] = r1;
+        }
+        q = std::strchr(q, ';');
+        if (q) ++q;
     }
     // MH3U_NET_PROBE_QUEST="frame:number": the launch step of the hall's state machine (0x0214E8A8) without its menus
     static const std::string quest = env("MH3U_NET_PROBE_QUEST");

@@ -4,6 +4,7 @@
 
 #include "camera_speed.h"
 #include "monster_hp.h"
+#include "net_backend.h"
 #include "plugins.h"
 
 #include "filters.h"
@@ -1668,6 +1669,17 @@ void Launcher::Impl::draw_page_gameplay(PanelLayout& p) {
                "Port Tanzia quests are made for four hunters. On: with fewer hunters monsters have less HP (1 hunter 65%, "
                "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
                "Takes effect for monsters that appear after the change.");
+    group_end(p);
+    group_begin(p, "Online (experimental)");
+    info_row(p, "Status", game::net_status(), "Two copies of Cha-Cha on this PC can play together for now. Nothing leaves this PC.");
+    if (button_row(p, "Host session", "Starts a session and takes you to the online hall. Use it in town, not during a quest.",
+                   game::net_can_request(game::NetRequest::Host)))
+        game::net_request(game::NetRequest::Host);
+    if (button_row(p, "Join session", "Looks for a session on this PC and joins the first one found. Use it in town, not during a quest.",
+                   game::net_can_request(game::NetRequest::Join)))
+        game::net_request(game::NetRequest::Join);
+    if (button_row(p, "Leave session", "Leaves the session and goes back to Port Tanzia.", game::net_can_request(game::NetRequest::Leave)))
+        game::net_request(game::NetRequest::Leave);
     group_end(p);
     group_begin(p, "Startup");
     switch_row(p, "Skip boot notices", draft.skip_boot_notices,

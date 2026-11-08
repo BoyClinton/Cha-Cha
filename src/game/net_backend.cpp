@@ -7,10 +7,14 @@
 // Copies find each other over UDP: each binds the first free port of a small range, a search asks every port of the
 // range, and the host answers. Bound to 127.0.0.1 for now, so nothing leaves this machine.
 //
+// A session is asked for with net_request (Settings -> Gameplay -> Online): session_tick runs what the game's own menus would, one
+// step a frame, then enters the online stage. The game's own door to the online menus is not found yet (docs/online.md).
+//
 // Status: wip.
 #include "net_backend.h"
 
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -788,23 +792,298 @@ PPC_FUNC(p2p_close) {
     sub_02E766E4(ctx, base);
 }
 
-}  // namespace
+// ---- nn_fp --------------------------------------------------------------------------------------------------------
+// No friends service: everything succeeds with empty answers, as a console signed in with an empty friend list.
+constexpr uint32_t kMyPresenceSize = 0x30;  // what 0x0272A280 reads of it
 
-void register_net_backend(uint8_t* base) {
-    char* v = nullptr;
-    size_t n = 0;
-    std::string mode;
-    if (_dupenv_s(&v, &n, "MH3U_NET_BACKEND") == 0 && v) mode = v;
-    std::free(v);
-    if (mode.empty()) return;
-    if (!open_socket()) {
-        std::printf("net: Cha-Cha backend: no free UDP port in %u-%u, staying off\n", kFirstPort, kFirstPort + kPortCount - 1);
+// Result XAsync(callback(Result, void*), void* user): finishes at once, successfully.
+PPC_FUNC(fp_async_ok) {
+    const uint32_t callback = static_cast<uint32_t>(ctx.r[3]), user = static_cast<uint32_t>(ctx.r[4]);
+    if (callback) {
+        ctx.r[3] = 0;
+        ctx.r[4] = user;
+        ppc::call_indirect(ctx, base, callback);
+    }
+    ctx.r[3] = 0;
+}
+
+void register_fp(const std::vector<std::string>& fp_imports) {
+    for (const std::string& n : fp_imports)
+        ppc::register_import(("nn_fp." + n).c_str(), [](ppc::Context& c, uint8_t*) { c.r[3] = 0; });
+    ppc::register_import("nn_fp.IsInitialized__Q2_2nn2fpFv", [](ppc::Context& c, uint8_t*) { c.r[3] = 1; });
+    ppc::register_import("nn_fp.HasLoggedIn__Q2_2nn2fpFv", [](ppc::Context& c, uint8_t*) { c.r[3] = 1; });
+    ppc::register_import("nn_fp.LoginAsync__Q2_2nn2fpFPFQ2_2nn6ResultPv_vPv", &fp_async_ok);
+    ppc::register_import("nn_fp.GetMyPresence__Q2_2nn2fpFPQ3_2nn2fp10MyPresence", [](ppc::Context& c, uint8_t* b) {
+        if (c.r[3]) std::memset(b + static_cast<uint32_t>(c.r[3]), 0, kMyPresenceSize);
+        c.r[3] = 0;
+    });
+}
+
+// ---- The Host / Join sequence ---------------------------------------------------------------------------------------
+// sLobbyNetwork's Internet machine (0x02266E88): state +0x8AC (17 signed in, 3 and 6 session hub, 10 in a session), requests +0x8B0
+// (2 sign in, 4 session stage, 8 create, 0x10 search, 0x20 join with result +0x8C4, 0x40 leave).
+constexpr uint32_t kLobbyNetwork = 0x103A2F90, kManager = 0x103A33E8, kLobby = 0x103147A0, kGame = 0x101FDB9C, kStage = 0x10315C80;
+constexpr uint32_t kPlayers = 0x10314B80, kAreaSystem = 0x103D2EF4;
+constexpr uint32_t kHarborSquare = 0x1030CAE8, kOnlineHall = 0x1030C918;  // area DTIs: aHarborSquare, aHarborRoomGuild
+constexpr uint8_t kHarborStage = 0x1B;
+constexpr uint32_t kStateHub = 17, kStateSessionHub = 3, kStateSearched = 6, kStateInSession = 10, kStateFailed = 13;
+constexpr uint32_t kRequestSignIn = 2, kRequestSession = 4, kRequestCreate = 8, kRequestSearch = 0x10, kRequestJoin = 0x20, kRequestLeave = 0x40;
+constexpr int kSettleFrames = 120, kStepTimeoutFrames = 3600, kSearchTries = 10, kSearchPauseFrames = 120, kHallDelayFrames = 300;
+
+enum class Step { Idle, ToHarbor, WaitHarbor, SignIn, WaitSignIn, OpenSession, WaitSession, Create, Search, WaitSearch, Join, WaitInSession, ToHall, WaitHall, InHall, Leave, WaitLeave, BackToHarbor };
+
+std::atomic<int> g_requested{-1};
+std::atomic<Step> g_step{Step::Idle};
+std::mutex g_status_lock;
+std::string g_status = "Not connected";
+bool g_want_host = false;
+int g_step_frames = 0, g_search_tries = 0;
+ppc::GuestFunction g_swap = nullptr;
+
+void set_status(const std::string& text) {
+    std::lock_guard g(g_status_lock);
+    if (g_status != text) std::printf("net: %s\n", text.c_str());
+    g_status = text;
+}
+
+void go(Step step) {
+    g_step = step;
+    g_step_frames = 0;
+}
+
+void fail(const std::string& text) {
+    set_status(text);
+    go(Step::Idle);
+}
+
+void request_bits(uint8_t* base, uint32_t net, uint32_t bits) { ppc::st32(base, net + 0x8B0, ppc::ld32(base, net + 0x8B0) | bits); }
+
+// The game's own area change, (*0x103D2EF4)->slot 11(DTI), as aGalleryMenu::vf7 does it (0x02018EB0).
+void change_area(ppc::Context& ctx, uint8_t* base, uint32_t dti) {
+    const ppc::Context saved = ctx;
+    const uint32_t system = ppc::ld32(base, kAreaSystem);
+    ctx.r[3] = system;
+    ctx.r[4] = dti;
+    ppc::call_indirect(ctx, base, ppc::ld32(base, ppc::ld32(base, system) + 0x5C));
+    const uint64_t r1 = ctx.r[1];
+    ctx = saved;
+    ctx.r[1] = r1;
+}
+
+// The sub-area the Harbor areas load: sLobby +0x5450, +1 stage, +2 and +0x15 sub-area (filled the same way by 0x0214CE3C).
+void set_sub_area(uint8_t* base, uint8_t sub) {
+    const uint32_t info = ppc::ld32(base, kLobby) + 0x5450;
+    ppc::st8(base, info + 2, sub);
+    ppc::st8(base, info + 0x15, sub);
+}
+
+bool on_stage(uint8_t* base, uint8_t stage, uint8_t sub) {
+    const uint32_t s = ppc::ld32(base, kStage);
+    return s && ppc::ld8(base, s + 0x115) == stage && ppc::ld8(base, s + 0x116) == sub;
+}
+
+// In town and on foot: my hunter's parts have loaded (the 11 load states at unit +0x2400, 0x02847AA4) and the area's manager is idle.
+bool hunter_ready(uint8_t* base) {
+    const uint32_t game = ppc::ld32(base, kGame), players = ppc::ld32(base, kPlayers);
+    if (!game || !players) return false;
+    const int8_t slot = static_cast<int8_t>(ppc::ld8(base, game + 0x4B));
+    if (slot < 0 || slot >= 8) return false;
+    const uint32_t unit = ppc::ld32(base, players + 0x40 + static_cast<uint32_t>(slot) * 4);
+    if (!unit) return false;
+    for (uint32_t i = 0; i < 11; ++i)
+        if (ppc::ld8(base, unit + 0x2400 + i) != 1) return false;
+    return true;
+}
+
+bool manager_idle(uint8_t* base) {
+    const uint32_t manager = ppc::ld32(base, kManager);
+    return manager && ppc::ld8(base, manager + 0x190) == 0 && (ppc::ld32(base, manager + 0x18C) & 1) == 0 && ppc::ld32(base, manager + 0x194) == 0;
+}
+
+// A request from the settings page. In a quest there is nothing to do yet: phases 2 and up of sGame +0x196 are quest time.
+void take_request(uint8_t* base) {
+    const int request = g_requested.exchange(-1);
+    if (request < 0) return;
+    const bool leave = request == static_cast<int>(NetRequest::Leave);
+    if (leave) {
+        if (g_step != Step::Idle) go(Step::Leave);
         return;
     }
-    // a node number for this run; two copies on one machine differ by process and port
-    g_node = static_cast<uint16_t>((static_cast<uint32_t>(std::time(nullptr)) * 31u) ^ (g_port * 257u));
-    if (g_node == 0) g_node = 1;
-    std::printf("net: Cha-Cha backend on, node %04X, UDP port %u (127.0.0.1 only)\n", g_node, g_port);
+    const uint32_t game = ppc::ld32(base, kGame);
+    if (g_step != Step::Idle) return;
+    if (game && ppc::ld8(base, game + 0x196) >= 2) {
+        set_status("Finish the quest first");
+        return;
+    }
+    if (g_socket == kNoSocket) {
+        std::lock_guard g(g_wire);
+        if (!open_socket()) {
+            fail("No free network port");
+            return;
+        }
+        g_node = static_cast<uint16_t>((static_cast<uint32_t>(std::time(nullptr)) * 31u) ^ (g_port * 257u));
+        if (g_node == 0) g_node = 1;
+        std::printf("net: node %04X, UDP port %u (127.0.0.1 only)\n", g_node, g_port);
+    }
+    g_want_host = request == static_cast<int>(NetRequest::Host);
+    g_search_tries = 0;
+    go(Step::ToHarbor);
+}
+
+void session_tick(ppc::Context& ctx, uint8_t* base) {
+    take_request(base);
+    const Step step = g_step;
+    if (step == Step::Idle) return;
+    const uint32_t net = ppc::ld32(base, kLobbyNetwork);
+    if (!net) return;
+    const uint32_t state = ppc::ld32(base, net + 0x8AC);
+    ++g_step_frames;
+    const bool timed_out = g_step_frames > kStepTimeoutFrames;
+    switch (step) {
+        case Step::ToHarbor:
+            if (on_stage(base, kHarborStage, 0) || on_stage(base, kHarborStage, 1)) {
+                go(Step::SignIn);
+                break;
+            }
+            set_status("Going to Port Tanzia");
+            set_sub_area(base, 0);
+            change_area(ctx, base, kHarborSquare);
+            go(Step::WaitHarbor);
+            break;
+        case Step::WaitHarbor:
+            if (on_stage(base, kHarborStage, 0) && g_step_frames > kSettleFrames) go(Step::SignIn);
+            else if (timed_out) fail("Could not reach Port Tanzia");
+            break;
+        case Step::SignIn:
+            if (state == kStateHub || state == kStateSessionHub || state == kStateSearched) {
+                go(Step::OpenSession);
+            } else if (hunter_ready(base) && manager_idle(base) && g_step_frames > kSettleFrames) {
+                set_status("Signing in");
+                request_bits(base, net, kRequestSignIn);
+                go(Step::WaitSignIn);
+            } else if (timed_out) {
+                fail("The game is busy; try again in town");
+            }
+            break;
+        case Step::WaitSignIn:
+            if (state == kStateHub) go(Step::OpenSession);
+            else if (state == kStateFailed || timed_out) fail("Sign-in failed");
+            break;
+        case Step::OpenSession:
+            if (state == kStateSessionHub || state == kStateSearched) {
+                go(g_want_host ? Step::Create : Step::Search);
+            } else {
+                request_bits(base, net, kRequestSession);
+                go(Step::WaitSession);
+            }
+            break;
+        case Step::WaitSession:
+            if (state == kStateSessionHub) go(g_want_host ? Step::Create : Step::Search);
+            else if (timed_out) fail("Could not open a session");
+            break;
+        case Step::Create:
+            set_status("Creating a session");
+            request_bits(base, net, kRequestCreate);
+            go(Step::WaitInSession);
+            break;
+        case Step::Search:
+            set_status("Looking for a session");
+            request_bits(base, net, kRequestSearch);
+            go(Step::WaitSearch);
+            break;
+        case Step::WaitSearch: {
+            if (state != kStateSearched || g_step_frames < kSearchPauseFrames) {
+                if (timed_out) fail("Search did not finish");
+                break;
+            }
+            bool found;
+            {
+                std::lock_guard g(g_wire);
+                found = !g_found.empty();
+            }
+            if (found) go(Step::Join);
+            else if (++g_search_tries < kSearchTries) go(Step::Search);
+            else fail("No session found");
+            break;
+        }
+        case Step::Join:
+            set_status("Joining");
+            ppc::st32(base, net + 0x8C4, 0);
+            request_bits(base, net, kRequestJoin);
+            go(Step::WaitInSession);
+            break;
+        case Step::WaitInSession:
+            if (state == kStateInSession) go(Step::ToHall);
+            else if (timed_out) fail("Could not get into the session");
+            break;
+        case Step::ToHall:
+            if (g_step_frames < kHallDelayFrames) break;
+            set_status("Entering the hall");
+            set_sub_area(base, 1);
+            change_area(ctx, base, kOnlineHall);
+            go(Step::WaitHall);
+            break;
+        case Step::WaitHall:
+            if (on_stage(base, kHarborStage, 1) && hunter_ready(base)) {
+                set_status(g_want_host ? "Hosting" : "In a session");
+                go(Step::InHall);
+            } else if (timed_out) {
+                fail("Could not enter the hall");
+            }
+            break;
+        case Step::InHall:
+            if (state != kStateInSession) {  // the session ended under us
+                go(Step::BackToHarbor);
+            } else {
+                std::lock_guard g(g_wire);
+                set_status((g_want_host ? "Hosting, " : "In a session, ") + std::to_string(g_members.size()) + " hunter(s)");
+            }
+            break;
+        case Step::Leave:
+            set_status("Leaving");
+            request_bits(base, net, kRequestLeave);
+            go(Step::WaitLeave);
+            break;
+        case Step::WaitLeave:
+            if (state == kStateHub || timed_out) go(Step::BackToHarbor);
+            break;
+        case Step::BackToHarbor:
+            set_sub_area(base, 0);
+            change_area(ctx, base, kHarborSquare);
+            set_status("Not connected");
+            go(Step::Idle);
+            break;
+        case Step::Idle:
+            break;
+    }
+}
+
+PPC_FUNC(swap_with_session) {
+    session_tick(ctx, base);
+    g_swap(ctx, base);
+}
+
+}  // namespace
+
+void net_request(NetRequest request) { g_requested = static_cast<int>(request); }
+
+std::string net_status() {
+    std::lock_guard g(g_status_lock);
+    return g_status;
+}
+
+bool net_can_request(NetRequest request) {
+    const bool idle = g_step == Step::Idle;
+    return request == NetRequest::Leave ? !idle : idle;
+}
+
+void register_net_backend_tick() {
+    g_swap = ppc::resolve_import("gx2.GX2SwapScanBuffers");
+    if (g_swap) ppc::register_import("gx2.GX2SwapScanBuffers", &swap_with_session);
+}
+
+void register_net_backend(uint8_t* base, const std::vector<std::string>& fp_imports) {
+    register_fp(fp_imports);
     replace_slot(base, kSnowContext, 12, &context_unique_id);
     replace_slot(base, kSnowContext, 34, &context_sign_in);
     replace_slot(base, kSnowContext, 35, &context_sign_out);
