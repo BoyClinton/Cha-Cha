@@ -269,6 +269,49 @@ PPC_FUNC(swap_with_jump) {
         ctx = saved;
         ctx.r[1] = r1;
     }
+    // MH3U_NET_PROBE_GO=frame: what the counter's depart does on the host (0x022049DC): sLobby +0x54AE |= 8, then 0x0225111C on the party object
+    static const std::string go_env = env("MH3U_NET_PROBE_GO");
+    if (!go_env.empty() && std::strtoul(go_env.c_str(), nullptr, 10) == g_swaps) {
+        const uint32_t lobby = ppc::ld32(base, 0x103147A0), party_object = ppc::ld32(base, lobby + 0x4E20);
+        const ppc::Context saved = ctx;
+        ppc::st8(base, lobby + 0x54AE, ppc::ld8(base, lobby + 0x54AE) | 8);
+        if (party_object) {
+            ctx.r[3] = party_object;
+            sub_0225111C(ctx, base);
+        }
+        std::printf("net: swap %u depart pressed; sLobby +144=%u +148=%u +14C=%u\n", g_swaps, ppc::ld32(base, lobby + 0x144), ppc::ld32(base, lobby + 0x148), ppc::ld8(base, lobby + 0x14C));
+        const uint64_t r1 = ctx.r[1];
+        ctx = saved;
+        ctx.r[1] = r1;
+    }
+    // MH3U_NET_PROBE_QJOIN="frame:number:entry": the real join: 0x021E355C(sLobby, my pad block, number, 2), party entry index at sLobby +0x6B38 +0x374
+    static const std::string qjoin = env("MH3U_NET_PROBE_QJOIN");
+    uint32_t qjoin_at = 0, qjoin_number = 0, qjoin_entry = 0;
+    if (!qjoin.empty() && std::sscanf(qjoin.c_str(), "%u:%u:%u", &qjoin_at, &qjoin_number, &qjoin_entry) == 3 && qjoin_at == g_swaps) {
+        const uint32_t game = ppc::ld32(base, 0x101FDB9C), players = ppc::ld32(base, kPlayers), lobby = ppc::ld32(base, 0x103147A0);
+        const uint32_t me = ppc::ld32(base, players + 0x40 + ppc::ld8(base, game + 0x4B) * 4);
+        const ppc::Context saved = ctx;
+        const uint32_t party_object = ppc::ld32(base, lobby + 0x4E20);
+        std::printf("net: swap %u joining quest %u, party object %08X\n", g_swaps, qjoin_number, party_object);
+        if (party_object) {
+            ctx.r[3] = party_object;
+            sub_02250C58(ctx, base);
+            const uint32_t entries = static_cast<uint32_t>(ctx.r[3]);
+            for (uint32_t i = 0; i < 4; ++i)
+                std::printf("net:   entry %u id %04X state %u mask %02X host %d\n", i, ppc::ld16(base, entries + i * 0x9C4 + 4), ppc::ld8(base, entries + i * 0x9C4 + 6),
+                            ppc::ld8(base, entries + i * 0x9C4 + 7), static_cast<int8_t>(ppc::ld8(base, entries + i * 0x9C4 + 8)));
+        }
+        ppc::st32(base, lobby + 0x6B38 + 0x374, qjoin_entry);
+        ctx.r[3] = lobby;
+        ctx.r[4] = ppc::ld32(base, me + 0xE30);
+        ctx.r[5] = qjoin_number;
+        ctx.r[6] = 2;
+        sub_021E355C(ctx, base);
+        std::printf("net: join result %08X, sGame+4A=%d\n", static_cast<uint32_t>(ctx.r[3]), static_cast<int8_t>(ppc::ld8(base, game + 0x4A)));
+        const uint64_t r1 = ctx.r[1];
+        ctx = saved;
+        ctx.r[1] = r1;
+    }
     // MH3U_NET_PROBE_PARTY="frame:host_member:mask": both copies' party says who is in: my entry (0x9C4 each, from 0x02250C58) +0xB = mask,
     // then the game's table builder 0x0225B238, and sGame +0x4A = the party's host. Stands in for the join handshake.
     static const std::string party = env("MH3U_NET_PROBE_PARTY");
@@ -284,7 +327,8 @@ PPC_FUNC(swap_with_jump) {
             ctx.r[3] = ppc::ld32(base, 0x103A33E8);
             sub_0226EFEC(ctx, base);
             const uint32_t me = static_cast<uint32_t>(ctx.r[3]);
-            ppc::st8(base, entries + me * 0x9C4 + 0xB, static_cast<uint8_t>(party_mask));
+            std::printf("net: party mask here was %02X\n", ppc::ld8(base, entries + me * 0x9C4 + 0xB));
+            if (party_mask) ppc::st8(base, entries + me * 0x9C4 + 0xB, static_cast<uint8_t>(party_mask));
             ctx.r[3] = proc;
             sub_0225B238(ctx, base);
             ppc::st8(base, game + 0x4A, static_cast<uint8_t>(party_host));

@@ -23,6 +23,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -54,7 +55,7 @@ constexpr int kPortCount = 8;
 constexpr size_t kMaxPacket = 0x4E2;                       // what P2p's receive buffer holds (0x02E76C04)
 constexpr size_t kCreateOptionSize = 0x90, kSearchOptionSize = 0x204;  // Session slots 14, 15
 
-enum MessageType : uint8_t { kSearchReq = 1, kSearchRep, kJoinReq, kJoinRep, kMemberAdd, kMemberLeave, kData };
+enum MessageType : uint8_t { kSearchReq = 1, kSearchRep, kJoinReq, kJoinRep, kMemberAdd, kMemberLeave, kData, kQuestPosted, kQuestDepart };
 
 struct Header {
     uint32_t magic;
@@ -103,6 +104,7 @@ struct Joiner {
 std::deque<Joiner> g_join_queue;
 std::deque<MemberWire> g_member_adds;
 std::deque<uint16_t> g_member_leaves;
+std::deque<std::pair<uint8_t, uint32_t>> g_quest_events;  // message type, quest number
 bool g_have_join_reply = false;
 JoinRep g_join_reply{};
 // the session this copy hosts or has joined
@@ -212,6 +214,14 @@ void wire_poll() {
                 break;
             case kData:
                 g_rx[h.node].emplace_back(payload, payload + size);
+                break;
+            case kQuestPosted:
+            case kQuestDepart:
+                if (size == sizeof(uint32_t)) {
+                    uint32_t number;
+                    std::memcpy(&number, payload, sizeof number);
+                    g_quest_events.emplace_back(h.type, number);
+                }
                 break;
             default:
                 break;
@@ -824,7 +834,7 @@ void register_fp(const std::vector<std::string>& fp_imports) {
 // (2 sign in, 4 session stage, 8 create, 0x10 search, 0x20 join with result +0x8C4, 0x40 leave).
 constexpr uint32_t kLobbyNetwork = 0x103A2F90, kManager = 0x103A33E8, kLobby = 0x103147A0, kGame = 0x101FDB9C, kStage = 0x10315C80;
 constexpr uint32_t kPlayers = 0x10314B80, kAreaSystem = 0x103D2EF4;
-constexpr uint32_t kHarborSquare = 0x1030CAE8, kOnlineHall = 0x1030C918;  // area DTIs: aHarborSquare, aHarborRoomGuild
+constexpr uint32_t kHarborSquare = 0x1030CAE8, kOnlineHall = 0x1030C918, kQuestArea = 0x1030CEA8;  // area DTIs: aHarborSquare, aHarborRoomGuild, aQuestArea
 constexpr uint8_t kHarborStage = 0x1B;
 constexpr uint32_t kStateHub = 17, kStateSessionHub = 3, kStateSearched = 6, kStateInSession = 10, kStateFailed = 13;
 constexpr uint32_t kRequestSignIn = 2, kRequestSession = 4, kRequestCreate = 8, kRequestSearch = 0x10, kRequestJoin = 0x20, kRequestLeave = 0x40;
@@ -928,6 +938,165 @@ void take_request(uint8_t* base) {
     g_want_host = request == static_cast<int>(NetRequest::Host);
     g_search_tries = 0;
     go(Step::ToHarbor);
+}
+
+// ---- Quests together --------------------------------------------------------------------------------------------------
+// The host picks a quest at the game's own counter; the others follow by themselves. The game's party messages (0x0224E3E8, on the object
+// at sLobby +0x4E20) do not reach a guest yet, so this carries the same facts over our wire and fills each copy's party:
+//   quest select 0x021E355C(sLobby, my pad block, number, 1); party entry (0x9C4 each, from 0x02250C58) +0xB = who is in;
+//   sGame +0x4A = the host's member; the launch step 0x0214E8A8. sLobby +0x54AE: 1 host's mode bits, 8 = departing (0x022049DC).
+uint32_t g_posted_quest = 0;
+bool g_departed = false;
+constexpr int kQuestSends = 3;  // datagrams can be lost; receivers ignore repeats
+
+void broadcast_quest(MessageType type, uint32_t number) {
+    std::lock_guard g(g_wire);
+    for (const MemberWire& m : g_members)
+        if (m.node != g_node)
+            for (int i = 0; i < kQuestSends; ++i) send_to_port(m.port, type, &number, sizeof number);
+}
+
+uint32_t my_member(ppc::Context& ctx, uint8_t* base) {
+    ctx.r[3] = ppc::ld32(base, kManager);
+    sub_0226EFEC(ctx, base);
+    return static_cast<uint32_t>(ctx.r[3]);
+}
+
+uint8_t member_mask() {
+    std::lock_guard g(g_wire);
+    uint8_t mask = 0;
+    for (const MemberWire& m : g_members) mask = static_cast<uint8_t>(mask | (1u << m.index));
+    return mask;
+}
+
+uint8_t host_member() {
+    std::lock_guard g(g_wire);
+    for (const MemberWire& m : g_members)
+        if (m.is_host) return static_cast<uint8_t>(m.index);
+    return 0;
+}
+
+void fill_party(ppc::Context& ctx, uint8_t* base) {
+    const uint32_t party = ppc::ld32(base, ppc::ld32(base, kLobby) + 0x4E20);
+    if (!party) return;
+    ctx.r[3] = party;
+    sub_02250C58(ctx, base);
+    const uint32_t entries = static_cast<uint32_t>(ctx.r[3]);
+    const uint32_t me = my_member(ctx, base);
+    ppc::st8(base, entries + me * 0x9C4 + 0xB, member_mask());
+    ppc::st8(base, ppc::ld32(base, kGame) + 0x4A, host_member());
+}
+
+// Guest: what the host's counter did.
+void follow_post(ppc::Context& ctx, uint8_t* base, uint32_t number) {
+    const uint32_t game = ppc::ld32(base, kGame), players = ppc::ld32(base, kPlayers);
+    const uint32_t unit = ppc::ld32(base, players + 0x40 + ppc::ld8(base, game + 0x4B) * 4);
+    const ppc::Context saved = ctx;
+    ctx.r[3] = ppc::ld32(base, kLobby);
+    ctx.r[4] = ppc::ld32(base, unit + 0xE30);
+    ctx.r[5] = number;
+    ctx.r[6] = 1;
+    sub_021E355C(ctx, base);
+    fill_party(ctx, base);
+    std::printf("net: following quest %u\n", number);
+    const uint64_t r1 = ctx.r[1];
+    ctx = saved;
+    ctx.r[1] = r1;
+}
+
+// Guest: the launch step 0x0214E8A8, with the party table first (0x0214E454).
+void follow_depart(ppc::Context& ctx, uint8_t* base, uint32_t number) {
+    const uint32_t game_quest = ppc::ld32(base, kGame) + 0x34, lobby = ppc::ld32(base, kLobby);
+    const ppc::Context saved = ctx;
+    fill_party(ctx, base);
+    ctx.r[3] = ppc::ld32(base, 0x103A2DB0);
+    sub_0225B238(ctx, base);
+    ppc::st16(base, lobby + 0x522C, static_cast<uint16_t>(number));
+    ppc::st16(base, lobby + 0x54AC, static_cast<uint16_t>(number));
+    ppc::st8(base, lobby + 0x5450, 0);
+    ctx.r[3] = ppc::ld32(base, 0x10314890);
+    sub_021512E8(ctx, base);
+    ctx.r[3] = ppc::ld32(base, 0x10315F50);
+    sub_02197EBC(ctx, base);
+    ctx.r[3] = ppc::ld32(base, 0x1031537C);
+    sub_02166A1C(ctx, base);
+    ppc::st32(base, game_quest + 0x24, 1);
+    ppc::st32(base, game_quest + 0x30, number);
+    ppc::st8(base, lobby + 0x154, 0);
+    ppc::st8(base, lobby + 0x5234, 0);
+    const uint64_t r1 = ctx.r[1];
+    ctx = saved;
+    ctx.r[1] = r1;
+    change_area(ctx, base, kQuestArea);
+    const ppc::Context after = ctx;
+    ctx.r[3] = ppc::ld32(base, 0x1031537C);
+    sub_021788E4(ctx, base);
+    ctx.r[3] = ppc::ld32(base, kLobbyNetwork);
+    ctx.r[4] = 1;
+    sub_02265070(ctx, base);
+    const uint64_t r1b = ctx.r[1];
+    ctx = after;
+    ctx.r[1] = r1b;
+    std::printf("net: departing on quest %u\n", number);
+}
+
+void quest_tick(ppc::Context& ctx, uint8_t* base) {
+    const uint32_t lobby = ppc::ld32(base, kLobby);
+    if (!lobby) return;
+    if (g_want_host) {
+        const uint32_t number = ppc::ld16(base, lobby + 0x522C), mode = ppc::ld8(base, lobby + 0x54AE);
+        if (number == 0 || !(mode & 1)) {
+            if (g_posted_quest) {
+                g_posted_quest = 0;
+                g_departed = false;
+            }
+            return;
+        }
+        if (number != g_posted_quest) {
+            g_posted_quest = number;
+            g_departed = false;
+            const ppc::Context saved = ctx;
+            fill_party(ctx, base);
+            const uint64_t r1 = ctx.r[1];
+            ctx = saved;
+            ctx.r[1] = r1;
+            std::printf("net: posted quest %u to the others\n", number);
+            broadcast_quest(kQuestPosted, number);
+        }
+        if ((mode & 8) && !g_departed) {
+            g_departed = true;
+            // the depart call (0x0225111C) recomputes the party, so the others go back in, and the table the launch uses is built again (0x0225B238)
+            const ppc::Context saved = ctx;
+            fill_party(ctx, base);
+            ctx.r[3] = ppc::ld32(base, 0x103A2DB0);
+            sub_0225B238(ctx, base);
+            const uint64_t r1 = ctx.r[1];
+            ctx = saved;
+            ctx.r[1] = r1;
+            std::printf("net: departing on quest %u\n", number);
+            broadcast_quest(kQuestDepart, number);
+        }
+        return;
+    }
+    std::deque<std::pair<uint8_t, uint32_t>> events;
+    {
+        std::lock_guard g(g_wire);
+        events.swap(g_quest_events);
+    }
+    for (const auto& [type, number] : events) {
+        if (type == kQuestPosted && number != g_posted_quest) {
+            g_posted_quest = number;
+            g_departed = false;
+            follow_post(ctx, base, number);
+        } else if (type == kQuestDepart && !g_departed) {
+            if (number != g_posted_quest) {
+                g_posted_quest = number;
+                follow_post(ctx, base, number);
+            }
+            g_departed = true;
+            follow_depart(ctx, base, number);
+        }
+    }
 }
 
 void session_tick(ppc::Context& ctx, uint8_t* base) {
@@ -1035,6 +1204,7 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
             if (state != kStateInSession) {  // the session ended under us
                 go(Step::BackToHarbor);
             } else {
+                quest_tick(ctx, base);
                 std::lock_guard g(g_wire);
                 set_status((g_want_host ? "Hosting, " : "In a session, ") + std::to_string(g_members.size()) + " hunter(s)");
             }
