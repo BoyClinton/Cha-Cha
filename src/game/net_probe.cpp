@@ -9,6 +9,7 @@
 #define _CRT_SECURE_NO_WARNINGS  // sscanf, on the debug variables only
 #include "net_probe.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -242,7 +243,85 @@ void players_tick(uint8_t* base) {
     }
 }
 
+// Frame pacing: worst and average time between swaps, for each 300 swaps.
+void frame_time_tick() {
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last = clock::now();
+    static double worst = 0, sum = 0;
+    static int count = 0, over_25 = 0, over_50 = 0;
+    const clock::time_point now = clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(now - last).count();
+    last = now;
+    worst = ms > worst ? ms : worst;
+    sum += ms;
+    over_25 += ms > 25;
+    over_50 += ms > 50;
+    if (++count == 300) {
+        std::printf("net:   frames: average %.1f ms, worst %.1f ms, over 25 ms %d, over 50 ms %d\n", sum / count, worst, over_25, over_50);
+        worst = sum = 0;
+        count = over_25 = over_50 = 0;
+    }
+}
+
+// MH3U_NET_PROBE_NPC=1: the lobby NPCs. sLobbyNpc (0x10314890) +0x34: 20 units, spawned by 0x02151080 from the table for sLobby +0x5450 +1 stage, +2 sub-area.
+// unit +0xE30 pad: +0 active, +2 id, +0x70 table entry; unit +0xC flags, +0x40 position.
+void npc_tick(uint8_t* base) {
+    static const bool on = !env("MH3U_NET_PROBE_NPC").empty();
+    if (!on || g_swaps % 600 != 0) return;
+    const uint32_t npcs = ppc::ld32(base, 0x10314890), lobby = ppc::ld32(base, 0x103147A0);
+    if (!npcs || !lobby) return;
+    const uint32_t stage = ppc::ld32(base, 0x10315C80);
+    std::printf("net: swap %u npcs: info stage %02X sub %u +15=%u; loaded %02X/%u:", g_swaps, ppc::ld8(base, lobby + 0x5451), ppc::ld8(base, lobby + 0x5452), ppc::ld8(base, lobby + 0x5465),
+                stage ? ppc::ld8(base, stage + 0x115) : 0, stage ? ppc::ld8(base, stage + 0x116) : 0);
+    for (uint32_t i = 0; i < 20; ++i) {
+        const uint32_t unit = ppc::ld32(base, npcs + 0x34 + i * 4);
+        if (!unit) continue;
+        const uint32_t pad = ppc::ld32(base, unit + 0xE30);
+        std::printf(" [%u id %02X on %u fl %08X %.0f,%.0f,%.0f]", i, pad ? ppc::ld8(base, pad + 2) : 0, pad ? ppc::ld8(base, pad) : 0, ppc::ld32(base, unit + 0xC), ppc::ldf32(base, unit + 0x40),
+                    ppc::ldf32(base, unit + 0x44), ppc::ldf32(base, unit + 0x48));
+    }
+    std::printf("\n");
+}
+
+// MH3U_NET_PROBE_PACE=1: logs changes of the frame pacer (sMain 0x103CEA44: +0x4C, +0x50, +0x76 fixed step, +0x88) and of sEvDemo (0x103138C8: +0x6C-6F, +0x100, the current entry)
+void pace_tick(uint8_t* base) {
+    static const bool on = !env("MH3U_NET_PROBE_PACE").empty();
+    if (!on) return;
+    const uint32_t main = ppc::ld32(base, 0x103CEA44), demo = ppc::ld32(base, 0x103138C8);
+    if (!main || !demo) return;
+    char text[300];
+    const uint32_t entry = demo + 0x70 + ppc::ld8(base, demo + 0x6F) * 0x20u;
+    const uint32_t event = ppc::ld32(base, entry + 0x14);
+    std::snprintf(text, sizeof text, "main +4C=%.1f +50=%.1f +76=%u +77=%u +88=%.2f; demo +6C=%u +6D=%u +6E=%u +6F=%u +100=%u entry %08X %08X event+D=%u", ppc::ldf32(base, main + 0x4C), ppc::ldf32(base, main + 0x50),
+                  ppc::ld8(base, main + 0x76), ppc::ld8(base, main + 0x77), ppc::ldf32(base, main + 0x88), ppc::ld8(base, demo + 0x6C), ppc::ld8(base, demo + 0x6D), ppc::ld8(base, demo + 0x6E),
+                  ppc::ld8(base, demo + 0x6F), ppc::ld8(base, demo + 0x100), ppc::ld32(base, entry), ppc::ld32(base, entry + 4), event ? ppc::ld8(base, event + 0xD) : 0);
+    std::string line = text;
+    char more[120];
+    std::snprintf(more, sizeof more, "; state +34=%u +35=%u +36=%u +45=%d", ppc::ld8(base, demo + 0x34), ppc::ld8(base, demo + 0x35), ppc::ld8(base, demo + 0x36), static_cast<int8_t>(ppc::ld8(base, demo + 0x45)));
+    line += more;
+    for (uint32_t i = 0; i < 4; ++i) {  // the queue at +0x48: 8 bytes each, +0 used, +4 event
+        const uint32_t q = demo + 0x48 + i * 8, ev = ppc::ld32(base, q + 4);
+        if (ppc::ld8(base, q) && ev) {
+            std::snprintf(more, sizeof more, " [q%u %02X%02X ev %08X: sub %u type %02X]", i, ppc::ld8(base, q), ppc::ld8(base, q + 1), ev, ppc::ld8(base, ev), ppc::ld8(base, ev + 4));
+            line += more;
+        }
+    }
+    const uint32_t area_lobby = ppc::ld32(base, 0x103147A0);
+    if (area_lobby) {
+        std::snprintf(more, sizeof more, "; lobby +14D=%u +14F=%u +5450=%02X +54CC=%u", ppc::ld8(base, area_lobby + 0x14D), ppc::ld8(base, area_lobby + 0x14F), ppc::ld8(base, area_lobby + 0x5450), ppc::ld8(base, area_lobby + 0x54CC));
+        line += more;
+    }
+    static std::string last;
+    if (last != line) {
+        last = line;
+        std::printf("net: swap %u pace: %s\n", g_swaps, line.c_str());
+    }
+}
+
 PPC_FUNC(swap_with_jump) {
+    frame_time_tick();
+    npc_tick(base);
+    pace_tick(base);
     lobby_network_tick(base);
     players_tick(base);
     ++g_swaps;

@@ -846,6 +846,11 @@ PPC_FUNC(p2p_update) {
         std::printf("net: totals: sent %llu packets %llu bytes, received %llu packets %llu bytes\n",
                     static_cast<unsigned long long>(g_sent_packets), static_cast<unsigned long long>(g_sent_bytes),
                     static_cast<unsigned long long>(g_received_packets), static_cast<unsigned long long>(g_received_bytes));
+        std::printf("net:   rx queues:");
+        for (const auto& [node, queue] : g_rx) std::printf(" %04X=%zu", node, queue.size());
+        std::printf("; peers:");
+        for (const uint16_t node : g_peer_nodes) std::printf(" %04X", node);
+        std::printf("\n");
         for (const auto& [kind, count] : g_sent_sizes)
             std::printf("net:   size %u head %04X: %llu\n", kind >> 16, kind & 0xFFFF, static_cast<unsigned long long>(count));
         g_sent_sizes.clear();
@@ -996,6 +1001,40 @@ bool hunter_ready(uint8_t* base) {
     for (uint32_t i = 0; i < 11; ++i)
         if (ppc::ld8(base, unit + 0x2400 + i) != 1) return false;
     return true;
+}
+
+// An event cutscene (sEvDemo 0x103138C8, its update 0x0210F7D0) runs in states +0x34 2, 3, 4. Starting, it puts the frame pacer (sMain 0x103CEA44) in fixed step at 30 FPS, and only its
+// own end in state 4 takes that off. An area change wipes the state, so a cutscene cut off by one leaves the game at 30 FPS until it restarts.
+constexpr uint32_t kEvDemo = 0x103138C8, kMain = 0x103CEA44, kRender = 0x102CE7FC;
+constexpr int kCutsceneWaitFrames = 1800;  // a minute at the cutscene's 30 FPS
+
+bool cutscene_playing(uint8_t* base) {
+    const uint32_t demo = ppc::ld32(base, kEvDemo);
+    if (!demo) return false;
+    const uint8_t state = ppc::ld8(base, demo + 0x34);
+    return state >= 2 && state <= 4;
+}
+
+// What the end of state 4 does (0x0210FBAC), when that end was never reached.
+void end_stuck_cutscene(ppc::Context& ctx, uint8_t* base) {
+    const uint32_t main = ppc::ld32(base, kMain);
+    if (!main || !ppc::ld8(base, main + 0x76) || cutscene_playing(base)) return;
+    const ppc::Context saved = ctx;
+    ctx.r[3] = main;
+    ctx.r[4] = 0;
+    sub_0294C968(ctx, base);
+    ppc::stf32(base, main + 0x4C, 60.0f);
+    ctx.f[1].ps0 = 60.0;
+    ctx.r[3] = ppc::ld32(base, kRender);
+    sub_02BA5E54(ctx, base);
+    ctx.r[3] = ppc::ld32(base, kRender);
+    ctx.r[4] = 0;
+    sub_02BA5EE8(ctx, base);
+    ppc::stf32(base, main + 0x88, 1.0f);
+    std::printf("net: ended a cutscene's frame pacing\n");
+    const uint64_t r1 = ctx.r[1];
+    ctx = saved;
+    ctx.r[1] = r1;
 }
 
 bool manager_idle(uint8_t* base) {
@@ -1303,12 +1342,14 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
             break;
         case Step::ToHall:
             if (g_step_frames < kHallDelayFrames) break;
+            if (cutscene_playing(base) && g_step_frames < kHallDelayFrames + kCutsceneWaitFrames) break;  // let it end: leaving now would strand its 30 FPS
             set_status("Entering the hall");
             set_sub_area(base, 1);
             change_area(ctx, base, kOnlineHall);
             go(Step::WaitHall);
             break;
         case Step::WaitHall:
+            end_stuck_cutscene(ctx, base);
             if (on_stage(base, kHarborStage, 1) && hunter_ready(base)) {
                 set_status(g_want_host ? "Hosting a hunt: others can join from Neko" : "Joined the hunt", true);
                 go(Step::InHall);

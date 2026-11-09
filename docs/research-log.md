@@ -1043,3 +1043,6 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 
 ## 2026-11-08 - Neko is the door to online (fork)
 - uIDLobbyOnline is Neko's Destination list, and it has the game's Network Mode row. Its real flow signs in on our backend up to "Start Network Mode?". Multi rows now Host / Join, Network Mode Leave, closing with the game's own cancel. Details in docs/online.md "Neko's menu".
+
+## 2026-11-09 - Joiner's 30 FPS and empty counter: the arrival flyover was cut off (fork)
+- sEvDemo type 0x10 (Port Tanzia flyover) sets sMain +0x76 fixed step, +0x4C 30, +0x88 2 through 0x0294C968; only the end of its state 4 clears them. Our area change to the hall wiped the state, stranding 30 FPS and leaving lobby NPCs at 0,0,0. Evidence: thread samples asleep in 0x0294B8DC, gdb breakpoint on 0x0294C968 (0x0214E2B8 -> 0x0214D038 -> 0x0210F7D0). Fix and open question in docs/online.md "The arrival flyover".
