@@ -88,6 +88,10 @@ Keys: F1 settings, F2 mods, F3 GamePad screen, F11 fullscreen / window. Settings
 
 Contains no game files: the menus are drawn with the game's own GUI textures, read from your dump at start.
 
+Online (very experimental): talk to Neko in Port Tanzia, then Host a Hunt or Join a Hunt. To play across your network,
+first turn on Settings -> Gameplay -> Online -> Play over the network, only with people you trust. Steps are in the
+README on GitHub. Please report problems: https://github.com/SilversRayGA/Cha-Cha-Plus/issues
+
 Mods: see mods/damage-numbers/README.md for an example. Making mods: docs/modding.md in Cha-Cha's source.
 
 Cha-Cha is free software under the GNU GPL-3.0 (licenses/). A fan project, not affiliated with or endorsed by

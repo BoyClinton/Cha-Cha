@@ -1,6 +1,6 @@
 # Online play
 
-**Status (2026-11-08, branch `online-backend`): works between copies in automated headless tests, not yet played by a person, and not released.**
+**Status (2026-11-09, released in 0.3.0 as very experimental): Host and Join played by a person with two copies on one PC; quests only in automated headless tests.**
 Talk to Neko: his Destination list has an Online section with Host a Hunt, Join a Hunt and Leave Online. Settings -> Gameplay -> Online has the status, Leave, and "Play over the network" (off by default: copies meet over UDP on 127.0.0.1).
 `scripts/online-two-copies.sh` starts two windows. Sections below are in the order they were found; older ones can be out of date, "Two copies" and later hold.
 
@@ -12,10 +12,12 @@ Talk to Neko: his Destination list has an Online section with Host a Hunt, Join 
 | Large monster: one copy controls it, the other follows its route, control moves between members | Seen working |
 | Damage: same HP on both copies, whether the attacker controls the monster or not | Seen working (HP 1433 -> 1379, 1433 -> 1382) |
 | Back in the hall with session and Player List after a quest ended | Seen once per copy; why that quest ended was not checked |
+| Joining during the Port Tanzia flyover: 30 FPS lock and an empty counter on that copy | Fixed, seen working in headless host + joiner runs; not yet retried by a person |
 | The real quest counter and its depart button | **Not tried: needs a person** |
 | A second quest in one session | **Not tried** (logic for it is written) |
 | Carving, rewards screens, finishing a hunt by killing the monster, chat | **Not tried** |
 | Two PCs | **Not tried.** Network mode has only run with both copies on one PC |
+| Online on Windows | **Not tried.** The Windows build compiles the same code; only Linux has run it |
 | Three or four players, host leaving during a quest | **Not tried** |
 | Neko's menu opens and its rows Host, Join, Leave work | Seen working, with the menu opened and the cursor placed by the probe; talking to him and the d-pad not tried by script |
 | The game's own Network Mode flow past "Start Network Mode?" | **Replaced, not implemented**: Yes leads to the lobby browser, which needs Snow's lobby operations (Internet states 22-30) |
@@ -306,3 +308,13 @@ Neko's Destination list is `uIDLobbyOnline` (screen 0x40, layout `GUI\\world\\sh
 Multi is local play with the 3DS game, which cannot work here, so rows 3, 4, 5 are Host, Join, Leave: `ferry_choice` in net_backend.cpp answers a decide press, and closing turns the press into the game's cancel for one call. Rows are painted by what is usable now
 (`FUN_026ACBB8`). Text: group 0x67, 0x239 "Multi", 0x23C / 0x23D rows (shared with Solo, told apart by caller), 0x24C Network Mode.
 Row 5 in the game's own flow: state 0x10 -> "Start Network Mode?" -> 0x1C, 0x1D, child `uIDLobbyRelayLobby` (0x02731134), which signs in on our backend (Internet state 17). Past Yes it wants the lobby browser, not implemented; the rows above replace it.
+
+## The arrival flyover (2026-11-09)
+
+Reported by a person: the joining copy had frame drops and no NPCs at the counter. Measured with the player's own settings and save: host 6.9 ms a frame (fps_limit 144), joiner exactly 33.3 ms, its lobby NPCs (`sLobbyNpc` 0x10314890 +0x34, spawned by 0x02151080) all at 0,0,0. No pipelines were compiled on either copy, and the saves were identical, so neither explains it.
+- Arriving in Port Tanzia, `sEvDemo` (0x103138C8) can queue an event of type 0x10, sub-area 0: the camera flyover of the harbor, about 28 s. It runs in states +0x34 2, 3, 4 and starts with `sMain` (0x103CEA44) +0x76 fixed step on, +0x4C = 30, +0x88 = 2 (0x0294C968, called from 0x0210F7D0). Only the end of its state 4 undoes that.
+- `Step::ToHall` changed area during it. The area change resets the state to 0, so the pacing stayed at 30 FPS until the game restarted, and the hall's NPCs were never placed.
+- Fix: `Step::ToHall` waits for the flyover (`cutscene_playing`, up to `kCutsceneWaitFrames`). `end_stuck_cutscene` undoes the pacing if one was cut off anyway; forced with the wait at 0 it restores the frame rate but **not** the NPCs, so the wait is what fixes them.
+- Seen after the fix: flyover ended by itself, joiner about 8 ms a frame (worst about 10 ms), NPCs at the same positions as the host's, counter populated with speech bubbles.
+- Not known: why a copy that takes Neko's row at swap 7800 gets the flyover and one at swap 5300 does not (both rows 3 and 4 get it at 7800, so it is not the row). The host only avoided it through that timing, and uses the same step, but a late host has not been run since the fix.
+- `MH3U_NET_PROBE_NPC=1` and `MH3U_NET_PROBE_PACE=1` log the NPC slots and the pacer / `sEvDemo` state.

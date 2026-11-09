@@ -23,6 +23,7 @@
   <a href="#dlc-event-and-challenge-quests">DLC quests</a> ·
   <a href="#mods">Mods</a> ·
   <a href="#texture-packs-and-texture-dumping">Texture packs</a> ·
+  <a href="#online-play-very-experimental">Online</a> ·
   <a href="#whats-next">What's next</a> ·
   <a href="#building-from-source">Building</a>
 </p>
@@ -233,11 +234,63 @@ Settings → Video → **Texture packs**. It switches on and off while you play.
 Packs made for the 3DS version don't match the Wii U textures and won't load. Details:
 [docs/texture-packs.md](docs/texture-packs.md).
 
+## Online play (very experimental)
+
+> [!WARNING]
+> **Online is very experimental.** It is new, it has barely been played by real people, and things will break. Back up
+> your `save` folder before trying it, and expect to restart the game. A session can end badly or drift out of sync.
+
+**Found a problem? Please [open an issue](../../issues)**, that is how it gets fixed. It helps to say:
+- your Cha-Cha version and system
+- one PC or two, and who was hosting
+- what you did, what happened, and what you expected
+- `log.txt` from the data folder of **each** copy, if you can
+
+### How it works
+
+Nintendo's servers are gone, and Cha-Cha does not use a server of its own either. The game keeps its own online code,
+and Cha-Cha replaces the part that talked to Nintendo. One player hosts, and the others' copies send their data
+directly to each other over UDP (ports 47800-47807). The host picks the quest and the others follow.
+
+Network play is off by default, and then only copies on the same PC can meet. Nothing is encrypted and the data other
+players send goes straight into the game, so only switch it on with people and networks you trust.
+
+### Try it
+
+Every player needs the same version of Cha-Cha, their own copy of the game and a save that has reached Port Tanzia.
+
+1. **Both players:** in Settings (F1) → Gameplay → Online, turn on **Play over the network** and press Apply. Allow
+   Cha-Cha through your firewall if asked.
+2. **Host:** in Port Tanzia, talk to Neko and pick **Host a Hunt** from the Online section of the Destination list.
+   Wait for "Hosting a hunt".
+3. **Everyone else:** do the same with **Join a Hunt**. Joining can take about 30 seconds longer if the game plays its
+   Port Tanzia camera flyover first.
+4. **Host:** choose a quest at the counter in the hall and depart. The others follow.
+5. **To leave:** pick **Leave Online** from Neko, or Leave session in the settings.
+
+If Join finds nobody on your network, add the host's IPv4 address to the settings file (`config.ini` in the data
+folder, `Cha-Cha.ini` in the Linux folder release) as `online_host=192.168.1.20`, using the host's real address, and
+restart.
+
+**Alone on one PC:** copy your `save` folder into a new folder, start a second copy with `Cha-Cha --data-dir <new folder>`
+and choose your dump. Leave Play over the network off on both. A controller reaches both windows, so play one of them
+with the keyboard.
+
+### What has been tried
+
+| | |
+|---|---|
+| Hosting and joining | Played by a person on Linux, two copies on one PC |
+| Both hunters in the hall, leaving and rejoining, quests together, a large monster moving the same way on both copies, matching damage | Automated tests only |
+| The real quest counter and depart button, carving, rewards, chat, a full hunt | **Not tried** |
+| Two PCs, three or four players, the Windows version, playing over the internet | **Not tried** |
+
+The details are in [docs/online.md](docs/online.md).
+
 ## What's next
 
-- **Local network play:** hunt together with players on the same network.
-- **Online play:** Cha-Cha's own lobby server in place of Nintendo's retired service
-  ([docs/online.md](docs/online.md)), with HP scaling then using the real number of hunters.
+- **Online play:** make [what's there now](#online-play-very-experimental) reliable, then add a way to find each other
+  over the internet, with HP scaling using the real number of hunters.
 - **Quest maker:** build your own quests in the game and share them with a code: copy it, send it, and anyone who
   pastes it gets the same quest.
 

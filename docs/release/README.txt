@@ -19,6 +19,11 @@ In game: F1 opens the settings, F2 the mods (DLC quests and mods), F3 cycles the
 GamePad screen view, F11 switches fullscreen / window. Settings > Input > Camera speed slows the camera down;
 Settings > Gameplay > Monster HP scaling switches the Port Tanzia HP scaling off.
 
+Online (very experimental): talk to Neko in Port Tanzia, then Host a Hunt or Join a
+Hunt. To play across your network, first turn on Settings > Gameplay > Online > Play
+over the network, only with people you trust. Steps are in the README on GitHub.
+Please report problems: https://github.com/SilversRayGA/Cha-Cha-Plus/issues
+
 Mods: one folder each in the mods folder of the data folder (data\mods here).
 Damage Numbers comes with Cha-Cha (the damage of every hit over the monster);
 switch mods on or off and change their settings on the Mods page (F2).
