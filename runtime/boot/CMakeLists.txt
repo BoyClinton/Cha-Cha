@@ -24,9 +24,10 @@ if(WIN32)
   # it ("-map:" spelling: the Visual Studio generator turns /MAP into GenerateMapFile, which the ClangCL toolset drops)
   target_link_options(mh3u PRIVATE "-map:$<TARGET_FILE_DIR:mh3u>/Cha-Cha.map")
 else()
-  # crash reports name the function themselves (dladdr); libSDL3.so is looked for next to the binary
+  # crash reports name the function themselves (dladdr); libSDL3.so is looked for next to the binary. Releases link
+  # with the install path (CMAKE_BUILD_WITH_INSTALL_RPATH): lib/ of the folder release, ../lib of the AppImage.
   target_link_options(mh3u PRIVATE -rdynamic)
-  set_target_properties(mh3u PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN/../lib")
+  set_target_properties(mh3u PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN/lib:$ORIGIN/../lib")
 endif()
 # players see Cha-Cha.exe (the project's name); the target stays mh3u for the build scripts
 set_target_properties(mh3u PROPERTIES OUTPUT_NAME "Cha-Cha")

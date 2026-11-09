@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Builds the portable AppImage in an Ubuntu 22.04 container (glibc 2.35: runs on most distributions, Steam Deck too)
-# from any Linux host with podman (or docker).
-# Usage: scripts/build-appimage-container.sh <version> [build root]   (default build root ~/cha-cha-appimage)
+# Builds the portable Linux releases in an Ubuntu 22.04 container (glibc 2.35: runs on most distributions, Steam Deck
+# too) from any Linux host with podman (or docker).
+# Usage: [PACKAGE=appimage|folder|both] scripts/build-appimage-container.sh <version> [build root]
+#        (default PACKAGE appimage, default build root ~/cha-cha-appimage)
+# folder: the folder release (scripts/package-folder.sh) with every library it needs beside the binary, FFmpeg's
+# libavcodec included; built on the host instead it needs the host's glibc and FFmpeg (issue #1: glibc 2.43, libavcodec 62).
 #
 # Needs your dump in extracted/ (scripts/build-linux.sh's layout; symlinks are fine - their targets are mounted too)
 # and a shaderc source tree with its dependencies (git clone https://github.com/google/shaderc, then
 # utils/git-sync-deps) at $SHADERC_SRC (default <build root>/shaderc). The image comes from scripts/appimage/Containerfile.
-# Output: build/release/Cha-Cha-<version>-x86_64.AppImage
+# Output: build/release/Cha-Cha-<version>-x86_64.AppImage, build/release/Cha-Cha-<version>-linux-x86_64.tar.gz
 set -euo pipefail
 src="$(cd "$(dirname "$0")/.." && pwd)"
 version="${1:?version}"
 root="${2:-$HOME/cha-cha-appimage}"
+package="${PACKAGE:-appimage}"
 shaderc="${SHADERC_SRC:-$root/shaderc}"
 engine="$(command -v podman || command -v docker)"
 mkdir -p "$root/sdk/include" "$root/sdk/lib"
@@ -40,8 +44,14 @@ fi
 export VULKAN_SDK='$root/sdk' CC=clang-15 CXX=clang++-15
 cmake -S '$src' -B '$root/out' -G Ninja -DCMAKE_BUILD_TYPE=Release -DMH3U_RECOMP_OUT='$root/recomp-out' \
       -DVulkan_LIBRARY=/usr/lib/x86_64-linux-gnu/libvulkan.so -DVulkan_INCLUDE_DIR='$root/sdk/include' \
-      -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld-15 -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld-15 -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld-15
-cmake --build '$root/out' --target mh3u damage_numbers -j \${JOBS:-8}
-bash scripts/package-appimage.sh '$root/out' '$version'
+      -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld-15 -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld-15 -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld-15 \\
+      -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+cmake --build '$root/out' --target mh3u damage_numbers true_attack key_quests -j \${JOBS:-8}
+case '$package' in appimage|both) bash scripts/package-appimage.sh '$root/out' '$version' ;; esac
+if [ '$package' = folder ] || [ '$package' = both ]; then
+    libs=\$(bash scripts/package-appimage.sh --libs-only '$root/out')
+    ls \"\$libs\"/libavcodec.so.* >/dev/null  # stop here if FFmpeg was not gathered
+    LIB_DIR=\"\$libs\" bash scripts/package-folder.sh '$root/out' '$version'
+fi
 "
-ls -l "$src/build/release/Cha-Cha-$version-x86_64.AppImage"
+ls -l "$src/build/release/Cha-Cha-$version"*

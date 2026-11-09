@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Builds the folder release for Linux: one self-contained folder (as MHGU Recomp's), zipped as
-# Cha-Cha-<version>-linux-x86_64.tar.gz. Usage: scripts/package-folder.sh <build dir> <version> [out dir]
+# Cha-Cha-<version>-linux-x86_64.tar.gz. Usage: [LIB_DIR=<libs>] scripts/package-folder.sh <build dir> <version> [out dir]
+# For a release, LIB_DIR comes from scripts/build-appimage-container.sh (PACKAGE=folder): every library the binary needs
+# except glibc, the Vulkan loader and the desktop's own (X11, Wayland, sound), from Ubuntu 22.04. Without it, the folder
+# holds SDL3 and shaderc only and needs the build host's glibc and FFmpeg (fine for a personal build).
 #
 #   Cha-Cha-<version>/
-#     Cha-Cha                the program (RUNPATH $ORIGIN: the libraries below are found next to it)
-#     libSDL3.so.0 ...       SDL3 and the shader compiler (FFmpeg's libavcodec and Vulkan come from the system)
+#     Cha-Cha                the program (RUNPATH: next to it, then lib/)
+#     lib/                   SDL3, FFmpeg's libavcodec and theirs (with LIB_DIR; Vulkan and glibc come from the system)
+#     libSDL3.so.0 ...       without LIB_DIR: SDL3 and the shader compiler next to the program
 #     Cha-Cha.ini            settings; its presence makes this folder the data folder (README "The folder release")
 #     game/                  put your dump here (the game and update folders, or a .wua)
 #     mods/                  mods, Damage Numbers included
@@ -22,11 +26,16 @@ rm -rf "$stage"
 mkdir -p "$stage/game" "$stage/mods" "$stage/licenses"
 
 install -m 755 "$build/runtime/boot/Cha-Cha" "$stage/Cha-Cha"
-# libraries the system may not have: SDL3, shaderc (+ SPIRV-Tools)
+# libraries the system may not have: everything linuxdeploy gathered, else SDL3 and shaderc (+ SPIRV-Tools)
+if [ -n "${LIB_DIR:-}" ]; then
+    mkdir -p "$stage/lib"
+    cp -a "$LIB_DIR"/. "$stage/lib/"
+else
 for lib in libSDL3.so.0 libshaderc_shared.so.1 libSPIRV-Tools.so libSPIRV-Tools-opt.so; do
     path="$(ldd "$stage/Cha-Cha" | awk -v l="$lib" '$1 == l { print $3 }')"
     if [ -n "$path" ] && [ -f "$path" ]; then cp -L "$path" "$stage/$lib"; fi
 done
+fi
 
 # the mods built with this tree (<build>/mods/<mod>: mod.ini + plugins/), with their READMEs
 for mod in "$build"/mods/*/; do
@@ -59,6 +68,7 @@ lic "Dear ImGui" "$build/_deps/imgui-src/LICENSE.txt"
 lic zstd "$build/_deps/zstd-src/LICENSE"
 lic shaderc /usr/share/licenses/libshaderc/LICENSE
 lic SPIRV-Tools /usr/share/licenses/spirv-tools/LICENSE
+[ -n "${LIB_DIR:-}" ] && cp "$src/docs/release/THIRD_PARTY_NOTICES.md" "$stage/licenses/"
 
 cat > "$stage/README.txt" <<EOF
 Cha-Cha $version - Monster Hunter 3 Ultimate, running natively on PC
@@ -70,8 +80,8 @@ Start
   1. Put your dump in the game folder (see game/put-your-game-here.txt), or choose it on the first start.
   2. Run ./Cha-Cha (chmod +x Cha-Cha if needed). The first start translates the game's shaders (a few seconds).
 
-Needs: x86-64 Linux, a Vulkan 1.2 driver, FFmpeg's libavcodec (for the movies). On another distribution than the
-one this was built on, use the AppImage instead.
+Needs: x86-64 Linux with glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, SteamOS 3 and later) and a Vulkan 1.2 driver.
+The other libraries, FFmpeg's included, are in this folder.
 
 This folder
   Cha-Cha.ini     settings (the launcher's SETTINGS page writes it)

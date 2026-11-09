@@ -169,20 +169,31 @@ void setup_output(const boot::AppPaths& paths, bool new_console) {
         if (std::freopen(log.c_str(), "w", stdout)) std::freopen(log.c_str(), "a", stderr);
     }
 #else
+    // A CRT call with a bad argument (such as a write to a stream that has no file) returns an error instead of ending
+    // the program: losing a log line must never close the game.
+    _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t) {});
     const auto usable = [](DWORD which) {
         const HANDLE h = GetStdHandle(which);
         return h && h != INVALID_HANDLE_VALUE && GetFileType(h) != FILE_TYPE_UNKNOWN;
     };
+    // inherited pipe or file: the CRT already writes there. A launcher may hand over one of the two only.
+    const bool out_ok = usable(STD_OUTPUT_HANDLE), err_ok = usable(STD_ERROR_HANDLE);
     FILE* f = nullptr;
-    if (usable(STD_OUTPUT_HANDLE)) {
-        // inherited pipe or file: the CRT already writes there
-    } else if (new_console ? AllocConsole() : AttachConsole(ATTACH_PARENT_PROCESS)) {
+    if (out_ok && err_ok) {
+    } else if (!out_ok && !err_ok && (new_console ? AllocConsole() : AttachConsole(ATTACH_PARENT_PROCESS))) {
         freopen_s(&f, "CONOUT$", "w", stdout);
         freopen_s(&f, "CONOUT$", "w", stderr);
     } else {
+        // log.txt, opened with sharing by _wfreopen. _wfreopen_s denies others write access, so stderr's open of the
+        // file stdout already held failed and left stderr closed; the first fprintf(stderr) then ended the program
+        // (issue #2: every start without a console or inherited output, as launchers do). NUL if the file can't open.
         const std::wstring log = (paths.data / "log.txt").wstring();
-        _wfreopen_s(&f, log.c_str(), L"w", stdout);
-        _wfreopen_s(&f, log.c_str(), L"a", stderr);
+#pragma warning(push)
+#pragma warning(disable : 4996)  // _wfopen / _wfreopen: the _s forms can't share the file
+        if (FILE* t = _wfopen(log.c_str(), L"w")) std::fclose(t);
+        if (!out_ok && !_wfreopen(log.c_str(), L"a", stdout)) _wfreopen(L"NUL", L"w", stdout);
+        if (!err_ok && !_wfreopen(log.c_str(), L"a", stderr)) _wfreopen(L"NUL", L"w", stderr);
+#pragma warning(pop)
     }
 #endif
     std::setvbuf(stdout, nullptr, _IONBF, 0);

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Packages a Linux build (scripts/build-linux.sh) as build/release/Cha-Cha-<version>-x86_64.AppImage (docs/linux.md).
 # Usage: scripts/package-appimage.sh [build dir] [version]
+#        scripts/package-appimage.sh --libs-only [build dir]: only gather the libraries (with RUNPATH $ORIGIN) into
+#        <build>/AppDir/usr/lib and print that folder, for scripts/package-folder.sh's LIB_DIR
 # linuxdeploy copies the libraries the binary needs (SDL3, FFmpeg's libavcodec and theirs) into the AppImage; the
 # Vulkan loader, the GPU drivers and glibc stay the system's. Like the Windows zip it holds no game files, but the
 # binary contains the recompiled game code.
 set -euo pipefail
+libs_only=0
+if [ "${1:-}" = --libs-only ]; then libs_only=1; shift; fi
 src="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$HOME/cha-cha-build}"
-version="${2:-dev-$(git -C "$src" rev-parse --short HEAD)}"
+version="${2:-dev-$(git -C "$src" rev-parse --short HEAD 2>/dev/null || echo build)}"
 out="$src/build/release"
 app="$build/AppDir"
 tools="$HOME/.cache/cha-cha-tools"
@@ -66,7 +70,15 @@ if [ ! -x "$ld" ]; then
     curl -sSfL -o "$ld" https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
     chmod +x "$ld"
 fi
-export APPIMAGE_EXTRACT_AND_RUN=1 LDAI_OUTPUT="$out/Cha-Cha-$version-x86_64.AppImage"
+export APPIMAGE_EXTRACT_AND_RUN=1
+# a release binary carries its install RUNPATH only: show linuxdeploy where the build put SDL3
+export LD_LIBRARY_PATH="$build/_deps/sdl3-build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ "$libs_only" = 1 ]; then
+    "$ld" --appdir "$app" --exclude-library 'libvulkan.so*' --executable "$app/usr/bin/Cha-Cha" >&2
+    echo "$app/usr/lib"
+    exit 0
+fi
+export LDAI_OUTPUT="$out/Cha-Cha-$version-x86_64.AppImage"
 # the Vulkan loader must be the system's (it finds the GPU drivers installed there)
 "$ld" --appdir "$app" --exclude-library 'libvulkan.so*' --desktop-file "$app/usr/share/applications/cha-cha.desktop" \
       --icon-file "$app/usr/share/icons/hicolor/256x256/apps/cha-cha.png" --output appimage
