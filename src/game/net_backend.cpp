@@ -932,6 +932,21 @@ constexpr uint32_t kStateHub = 17, kStateSessionHub = 3, kStateSearched = 6, kSt
 constexpr uint32_t kRequestSignIn = 2, kRequestSession = 4, kRequestCreate = 8, kRequestSearch = 0x10, kRequestJoin = 0x20, kRequestLeave = 0x40;
 constexpr int kSettleFrames = 120, kStepTimeoutFrames = 3600, kSearchTries = 10, kSearchPauseFrames = 120, kHallDelayFrames = 300;
 
+// Hub movement (docs/online.md "Hub movement delay"): the sender (0x02798F68 -> 0x022627CC) sends the hunter's position when a countdown
+// reloaded from sLobbyNetwork +0x594 runs out, and the receiver 0x02262DA0 glides the other hunter there over the same number of ticks.
+// Only the constructor 0x022601B8 sets it, to 20 (about 0.7 s behind). Every copy uses kHubInterval while online; MH3U_NET_HUB_INTERVAL overrides.
+constexpr uint32_t kHubIntervalOffset = 0x594;
+constexpr int16_t kHubIntervalGame = 20, kHubInterval = 4;
+
+int16_t hub_interval() {
+    static const int16_t value = [] {
+        const char* text = std::getenv("MH3U_NET_HUB_INTERVAL");
+        const int parsed = text ? std::atoi(text) : 0;
+        return static_cast<int16_t>(parsed >= 1 && parsed <= 600 ? parsed : kHubInterval);
+    }();
+    return value;
+}
+
 enum class Step { Idle, ToHarbor, WaitHarbor, SignIn, WaitSignIn, OpenSession, WaitSession, Create, Search, WaitSearch, Join, WaitInSession, ToHall, WaitHall, InHall, Leave, WaitLeave, BackToHarbor };
 
 std::atomic<Step> g_step{Step::Idle};
@@ -1256,9 +1271,11 @@ void quest_tick(ppc::Context& ctx, uint8_t* base) {
 void session_tick(ppc::Context& ctx, uint8_t* base) {
     take_request(base);
     const Step step = g_step;
-    if (step == Step::Idle) return;
     const uint32_t net = ppc::ld32(base, kLobbyNetwork);
     if (!net) return;
+    const int16_t interval = step == Step::Idle ? kHubIntervalGame : hub_interval();  // the game's own value back once offline
+    if (static_cast<int16_t>(ppc::ld16(base, net + kHubIntervalOffset)) != interval) ppc::st16(base, net + kHubIntervalOffset, static_cast<uint16_t>(interval));
+    if (step == Step::Idle) return;
     const uint32_t state = ppc::ld32(base, net + 0x8AC);
     ++g_step_frames;
     const bool timed_out = g_step_frames > kStepTimeoutFrames;

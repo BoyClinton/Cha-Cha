@@ -318,8 +318,34 @@ void pace_tick(uint8_t* base) {
     }
 }
 
+// MH3U_NET_PROBE_TRACK=1: each frame a hunter's position (pad block +0xE0) changes, one line with all 4 member slots, to time how late
+// the other copy shows a movement (docs/online.md "Hub movement delay")
+void track_tick(uint8_t* base) {
+    static const bool on = !env("MH3U_NET_PROBE_TRACK").empty();
+    if (!on) return;
+    const uint32_t players = ppc::ld32(base, kPlayers);
+    if (!players) return;
+    static float last[4][2] = {};
+    float now[4][2] = {};
+    bool changed = false;
+    for (uint32_t m = 0; m < 4; ++m) {
+        const uint32_t unit = ppc::ld32(base, players + 0x40 + m * 4);
+        const uint32_t pad = unit ? ppc::ld32(base, unit + 0xE30) : 0;
+        if (!pad) continue;
+        now[m][0] = ppc::ldf32(base, pad + 0xE0);
+        now[m][1] = ppc::ldf32(base, pad + 0xE8);
+        changed |= now[m][0] != last[m][0] || now[m][1] != last[m][1];
+    }
+    if (!changed) return;
+    std::memcpy(last, now, sizeof(last));
+    std::printf("net: track %u t=%.3f", g_swaps, std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    for (uint32_t m = 0; m < 4; ++m) std::printf(" m%u=%.1f,%.1f", m, now[m][0], now[m][1]);
+    std::printf("\n");
+}
+
 PPC_FUNC(swap_with_jump) {
     frame_time_tick();
+    track_tick(base);
     npc_tick(base);
     pace_tick(base);
     lobby_network_tick(base);

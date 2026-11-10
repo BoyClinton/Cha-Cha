@@ -7,6 +7,7 @@ Talk to Neko: his Destination list has an Online section with Host a Hunt, Join 
 | | State |
 |---|---|
 | Host / Join from town, Player List, both hunters visible, positions match | Seen working |
+| Hall movement delay: the other hunter followed about 0.7 s late (issue #3) | Fixed, 0.73 s -> 0.15 s in headless host + joiner runs; not yet retried by a person |
 | Guest leaves and rejoins; host leaves and the session ends for the guest | Seen working |
 | Guest follows the host's quest; member barrier clears | Seen working, with the depart press imitated by the probe |
 | Large monster: one copy controls it, the other follows its route, control moves between members | Seen working |
@@ -318,3 +319,24 @@ Reported by a person: the joining copy had frame drops and no NPCs at the counte
 - Seen after the fix: flyover ended by itself, joiner about 8 ms a frame (worst about 10 ms), NPCs at the same positions as the host's, counter populated with speech bubbles.
 - Not known: why a copy that takes Neko's row at swap 7800 gets the flyover and one at swap 5300 does not (both rows 3 and 4 get it at 7800, so it is not the row). The host only avoided it through that timing, and uses the same step, but a late host has not been run since the fix.
 - `MH3U_NET_PROBE_NPC=1` and `MH3U_NET_PROBE_PACE=1` log the NPC slots and the pacer / `sEvDemo` state.
+
+## Hub movement delay (2026-11-10)
+
+Reported in issue #3: in the hall the other hunter shows up late. The game's own timing, not the network:
+- Sender: 0x02798F68 counts down the hunter's pad block +0x14F4 by *(+0x14FC) each update; at zero it reloads it from `sLobbyNetwork` (*0x103A2F90)
+  +0x594 and calls 0x022627CC, which sends 0x48 bytes (position +0xE0..+0xE8, area, motion) through 0x0226F1C0.
+- Receiver: 0x02262DA0 stores the target at +0x160..+0x168 and calls 0x02797DF0(unit, +0x594), which glides the hunter there over that many ticks.
+  0x027A0888 (the remote hunter's motion) also reads +0x594 - 1.
+- Only the constructor 0x022601B8 writes +0x594: 20 ticks. So each copy sees the other hunter about 0.7 s behind, and a run ends with a slow slide.
+- Fix: `net_backend.cpp` writes 4 there on every copy while a Host / Join is under way, and 20 again when idle (`MH3U_NET_HUB_INTERVAL` overrides, 1-600).
+- Measured with two headless copies, the host running left and right in the hall, `MH3U_NET_PROBE_TRACK=1` logging both hunters each frame
+  (lag = time until the joiner shows the host's hunter at the same x):
+
+| +0x594 | Lag median | p90 | Joiner's motion |
+|---|---|---|---|
+| 20 (the game's) | 0.73 s | 0.90 s | steady, then a slow slide of about 1 s at the end of each run |
+| 6 | 0.24 s | 0.28 s | smooth |
+| 4 (used) | 0.15 s | 0.22 s | smooth: speeds up briefly at the start of a run to catch up, no stops mid-run |
+
+Both copies end on the same position in every run. Hall packets go from about 1.5 to 7.5 position updates a second per hunter, under 1 KB/s.
+

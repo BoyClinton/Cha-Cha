@@ -1046,3 +1046,8 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 
 ## 2026-11-09 - Joiner's 30 FPS and empty counter: the arrival flyover was cut off (fork)
 - sEvDemo type 0x10 (Port Tanzia flyover) sets sMain +0x76 fixed step, +0x4C 30, +0x88 2 through 0x0294C968; only the end of its state 4 clears them. Our area change to the hall wiped the state, stranding 30 FPS and leaving lobby NPCs at 0,0,0. Evidence: thread samples asleep in 0x0294B8DC, gdb breakpoint on 0x0294C968 (0x0214E2B8 -> 0x0214D038 -> 0x0210F7D0). Fix and open question in docs/online.md "The arrival flyover".
+
+## 2026-11-10 - Hall movement delay is the game's send interval (fork, issue #3)
+- Hub position send 0x022627CC (from 0x02798F68) fires when a countdown reloaded from sLobbyNetwork +0x594 runs out; the receiver 0x02262DA0 glides over the
+  same +0x594 ticks (0x02797DF0). Only the constructor 0x022601B8 sets it, to 20. Headless host + joiner: lag 0.73 s at 20, 0.15 s at 4. The backend now writes 4
+  while online. Details in docs/online.md "Hub movement delay".
