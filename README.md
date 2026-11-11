@@ -266,11 +266,11 @@ code, translated from your executable at build time.
 | `src/` | Hand-written game code: item sets, mods, the camera, Cha-Cha's menu pages… | yes |
 | `android/` | The Android app around the game library (SDL's activity, manifest, Gradle) | yes |
 | `tools/`, `scripts/`, `ghidra/` | Shader translator, helper scripts, reverse-engineering scripts | yes |
-| `docs/` | Roadmap, research log, formats, mods, input, Linux, Android, online notes | yes |
+| `docs/` | Formats, the runtime and engine, mods, input, Linux, Android, online notes | yes |
 | `build/` | Build output | no |
 
-How the port works and what was learned: [docs/runtime.md](docs/runtime.md), [docs/engine.md](docs/engine.md),
-[docs/research-log.md](docs/research-log.md).
+How the port works: [docs/runtime.md](docs/runtime.md), [docs/engine.md](docs/engine.md),
+[docs/formats/](docs/formats).
 
 </details>
 
