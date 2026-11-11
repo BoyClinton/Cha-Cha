@@ -258,11 +258,12 @@ PPC_FUNC(option_page) {
     g_option = static_cast<uint32_t>(ctx.r[3]);
     g_option_page = static_cast<uint32_t>(ctx.r[4]);
     g_option_frame = g_frame;
-    // Controller Settings (page 23) is disabled for now (user 2026-10-29: it will become a page of our own): it stores
-    // the controller choice as it moves, and choosing the GamePad there leaves no working input. Its step sees no
+    // Controller Settings (page 23) stores the controller choice as it moves. With MH3U_CONTROLLER=both (the default
+    // since issue #6) host input drives the Pro Controller and the GamePad alike, so either choice works and the page is
+    // left alone. In the other modes choosing the missing controller leaves no working input: its step then sees no
     // left / right (menu bits 4 / 8 of sAppPad +0x6C and +0x80, what FUN_0275A4A8 reads), so the choice cannot change;
     // B still leaves the page.
-    const uint32_t pad = ctx.r[4] == 23 ? ppc::ld32(base, kSAppPad) : 0;
+    const uint32_t pad = ctx.r[4] == 23 && !(g_pointer.both_controllers && g_pointer.both_controllers()) ? ppc::ld32(base, kSAppPad) : 0;
     const uint32_t trig = pad ? ppc::ld32(base, pad + 0x6C) : 0, rep = pad ? ppc::ld32(base, pad + 0x80) : 0;
     if (pad) {
         ppc::st32(base, pad + 0x6C, trig & ~0xCu);
