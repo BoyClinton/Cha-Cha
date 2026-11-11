@@ -20,7 +20,7 @@ namespace mh3u::latte {
 
 // Bump when translated output changes (translator, shader_abi.h or compile options): caches made by another
 // version are rebuilt on the next start.
-inline constexpr int kTranslatorVersion = 2;  // 2: SPIR-V 1.5 (Vulkan 1.2) for older GPUs
+inline constexpr int kTranslatorVersion = 3;  // 2: SPIR-V 1.5 (Vulkan 1.2) for older GPUs; 3: UBO fetch index clamped
 
 // Game content access, relative to /vol/content ("nativeCafe/shaderPack.spkg").
 struct ContentReader {

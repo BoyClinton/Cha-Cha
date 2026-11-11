@@ -7,10 +7,12 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mh3u::os {
 
@@ -87,6 +89,20 @@ void register_input(Runtime& r);
 void register_coreinit_dynload(Runtime& r);
 void register_applets(Runtime& r);
 void register_offline(Runtime& r);
+// The DLC server, local (dlc_server.cpp): curl's easy interface answered by responder, nn_ac / nn_act online.
+// Register after register_offline / register_nn_act (it replaces some of their imports).
+struct DlcResponse {
+    int status = 404;
+    std::vector<uint8_t> body;
+    int delay_ms = 0;  // pause after each piece of the body (the game's progress shows a download)
+    int pieces = 8;    // the body goes out in this many pieces (fewer when it is short)
+    // When set, a long job behind the "download" (0..1, any thread): piece k goes out once it reaches (k+1)/pieces,
+    // so the game's download bar follows the job; the response is made when the job starts, sent as it goes.
+    std::function<double()> progress;
+    std::function<bool()> cancelled;  // with progress: the job was called off, the request ends as aborted
+};
+using DlcResponder = std::function<DlcResponse(const std::string& url, const std::vector<uint8_t>& post)>;
+void register_dlc_server(Runtime& r, DlcResponder responder, bool log);
 void register_coreinit_misc(Runtime& r);
 void register_h264(Runtime& r);  // Media Foundation H.264 decoder
 

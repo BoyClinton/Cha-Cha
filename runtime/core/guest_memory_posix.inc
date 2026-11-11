@@ -6,6 +6,32 @@
 // faulting instruction itself) is still stamped. The kernel does not fault on its own writes (read() into a read-only
 // page fails with EFAULT): file reads into guest memory go through a bounce buffer (fs/host_tree.cpp).
 
+// Write tracking needs 4 KB host pages (one mprotect per guest page). On 16 KB-page systems (some arm64 Android
+// devices) it is off: written_since() always says "written", so caches re-read guest data (slower, still correct).
+size_t g_host_page = 4096;
+bool g_track = true;
+
+// Whether the faulting access was a write, and where it happened (per CPU architecture).
+#if defined(__x86_64__)
+bool fault_is_write(const ucontext_t* uc) { return (uc->uc_mcontext.gregs[REG_ERR] & 2) != 0; }
+void* fault_pc(const ucontext_t* uc) { return reinterpret_cast<void*>(uc->uc_mcontext.gregs[REG_RIP]); }
+#elif defined(__aarch64__)
+// The kernel's esr_context record in the signal frame: ESR_ELx.WnR (bit 6) is set for a write.
+bool fault_is_write(const ucontext_t* uc) {
+    const auto* p = reinterpret_cast<const uint8_t*>(uc->uc_mcontext.__reserved);
+    for (size_t off = 0; off + sizeof(_aarch64_ctx) <= sizeof(uc->uc_mcontext.__reserved);) {
+        const auto* h = reinterpret_cast<const _aarch64_ctx*>(p + off);
+        if (h->magic == 0 || h->size == 0) break;
+        if (h->magic == ESR_MAGIC) return (reinterpret_cast<const esr_context*>(h)->esr >> 6) & 1;
+        off += h->size;
+    }
+    return false;
+}
+void* fault_pc(const ucontext_t* uc) { return reinterpret_cast<void*>(uc->uc_mcontext.pc); }
+#else
+#error "guest_memory_posix.inc: add fault_is_write / fault_pc for this CPU"
+#endif
+
 constexpr uint8_t kCommitted = 1, kTracked = 2;  // page state bits; kTracked: read-only, waiting for a write
 std::unique_ptr<std::atomic<uint8_t>[]> g_page_state;
 std::unique_ptr<std::atomic<uint8_t>[]> g_dirty;  // 2: written since the scanner last looked; 1: the pass before
@@ -29,7 +55,7 @@ bool hit_watch(uint32_t addr, bool write) {
 void on_fault(int sig, siginfo_t* info, void* context) {
     const auto host = reinterpret_cast<uint64_t>(info->si_addr), base = reinterpret_cast<uint64_t>(g_base);
     const auto* uc = static_cast<const ucontext_t*>(context);
-    const bool write = (uc->uc_mcontext.gregs[REG_ERR] & 2) != 0;
+    const bool write = fault_is_write(uc);
     if (g_base && host >= base && host < base + kSpace) {
         const auto addr = static_cast<uint32_t>(host - base);
         const size_t page = addr >> 12;
@@ -60,7 +86,7 @@ void on_fault(int sig, siginfo_t* info, void* context) {
     else
         std::fprintf(stderr, "host access violation at %p\n", info->si_addr);
     // where: module + offset of the faulting instruction (addr2line -e <module> <offset>)
-    const auto pc = reinterpret_cast<void*>(uc->uc_mcontext.gregs[REG_RIP]);
+    const auto pc = fault_pc(uc);
     Dl_info dl{};
     if (dladdr(pc, &dl) && dl.dli_fname)
         std::fprintf(stderr, "  at %s+0x%llX (%s)\n", dl.dli_fname,
@@ -84,6 +110,8 @@ GuestMemory::GuestMemory() {
     if (p == MAP_FAILED) throw std::runtime_error("cannot reserve 4 GB of address space for guest memory");
     base_ = static_cast<uint8_t*>(p);
     g_base = base_;
+    g_host_page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+    g_track = g_host_page == 0x1000;
     g_instance = this;
     page_epoch_ = std::make_unique<std::atomic<uint32_t>[]>(kSpace >> 12);
     g_page_state = std::make_unique<std::atomic<uint8_t>[]>(kSpace >> 12);
@@ -103,7 +131,7 @@ void GuestMemory::set_watched(std::vector<Range> ranges) {
         std::lock_guard g(watch_m_);
         watched_ = std::move(ranges);
     }
-    if (!scanner_.joinable()) scanner_ = std::thread([this] { scan_loop(); });
+    if (g_track && !scanner_.joinable()) scanner_ = std::thread([this] { scan_loop(); });
 }
 
 // Each pass: pages written since the last one (or the one before) are stamped with epoch e and made read-only again;
@@ -154,6 +182,7 @@ void GuestMemory::scan_loop() {
 
 bool GuestMemory::written_since(uint32_t addr, uint32_t size, uint32_t since) const {
     if (!size) return false;
+    if (!g_track) return true;
     const uint64_t end = std::min<uint64_t>(uint64_t{addr} + size, kSpace);
     for (uint64_t p = addr >> 12; p < (end + 0xFFF) >> 12; ++p)
         if (page_epoch_[p].load(std::memory_order_relaxed) > since) return true;
@@ -168,8 +197,11 @@ GuestMemory::~GuestMemory() {
 }
 
 bool GuestMemory::commit(uint32_t addr, uint32_t size) {
-    const size_t first = addr >> 12, last = (size_t{addr} + size + 0xFFF) >> 12;
-    if (mprotect(base_ + (first << 12), (last - first) << 12, PROT_READ | PROT_WRITE) != 0) return false;
+    // whole host pages (4 or 16 KB): the guest pages sharing one become usable together
+    const size_t mask = g_host_page - 1;
+    const size_t lo = size_t{addr} & ~mask, hi = (size_t{addr} + size + mask) & ~mask;
+    if (mprotect(base_ + lo, hi - lo, PROT_READ | PROT_WRITE) != 0) return false;
+    const size_t first = lo >> 12, last = hi >> 12;
     for (size_t p = first; p < last; ++p) g_page_state[p].store(kCommitted, std::memory_order_relaxed);
     return true;
 }

@@ -1,4 +1,4 @@
-// Hold to gather (carving.cpp): always on.
+// Hold to gather (carving.cpp): the Auto Carve mod (mods.h), on by default.
 #pragma once
 
 #include <functional>

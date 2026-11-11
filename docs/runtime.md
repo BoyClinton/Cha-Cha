@@ -93,11 +93,15 @@ SPIR-V 1.5 (Vulkan 1.2 target). `MH3U_VK_LEGACY=1` takes the emulated path on a 
   the start. Frame dumps include the inset.
 - **Pipelines** are cached by shaders, vertex layout, topology, target formats, blend/write masks, depth and cull
   state; viewport (flipped: negative height, GX2 viewports are y-up), scissor and blend constant are dynamic.
-- **Debugging.** `MH3U_DUMP_FRAME=N[,N...]` writes `build/frame_N.bmp` (read back from the GPU), `build/frame_N_draws.txt`
+- **Debugging.** `MH3U_DUMP_KEY=1` makes F9 dump a burst of 6 frames 4 apart (`MH3U_DUMP_KEY=20,1`: 20 consecutive
+  frames). `MH3U_DUMP_FRAME=N[,N...]` writes `build/frame_N.bmp` (read back from the GPU), `build/frame_N_draws.txt`
   with the frame's ordered events (clears, draws, copies, scan-out) and a per-draw trace (shader keys, decoded first
   vertices per attribute, targets, textures, uniform values); `MH3U_DUMP_TARGET=<hex image address>` also writes
   `build/target_<addr>.bmp`. `MH3U_RENDER_DEBUG` flags: 1 no alpha test, 2 no blending, 8 only geometry-shader draws,
-  16 log the write-watched texture memory.
+  16 log the write-watched texture memory, 32 sample mip level 0 only, 64 the raw GX2 polygon offset as constant depth
+  bias (before issue #15; now capped at 16 units plus a slope factor of 2).
+  `MH3U_EFFECT_STEP=frame`: particles stepped once a frame again (before issue #15: too fast above 30 FPS).
+  `MH3U_EFFECT_LOG=1` prints frames, particle steps and the mean frame time once a second.
   `MH3U_VK_VALIDATION=1` enables the validation layer (clean over 600 frames, headless and windowed).
 
 At boot the game shows its first screen correctly: the "Wii U GamePad has been detected" notice (clear, a

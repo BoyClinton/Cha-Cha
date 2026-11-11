@@ -5,9 +5,9 @@
 //   portable.txt next to Cha-Cha.exe  -> <exe dir>/data      (portable install, e.g. on a USB drive)
 //   run inside the source checkout  -> the checkout        (save/, input.ini, cache/ are gitignored)
 //   otherwise                       -> %APPDATA%\Cha-Cha
-// The game: the sources recorded in <data>/config.ini ("game=<path>" lines, written by --install or the setup
-// screen), overridden by --game <path> (repeatable); in the checkout extracted/ or game/*.wua are found by
-// themselves.
+// The game: --game <path> (repeatable), else the sources recorded in <data>/config.ini ("game=<path>" lines, written
+// by --install), else a "game" folder next to Cha-Cha.exe or in the data folder (.wua files, or the dumped title
+// folders with code / content / meta); in the checkout extracted/ or game/*.wua are found by themselves.
 #pragma once
 
 #include <filesystem>
@@ -41,12 +41,18 @@ struct Settings {
     // "off", "original" (the game's own DOF filters, where it uses them) or "enhanced" (also our gameplay DOF)
     std::string depth_of_field = "original";
     bool ambient_occlusion = false;  // our screen-space AO (the game has none)
-    bool global_illumination = false;  // our screen-space bounce light (the game has none)
+    // our screen-space bounce light and reflections (the game has neither): "off", "lite" or "full"
+    std::string global_illumination = "off";
+    std::string reflections = "off";
     bool vignette = false;           // darker screen corners (our post pass)
     bool texture_packs = true;       // replacement textures from <data>/texture_replacements
     std::string look = "original";  // "original" (MH3U) or "tri" (Wii-style grade)
     int fps_limit = 0;              // 0 = display refresh rate, -1 = unlimited, else frames per second
     bool vsync = false;             // FIFO presentation (no tearing, waits for the display)
+    // CFG > Camera Settings (user 2026-11-10): the Modern Camera (src/game/modern_camera.cpp) and the quest camera's
+    // distance from the hunter in percent of the game's own (issue #17)
+    bool modern_camera = false;
+    int camera_distance = 100;
     bool operator==(const Settings&) const = default;
 };
 Settings load_settings(const AppPaths& p);
@@ -54,5 +60,7 @@ bool save_settings(const AppPaths& p, const Settings& s);
 
 // Dump locations inside a source checkout (extracted/, game/*.wua), for development runs.
 std::vector<std::filesystem::path> repo_game_sources(const AppPaths& p);
+// A "game" folder next to the exe or in the data folder: its .wua files, else the folder itself (dumped titles).
+std::vector<std::filesystem::path> folder_game_sources(const AppPaths& p);
 
 }  // namespace mh3u::boot

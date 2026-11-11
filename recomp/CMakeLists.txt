@@ -65,11 +65,21 @@ foreach(i RANGE ${last})
 endforeach()
 add_executable(recomp_emit tools/recomp_emit.cpp)
 target_link_libraries(recomp_emit PRIVATE mh3u_recomp_core)
-add_custom_command(
-  OUTPUT ${game_sources} ${MH3U_RECOMP_OUT}/functions.h
-  COMMAND recomp_emit ${MH3U_REPO_ROOT} ${MH3U_RECOMP_OUT} ${MH3U_RECOMP_FILES}
-  DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt
-  COMMENT "Recompiling the game into recomp/out")
+if(CMAKE_CROSSCOMPILING)
+  # Android: recomp_emit cannot run on the build machine from this tree; the PC build generates the code
+  # (scripts/build-android.ps1 does that first) and this build only compiles it
+  foreach(f ${game_sources})
+    if(NOT EXISTS ${f})
+      message(FATAL_ERROR "${f} missing: generate the game code with the PC build first (scripts/build-android.ps1)")
+    endif()
+  endforeach()
+else()
+  add_custom_command(
+    OUTPUT ${game_sources} ${MH3U_RECOMP_OUT}/functions.h
+    COMMAND recomp_emit ${MH3U_REPO_ROOT} ${MH3U_RECOMP_OUT} ${MH3U_RECOMP_FILES}
+    DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt
+    COMMENT "Recompiling the game into recomp/out")
+endif()
 add_library(mh3u_recomp_game STATIC ${game_sources})
 target_include_directories(mh3u_recomp_game PUBLIC ${MH3U_RECOMP_OUT})
 target_link_libraries(mh3u_recomp_game PUBLIC mh3u_ppc_context mh3u_recomp_support)

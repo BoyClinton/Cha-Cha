@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Set by scripts/build-android.ps1 (-P...): SDL's source (its Java glue must match the libSDL3.so built from it),
+// the native libraries and the generated launcher icon. The defaults are that script's locations.
+def repo = rootProject.projectDir.parentFile
+def sdlDir = file(findProperty('chachaSdlDir') ?: new File(repo, 'tools/bin/android/SDL3'))
+def jniDir = file(findProperty('chachaJniLibs') ?: new File(repo, 'build/android/jniLibs'))
+def genRes = file(findProperty('chachaGenRes') ?: new File(repo, 'build/android/res'))
+
+android {
+    namespace = 'io.github.boyclinton.chacha'
+    compileSdk = 36
+    defaultConfig {
+        applicationId = 'io.github.boyclinton.chacha'
+        // Vulkan 1.1 is guaranteed on 64-bit devices from Android 10
+        minSdk = 29
+        targetSdk = 36
+        versionCode = (findProperty('chachaVersionCode') ?: '1') as int
+        versionName = findProperty('chachaVersionName') ?: 'dev'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+    sourceSets {
+        main {
+            java.srcDirs += new File(sdlDir, 'android-project/app/src/main/java')
+            jniLibs.srcDirs = [jniDir]
+            res.srcDirs += genRes
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled = false
+            // signed by scripts/build-android.ps1 with the player's own key (apksigner), or debug-signed with -Debug
+        }
+    }
+    packaging {
+        jniLibs {
+            // the game library is large: stored uncompressed and mapped from the APK, not extracted on install
+            useLegacyPackaging = false
+        }
+    }
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+}

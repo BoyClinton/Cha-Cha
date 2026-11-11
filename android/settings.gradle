@@ -1,0 +1,18 @@
+// Cha-Cha for Android (docs/android.md). Build with scripts/build-android.ps1: it builds the native libraries
+// (libmain.so = the game, libSDL3.so) with CMake first; Gradle only compiles SDL's Java glue and packages the APK.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'Cha-Cha'
+include ':app'

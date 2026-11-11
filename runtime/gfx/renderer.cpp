@@ -640,31 +640,53 @@ private:
     bool init_post(std::string* error);
     Image* post_process(Image& src);
     // our full-screen passes (look, ambient occlusion, depth of field): shared layouts, pipelines by (shader, format, blend)
-    enum class FxBlend { None, Multiply, Ease };
+    // Bounce: dst + dst * src (GI); Over: dst * (1 - src.a) + src (premultiplied: reflections). Both keep dst alpha.
+    enum class FxBlend { None, Multiply, Ease, Bounce, Over };
     VkDescriptorSetLayout fx_set_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout fx_layout_ = VK_NULL_HANDLE;
     VkSampler post_sampler_ = VK_NULL_HANDLE, fx_nearest_ = VK_NULL_HANDLE;
     VkShaderModule fx_vs_ = VK_NULL_HANDLE, ao_fs_ = VK_NULL_HANDLE, ao_apply_fs_ = VK_NULL_HANDLE, focus_fs_ = VK_NULL_HANDLE,
-                   dof_fs_ = VK_NULL_HANDLE, tri_fs_ = VK_NULL_HANDLE, gi_fs_ = VK_NULL_HANDLE, gi_apply_fs_ = VK_NULL_HANDLE;
+                   dof_fs_ = VK_NULL_HANDLE, tri_fs_ = VK_NULL_HANDLE, gi_apply_fs_ = VK_NULL_HANDLE, lo_fs_ = VK_NULL_HANDLE,
+                   blur_fs_ = VK_NULL_HANDLE, ssr_apply_fs_ = VK_NULL_HANDLE;
+    VkShaderModule gi_fs_[2] = {}, ssr_fs_[2] = {};  // [Lite, Full]
     std::vector<VkShaderModule> fx_modules_;
     std::map<std::tuple<VkShaderModule, VkFormat, FxBlend>, VkPipeline> fx_pipes_;
     VkShaderModule fx_module(const std::string& glsl, const char* name, bool vertex, std::string* error);
     VkPipeline fx_pipeline(VkShaderModule fs, VkFormat fmt, FxBlend blend);
     void fx_pass(VkPipeline pipe, Image& out, std::initializer_list<Image*> tex, const float push[8]);
+    Image* fx_target(std::unique_ptr<Image>& img, VkFormat fmt, uint32_t w, uint32_t h);  // (re)made at this size
     // scene effects (MH3U_AO, MH3U_DOF; tunables MH3U_AO_RADIUS etc.): once a frame on the TV-sized scene target
-    bool ao_ = false, dof_ = false, gi_ = false;  // this frame's (from want_*, set_effects)
-    std::atomic<bool> want_look_{false}, want_ao_{false}, want_dof_{false}, want_vignette_{false}, want_gi_{false};
+    bool ao_ = false, dof_ = false;  // this frame's (from want_*, set_effects)
+    int gi_ = 0, ssr_ = 0;           // this frame's level: 0 off, 1 Lite, 2 Full
+    std::atomic<bool> want_look_{false}, want_ao_{false}, want_dof_{false}, want_vignette_{false};
+    std::atomic<int> want_gi_{0}, want_ssr_{0};
     bool tri_ = false, vignette_ = false;  // this frame's Tri scene pass / vignette post pass (look_ = the vignette)
-    void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, bool global_illumination) override {
+    void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, int global_illumination,
+                     int reflections) override {
         want_vignette_ = vignette;
         want_look_ = tri_look;
         want_ao_ = ambient_occlusion;
         want_dof_ = depth_of_field;
-        want_gi_ = global_illumination;
+        want_gi_ = std::clamp(global_illumination, 0, 2);
+        want_ssr_ = std::clamp(reflections, 0, 2);
+    }
+    void latch_effects() {  // this frame's effects from the wanted ones (where their passes exist)
+        tri_ = want_look_ && tri_fs_;
+        vignette_ = want_vignette_;
+        look_ = vignette_ && post_pipe_ ? 1 : 0;
+        ao_ = want_ao_ && ao_fs_;
+        dof_ = want_dof_ && dof_fs_;
+        gi_ = lo_fs_ && gi_apply_fs_ ? want_gi_.load() : 0;
+        ssr_ = lo_fs_ && ssr_apply_fs_ ? want_ssr_.load() : 0;
     }
     // GI radius in near-plane units and bounce strength (MH3U_GI_RADIUS, MH3U_GI_STRENGTH)
     float gi_radius_ = 600.0f, gi_strength_ = 0.6f;
-    std::unique_ptr<Image> gi_img_;
+    // reflections: strength, reflectance facing the camera (Schlick F0), hit thickness as a share of the depth
+    // (MH3U_SSR_STRENGTH, MH3U_SSR_F0, MH3U_SSR_THICKNESS)
+    float ssr_strength_ = 0.6f, ssr_f0_ = 0.04f, ssr_thickness_ = 0.03f;
+    VkFormat gi_format_ = VK_FORMAT_R16G16B16A16_SFLOAT;  // B10G11R11 where it can be drawn to (half the bandwidth)
+    // the half-resolution scene (colour + eye depth) both GI and reflections read; their traces and blurs
+    std::unique_ptr<Image> lo_img_, gi_img_, gi_blur_img_, ssr_img_, ssr_blur_img_;
     // Tri: glow radius (px at 1080p), haze strength / start / per unit (near-plane units), glow strength (MH3U_TRI_*)
     float tri_glow_radius_ = 18.0f, tri_haze_ = 0.30f, tri_haze_start_ = 3000.0f, tri_haze_k_ = 1.0f / 25000.0f, tri_glow_ = 0.16f;
     // AO radius in near-plane units (MH3U's near plane is small: the hunter is ~1500 away in a village shot)
@@ -715,7 +737,8 @@ VkRenderer::~VkRenderer() {
     for (auto& [k, s] : shaders_by_key_)
         if (s->module) vkDestroyShaderModule(dev_, s->module, nullptr);
     if (pipeline_cache_) vkDestroyPipelineCache(dev_, pipeline_cache_, nullptr);
-    for (Image* i : {post_.get(), ao_img_.get(), focus_img_.get()})
+    for (Image* i : {post_.get(), ao_img_.get(), focus_img_.get(), lo_img_.get(), gi_img_.get(), gi_blur_img_.get(), ssr_img_.get(),
+                     ssr_blur_img_.get()})
         if (i) destroy_image(*i);
     for (auto& [k, p] : fx_pipes_)
         if (p) vkDestroyPipeline(dev_, p, nullptr);
@@ -743,7 +766,7 @@ bool VkRenderer::init(std::string* error) {
     size_t dbg_len = 0;
     if (_dupenv_s(&dbg, &dbg_len, "MH3U_RENDER_DEBUG") == 0 && dbg) debug_ = static_cast<uint32_t>(std::strtoul(dbg, nullptr, 0));
     std::free(dbg);  // MH3U_RENDER_DEBUG: 1 no alpha test, 2 no blending, 8 only geometry-shader draws, 16 log write watch,
-                     // 32 mip level 0 only
+                     // 32 mip level 0 only, 64 raw GX2 polygon offset (the pre-issue-#15 constant depth bias)
     dev_ = vk_.device;
     // pipeline cache next to the shader cache (cache/), seeded from the last run; the driver rejects a blob from
     // another GPU or driver version by itself (header check), so a stale file only costs the rebuild
@@ -1931,7 +1954,7 @@ bool VkRenderer::scan_out(const GuestSurface& s, bool gamepad) {
 
 void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     if (!call.count || !call.instances) return;
-    if ((ao_ || dof_ || gi_ || tri_) && !scene_done_) scene_hook(st);
+    if ((ao_ || dof_ || gi_ || ssr_ || tri_) && !scene_done_) scene_hook(st);
     // the vertex/index caches point into the vertex arena: bound them here, before any entry is in use
     if (varena_bytes_ > (256ull << 20) || vcache_bytes_ > (512ull << 20) || icache_.size() > 65536)  // bound: start over
         retire_vertex_arena();
@@ -2176,6 +2199,10 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
         if (st.poly_offset_front || st.poly_offset_back)
             tracef("  polygon offset front %d back %d: %g x %g / %g x %g clamp %g\n", st.poly_offset_front, st.poly_offset_back,
                    st.poly_offset[0], st.poly_offset[1], st.poly_offset[2], st.poly_offset[3], st.poly_offset[4]);
+        if (st.blend_enable_mask & 1)  // GX2BlendMode / GX2BlendCombine numbers, target 0, and the colour write mask
+            tracef("  blend 0: colour %u %u op %u, alpha %u %u op %u (separate %d), write mask %X\n", st.blend[0].color_src,
+                   st.blend[0].color_dst, st.blend[0].color_op, st.blend[0].alpha_src, st.blend[0].alpha_dst, st.blend[0].alpha_op,
+                   st.blend[0].separate_alpha, st.write_mask[0]);
         ShaderInfo* sh[3] = {vs, ps, gs};
         for (int s = 0; s < 3; ++s) {
             if (!sh[s]) continue;
@@ -2190,7 +2217,8 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
             for (auto [block, n] : sh[s]->ubos) {
                 const UniformBinding& u = st.stage[s].ubo[block];
                 tracef("  %s ubo %u: %08X size %u (shader reads %u vec4):", kStageExt[s], block, u.addr, u.size, n);
-                for (uint32_t w = 0; w < std::min(u.size / 4, 16u) && u.addr; ++w) {
+                // the vec4s the shader reads, up to 16 (flags and colours sit past the first four)
+                for (uint32_t w = 0; w < std::min(u.size / 4, std::clamp(4 * n, 16u, 64u)) && u.addr; ++w) {
                     const uint32_t v = le32(base_ + u.addr + 4 * w);
                     float f;
                     std::memcpy(&f, &v, 4);
@@ -2440,12 +2468,19 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     vkCmdSetStencilCompareMask(c, VK_STENCIL_FACE_BACK_BIT, sback.compare_mask);
     vkCmdSetStencilWriteMask(c, VK_STENCIL_FACE_BACK_BIT, sback.write_mask);
     vkCmdSetStencilReference(c, VK_STENCIL_FACE_BACK_BIT, sback.ref);
-    // the layer is pulled towards the camera by the offset's size (units of the depth buffer's resolution, as Vulkan's
-    // constant factor; the scale per unit of depth slope likewise - MH3U leaves it 0), so it lies over the surface it is
-    // drawn on. A clamp needs the depthBiasClamp feature.
-    if (pipe_desc_.depth_bias)
-        vkCmdSetDepthBias(c, -std::fabs(st.poly_offset[bias_back ? 2 : 0]),
-                          vk_.depth_bias_clamp ? -std::fabs(st.poly_offset[4]) : 0.0f, -std::fabs(st.poly_offset[bias_back ? 3 : 1]));
+    // The layer is pulled towards the camera so it lies over the surface it is drawn on. MH3U's offsets (-32..-512
+    // depth-buffer units, slope scale 0) are also set on everything else, which keeps none: taken as a constant they
+    // pulled distant water and decals tens of world units forward (a constant depth step covers ever more distance
+    // far away), through the rocks standing in the sea and the banks in front of hidden water (issue #15). So the
+    // constant part is capped small and a slope-scaled part (in pixels of the layer's own depth slope, so at most
+    // ~2 pixels of overlap on screen at any distance) handles the grazing far sea of issue #8.
+    // MH3U_RENDER_DEBUG=64 restores the raw constant offset. A clamp needs the depthBiasClamp feature.
+    if (pipe_desc_.depth_bias) {
+        const float off = std::fabs(st.poly_offset[bias_back ? 2 : 0]), scale = std::fabs(st.poly_offset[bias_back ? 3 : 1]);
+        const bool raw = debug_ & 64;
+        vkCmdSetDepthBias(c, raw ? -off : -std::min(off, 16.0f), vk_.depth_bias_clamp ? -std::fabs(st.poly_offset[4]) : 0.0f,
+                          raw ? -scale : -std::max(scale, 2.0f));
+    }
     const abi::PixelPushConstants ppc{st.alpha_test && !(debug_ & 1) ? st.alpha_func : 7u, st.alpha_ref};
     vkCmdPushConstants(c, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof ppc, &ppc);
     const abi::VertexPushConstants vpc{st.point_size * scale_};
@@ -2564,68 +2599,217 @@ void main() {
 }
 )";
 
-// Global illumination (screen space, one bounce) into an RGBA16F image: the colour of nearby surfaces that face this
-// pixel, gathered like the AO's samples (16 taps in a screen-space disk, rotated per pixel) and weighted by the
-// cosine and a range falloff. p.a = (world radius in near-plane units, -, -, -).
-const char* kGiFs = R"(
+// ---- global illumination and reflections: one shared low-resolution scene -------------------------------------
+// Both read "lo", the scene at half resolution with its eye depth packed in (RGBA16F: rgb the colour - a bilinear
+// 2x2 average -, a the eye depth, 0 on the sky), made once a frame (kLoFs): every tap is one fetch from a small
+// texture instead of a full-resolution depth fetch plus a colour sample. Their traces run at half (Full) or quarter
+// (Lite) resolution with a 4x4 ordered (Bayer) rotation per pixel, so the 4x4 blur that follows (kBlurFs, depth-aware,
+// still at low resolution) sees every rotation once; the result is joined to the full-resolution image by a 2x2
+// depth-aware upsample that is blended in by the fixed-function blender (no copy of the scene colour).
+const char* kLoFs = R"(
 layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1) uniform sampler2D depth;
-ivec2 ds;
-vec3 pos(ivec2 c) {
-    float z = lin(texelFetch(depth, clamp(c, ivec2(0), ds - 1), 0).r);
-    vec2 ndc = (vec2(c) + 0.5) / vec2(ds) * 2.0 - 1.0;
-    return vec3(ndc.x * kTanHalfFov * float(ds.x) / float(ds.y) * z, ndc.y * kTanHalfFov * z, z);
-}
 void main() {
-    ds = textureSize(depth, 0);
-    ivec2 c = ivec2(uv * vec2(ds));
-    frag = vec4(0.0);
-    if (texelFetch(depth, c, 0).r >= 0.99999) return;  // sky
-    vec3 P = pos(c);
-    vec3 dx1 = pos(c + ivec2(1, 0)) - P, dx0 = P - pos(c - ivec2(1, 0));
-    vec3 dy1 = pos(c + ivec2(0, 1)) - P, dy0 = P - pos(c - ivec2(0, 1));
-    vec3 N = normalize(cross(abs(dx1.z) < abs(dx0.z) ? dx1 : dx0, abs(dy1.z) < abs(dy0.z) ? dy1 : dy0));
-    if (dot(N, P) > 0.0) N = -N;
-    float R = p.a.x;
-    float rpx = min(R * 0.5 * float(ds.y) / (kTanHalfFov * P.z), 0.12 * float(ds.y));
-    if (rpx < 2.0) return;
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    vec3 sum = vec3(0.0);
-    for (int i = 0; i < 16; ++i) {
-        float a = (float(i) + noise) * 2.3999632;
-        float r = sqrt((float(i) + 0.5) / 16.0) * rpx;
-        ivec2 sc = c + ivec2(vec2(cos(a), sin(a)) * r);
-        vec3 v = pos(sc) - P;
-        float vv = dot(v, v);
-        float w = max(dot(v, N) * inversesqrt(vv + 1e-6) - 0.05, 0.0) * max(1.0 - vv / (R * R), 0.0);
-        sum += texture(src, (vec2(sc) + 0.5) / vec2(ds)).rgb * w;
-    }
-    frag = vec4(sum / 8.0, 1.0);
+    float d = texelFetch(depth, ivec2(uv * vec2(textureSize(depth, 0))), 0).r;
+    frag = vec4(texture(src, uv).rgb, d >= 0.99999 ? 0.0 : lin(d));
 }
 )";
 
-// Blurs the GI (4x4, depth-aware) and adds it as bounce light, tinted by the surface's own colour: out = c + c * gi
-// * strength. p.a = (strength, -, -, -).
-const char* kGiApplyFs = R"(
-layout(set = 0, binding = 0) uniform sampler2D gi;
-layout(set = 0, binding = 1) uniform sampler2D depth;
-layout(set = 0, binding = 2) uniform sampler2D src;
+// Helpers on lo (after kDepthGlsl). ls = lo's size, set first.
+const char* kLoGlsl = R"(
+ivec2 ls;
+vec4 lofetch(sampler2D t, ivec2 c) { return texelFetch(t, clamp(c, ivec2(0), ls - 1), 0); }
+float zz(float a) { return a > 0.0 ? a : 1e5; }  // the sky far away
+vec3 vpos(vec2 s, float z) {  // view position at lo pixel position s (centres at +0.5), eye depth z
+    vec2 ndc = s / vec2(ls) * 2.0 - 1.0;
+    return vec3(ndc * vec2(kTanHalfFov * float(ls.x) / float(ls.y), kTanHalfFov) * z, z);
+}
+// the normal from the four neighbours' depths (each axis from the side nearer in depth), facing the camera
+vec3 lonormal(vec2 s, vec3 P, vec4 l, vec4 r, vec4 u, vec4 d) {
+    vec3 dx1 = vpos(s + vec2(1.0, 0.0), zz(r.a)) - P, dx0 = P - vpos(s - vec2(1.0, 0.0), zz(l.a));
+    vec3 dy1 = vpos(s + vec2(0.0, 1.0), zz(d.a)) - P, dy0 = P - vpos(s - vec2(0.0, 1.0), zz(u.a));
+    vec3 N = normalize(cross(abs(dx1.z) < abs(dx0.z) ? dx1 : dx0, abs(dy1.z) < abs(dy0.z) ? dy1 : dy0));
+    return dot(N, P) > 0.0 ? -N : N;
+}
+float bayer(ivec2 q) {  // 4x4 ordered offsets in (0, 1)
+    const int m[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+    return (float(m[(q.y & 3) * 4 + (q.x & 3)]) + 0.5) / 16.0;
+}
+)";
+
+// Global illumination (screen space, one bounce): the colour of nearby surfaces that face this pixel, GI_TAPS taps
+// in a screen-space disk (golden-angle spiral, rotated per pixel), weighted by the cosine and a range falloff.
+// p.a = (world radius in near-plane units, -, -, -).
+const char* kGiFs = R"(
+layout(set = 0, binding = 0) uniform sampler2D lo;
 void main() {
-    ivec2 ds = textureSize(depth, 0);
-    float zc = lin(texelFetch(depth, ivec2(uv * vec2(ds)), 0).r);
-    vec2 at = 1.0 / vec2(textureSize(gi, 0));
-    vec3 s = vec3(0.0);
+    ls = textureSize(lo, 0);
+    ivec2 c = ivec2(uv * vec2(ls));
+    frag = vec4(0.0);
+    float z = texelFetch(lo, c, 0).a;
+    if (z <= 0.0) return;  // sky
+    vec2 s = vec2(c) + 0.5;
+    vec3 P = vpos(s, z);
+    vec3 N = lonormal(s, P, lofetch(lo, c - ivec2(1, 0)), lofetch(lo, c + ivec2(1, 0)), lofetch(lo, c - ivec2(0, 1)),
+                      lofetch(lo, c + ivec2(0, 1)));
+    float R = p.a.x;
+    float rpx = min(R * 0.5 * float(ls.y) / (kTanHalfFov * z), 0.12 * float(ls.y));
+    if (rpx < 1.0) return;
+    float noise = bayer(ivec2(gl_FragCoord.xy));
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < GI_TAPS; ++i) {
+        float a = (float(i) + noise) * 2.3999632;
+        ivec2 sc = c + ivec2(vec2(cos(a), sin(a)) * (sqrt((float(i) + noise) / float(GI_TAPS)) * rpx));
+        vec4 t = lofetch(lo, sc);
+        if (t.a <= 0.0) continue;  // the sky casts no bounce
+        vec3 v = vpos(vec2(sc) + 0.5, t.a) - P;
+        float vv = dot(v, v);
+        sum += t.rgb * (max(dot(v, N) * inversesqrt(vv + 1e-6) - 0.05, 0.0) * max(1.0 - vv / (R * R), 0.0));
+    }
+    frag = vec4(sum * (2.0 / float(GI_TAPS)), 1.0);
+}
+)";
+
+// 4x4 depth-aware blur at the trace's resolution (any rgba; depths from lo). The window is -2..1, so its result is
+// centred half a texel up-left: kUpGlsl allows for that.
+const char* kBlurFs = R"(
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1) uniform sampler2D lo;
+void main() {
+    ls = textureSize(lo, 0);
+    ivec2 ss = textureSize(src, 0);
+    vec2 k = vec2(ls) / vec2(ss);
+    ivec2 c = ivec2(uv * vec2(ss));
+    float zc = lofetch(lo, ivec2((vec2(c) + 0.5) * k)).a;
+    float tol = 1.0 / (0.04 * zc + 1e-3);
+    vec4 sum = vec4(0.0);
     float w = 0.0;
     for (int y = -2; y < 2; ++y)
         for (int x = -2; x < 2; ++x) {
-            vec2 t = uv + (vec2(x, y) + 0.5) * at;
-            float z = lin(texelFetch(depth, clamp(ivec2(t * vec2(ds)), ivec2(0), ds - 1), 0).r);
-            float k = max(1.0 - abs(z - zc) / (0.04 * zc), 0.0) + 1e-3;
-            s += texture(gi, t).rgb * k;
-            w += k;
+            ivec2 t = clamp(c + ivec2(x, y), ivec2(0), ss - 1);
+            float kk = max(1.0 - abs(lofetch(lo, ivec2((vec2(t) + 0.5) * k)).a - zc) * tol, 0.0) + 1e-3;
+            sum += texelFetch(src, t, 0) * kk;
+            w += kk;
         }
-    vec4 c = texture(src, uv);
-    frag = vec4(c.rgb + c.rgb * (s / w) * p.a.x, c.a);
+    frag = sum / w;
+}
+)";
+
+// The blurred effect at this full-resolution pixel: its 2x2 bilinear neighbours, each weighted by how near its depth
+// (from lo) is to this pixel's. False on the sky.
+const char* kUpGlsl = R"(
+layout(set = 0, binding = 0) uniform sampler2D fx;
+layout(set = 0, binding = 1) uniform sampler2D depth;
+layout(set = 0, binding = 2) uniform sampler2D lo;
+bool upsample(out vec4 v) {
+    v = vec4(0.0);
+    float d = texelFetch(depth, ivec2(uv * vec2(textureSize(depth, 0))), 0).r;
+    if (d >= 0.99999) return false;
+    float zc = lin(d), tol = 1.0 / (0.05 * zc);
+    ls = textureSize(lo, 0);
+    ivec2 ts = textureSize(fx, 0);
+    vec2 k = vec2(ls) / vec2(ts);
+    vec2 f = uv * vec2(ts);  // texel i's value is centred at i (the blur's window), not i + 0.5
+    ivec2 i0 = ivec2(floor(f));
+    vec2 fr = f - vec2(i0);
+    float w = 0.0;
+    for (int j = 0; j < 4; ++j) {
+        ivec2 o = ivec2(j & 1, j >> 1);
+        ivec2 t = clamp(i0 + o, ivec2(0), ts - 1);
+        float b = (o.x == 1 ? fr.x : 1.0 - fr.x) * (o.y == 1 ? fr.y : 1.0 - fr.y);
+        float kk = b * (max(1.0 - abs(lofetch(lo, ivec2((vec2(t) + 0.5) * k)).a - zc) * tol, 0.0) + 1e-3);
+        v += texelFetch(fx, t, 0) * kk;
+        w += kk;
+    }
+    v /= max(w, 1e-6);
+    return true;
+}
+)";
+
+// GI as bounce light, tinted by the surface's own colour (blend Bounce: c + c * gi * strength). p.a.x = strength.
+const char* kGiApplyFs = R"(
+void main() {
+    vec4 g;
+    frag = vec4(0.0);
+    if (upsample(g)) frag = vec4(g.rgb * p.a.x, 0.0);
+}
+)";
+
+// Screen-space reflections: the ray reflected about the depth normal, marched in lo's screen space (position and
+// 1 / depth are both linear along the screen) with SSR_STEPS steps spaced quadratically (fine near the surface),
+// jittered per pixel, then SSR_REFINE bisections. Weighted by Schlick's Fresnel - every surface reflects at grazing
+// angles - and a smoothness guess (flat colour is smooth: water, stone; busy texture is rough: grass, rock), faded at
+// the screen's edges and for rays turning towards the camera. Pixels whose reflection would be faint are skipped
+// before the march (most of the screen when it is not seen at a grazing angle). Out: premultiplied (rgb * w, w).
+// p.a = (strength, F0, thickness, -).
+const char* kSsrFs = R"(
+layout(set = 0, binding = 0) uniform sampler2D lo;
+float zat(vec2 s) { return zz(lofetch(lo, ivec2(s)).a); }
+vec2 proj(vec3 v) { return (v.xy / (v.z * vec2(kTanHalfFov * float(ls.x) / float(ls.y), kTanHalfFov)) * 0.5 + 0.5) * vec2(ls); }
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main() {
+    ls = textureSize(lo, 0);
+    ivec2 c = ivec2(uv * vec2(ls));
+    frag = vec4(0.0);
+    vec4 c0 = texelFetch(lo, c, 0);
+    if (c0.a <= 0.0) return;  // sky
+    vec4 l = lofetch(lo, c - ivec2(1, 0)), r = lofetch(lo, c + ivec2(1, 0)), u = lofetch(lo, c - ivec2(0, 1)), d = lofetch(lo, c + ivec2(0, 1));
+    vec2 s0 = vec2(c) + 0.5;
+    vec3 P = vpos(s0, c0.a);
+    vec3 N = lonormal(s0, P, l, r, u, d);
+    vec3 V = normalize(P);
+    vec3 Rd = reflect(V, N);
+    float F = p.a.y + (1.0 - p.a.y) * pow(1.0 - clamp(-dot(V, N), 0.0, 1.0), 5.0);
+    float lc = luma(c0.rgb);
+    float busy = abs(luma(l.rgb) - lc) + abs(luma(r.rgb) - lc) + abs(luma(u.rgb) - lc) + abs(luma(d.rgb) - lc);
+    float wgt = p.a.x * F * mix(1.0, 0.3, smoothstep(0.03, 0.2, busy)) * clamp(Rd.z * 4.0 + 1.0, 0.0, 1.0);
+    if (wgt < 0.03) return;
+    wgt *= smoothstep(0.03, 0.08, wgt);
+    // the ray's end: in front of the near plane (z 1) when it turns towards the camera, else far away
+    float L = Rd.z < 0.0 ? (P.z - 1.0) * 0.95 / -Rd.z : 60000.0;
+    vec3 Q = P + Rd * L;
+    vec2 dv = proj(Q) - s0;
+    float k0 = 1.0 / P.z, k1 = 1.0 / Q.z;
+    // clipped to the screen
+    vec2 lim = mix(vec2(0.5) - s0, vec2(ls) - 0.5 - s0, step(0.0, dv));
+    vec2 tc = mix(vec2(1.0), lim / dv, greaterThan(abs(dv), vec2(1e-6)));
+    float tmax = clamp(min(tc.x, tc.y), 0.0, 1.0);
+    float len = length(dv);
+    if (len * tmax < 2.0) return;
+    float tmin = 1.5 / len;  // off the starting surface
+    float jitter = bayer(ivec2(gl_FragCoord.xy));
+    float tprev = 0.0, thit = -1.0, zprev = P.z;
+    for (int i = 0; i < SSR_STEPS; ++i) {
+        float q = (float(i) + jitter) / float(SSR_STEPS);
+        float t = tmin + (tmax - tmin) * q * q;
+        float zr = 1.0 / mix(k0, k1, t);
+        float zs = zat(s0 + dv * t);
+        if (zr > zs && zr - zs < max(zs * p.a.z, min(abs(zr - zprev), zs * 0.3))) {
+            thit = t;
+            break;
+        }
+        tprev = t;
+        zprev = zr;
+    }
+    if (thit < 0.0) return;
+    for (int i = 0; i < SSR_REFINE; ++i) {
+        float tm = 0.5 * (tprev + thit);
+        if (1.0 / mix(k0, k1, tm) > zat(s0 + dv * tm)) thit = tm;
+        else tprev = tm;
+    }
+    vec2 sh = s0 + dv * thit;
+    vec2 e = min(sh, vec2(ls) - sh) / (0.08 * vec2(ls));
+    float w = wgt * clamp(min(e.x, e.y), 0.0, 1.0);
+    frag = vec4(lofetch(lo, ivec2(sh)).rgb * w, w);
+}
+)";
+
+// Reflections over the scene (blend Over: c * (1 - w) + reflection * w).
+const char* kSsrApplyFs = R"(
+void main() {
+    vec4 r;
+    upsample(r);
+    frag = r;
 }
 )";
 
@@ -2740,6 +2924,20 @@ float env_float(const char* name, float def) {
     return v;
 }
 
+// An effect level from the environment: "lite" 1, "full" (or any other non-zero value: older 1 = on) 2, unset / "0" /
+// "off" 0.
+int env_level(const char* name) {
+    char* env = nullptr;
+    size_t len = 0;
+    int v = 0;
+    if (_dupenv_s(&env, &len, name) == 0 && env && *env) {
+        const std::string s = env;
+        v = s == "lite" ? 1 : s == "off" || s == "0" ? 0 : 2;
+    }
+    std::free(env);
+    return v;
+}
+
 }  // namespace
 
 VkShaderModule VkRenderer::fx_module(const std::string& glsl, const char* name, bool vertex, std::string* error) {
@@ -2793,6 +2991,13 @@ VkPipeline VkRenderer::fx_pipeline(VkShaderModule fs, VkFormat fmt, FxBlend blen
         att.srcAlphaBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
         att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA;
         cb.blendConstants[0] = cb.blendConstants[1] = cb.blendConstants[2] = cb.blendConstants[3] = 0.1f;
+    } else if (blend == FxBlend::Bounce || blend == FxBlend::Over) {  // rgb = src * dst + dst / src + dst * (1 - src.a)
+        att.blendEnable = VK_TRUE;
+        att.srcColorBlendFactor = blend == FxBlend::Bounce ? VK_BLEND_FACTOR_DST_COLOR : VK_BLEND_FACTOR_ONE;
+        att.dstColorBlendFactor = blend == FxBlend::Bounce ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        att.colorWriteMask = 0x7;
     }
     if (blend == FxBlend::Multiply) {
         att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -2877,6 +3082,16 @@ void VkRenderer::fx_pass(VkPipeline pipe, Image& out, std::initializer_list<Imag
     vkc::cmd_end_rendering(c);
 }
 
+Image* VkRenderer::fx_target(std::unique_ptr<Image>& img, VkFormat fmt, uint32_t w, uint32_t h) {
+    w = std::max(1u, w), h = std::max(1u, h);
+    if (!img || img->width != w || img->height != h || img->format != fmt) {
+        if (img) fc().garbage.push_back(std::move(img));
+        img = create_image(fmt, VK_IMAGE_TYPE_2D, w, h, 1, false, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                           VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+    return img.get();
+}
+
 bool VkRenderer::init_post(std::string* error) {
     char* env = nullptr;
     size_t len = 0;
@@ -2889,7 +3104,8 @@ bool VkRenderer::init_post(std::string* error) {
     want_vignette_ = env_float("MH3U_VIGNETTE", 0) != 0;
     want_ao_ = env_float("MH3U_AO", 0) != 0;
     want_dof_ = env_float("MH3U_DOF", 0) != 0;
-    want_gi_ = env_float("MH3U_GI", 0) != 0;
+    want_gi_ = env_level("MH3U_GI");
+    want_ssr_ = env_level("MH3U_SSR");
     look_ = 0;  // set per frame from want_* (end_frame) once the passes exist
     ao_radius_ = env_float("MH3U_AO_RADIUS", ao_radius_);
     ao_strength_ = env_float("MH3U_AO_STRENGTH", ao_strength_);
@@ -2900,6 +3116,9 @@ bool VkRenderer::init_post(std::string* error) {
     fx_debug_ = env_float("MH3U_FX_DEBUG", 0);
     gi_radius_ = env_float("MH3U_GI_RADIUS", gi_radius_);
     gi_strength_ = env_float("MH3U_GI_STRENGTH", gi_strength_);
+    ssr_strength_ = env_float("MH3U_SSR_STRENGTH", ssr_strength_);
+    ssr_f0_ = env_float("MH3U_SSR_F0", ssr_f0_);
+    ssr_thickness_ = env_float("MH3U_SSR_THICKNESS", ssr_thickness_);
     tri_glow_radius_ = env_float("MH3U_TRI_GLOW_RADIUS", tri_glow_radius_);
     tri_glow_ = env_float("MH3U_TRI_GLOW", tri_glow_);
     tri_haze_ = env_float("MH3U_TRI_HAZE", tri_haze_);
@@ -2936,11 +3155,27 @@ bool VkRenderer::init_post(std::string* error) {
     tri_fs_ = fx_module(depth_glsl + kTriSceneFs, "tri.frag", false, error);
     ok &= tri_fs_ != VK_NULL_HANDLE;
     if (tri_fs_ && want_look_) std::printf("renderer: look \"tri\" on\n");
-    {
-        gi_fs_ = fx_module(depth_glsl + kGiFs, "gi.frag", false, error);
-        gi_apply_fs_ = fx_module(depth_glsl + kGiApplyFs, "gi_apply.frag", false, error);
-        if (!gi_fs_ || !gi_apply_fs_) gi_fs_ = VK_NULL_HANDLE, ok = false;
-        else if (want_gi_) std::printf("renderer: global illumination on (radius %g, strength %g)\n", gi_radius_, gi_strength_);
+    {  // global illumination and reflections, Lite and Full (tap / step counts compiled in, so the loops unroll)
+        constexpr VkFormatFeatureFlags kDraw = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        if ((features(VK_FORMAT_B10G11R11_UFLOAT_PACK32) & kDraw) == kDraw) gi_format_ = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        const std::string lo_glsl = depth_glsl + kLoGlsl;
+        lo_fs_ = fx_module(depth_glsl + kLoFs, "lo.frag", false, error);
+        blur_fs_ = fx_module(lo_glsl + kBlurFs, "fx_blur.frag", false, error);
+        gi_fs_[0] = fx_module(lo_glsl + "#define GI_TAPS 6\n" + kGiFs, "gi_lite.frag", false, error);
+        gi_fs_[1] = fx_module(lo_glsl + "#define GI_TAPS 12\n" + kGiFs, "gi.frag", false, error);
+        gi_apply_fs_ = fx_module(lo_glsl + kUpGlsl + kGiApplyFs, "gi_apply.frag", false, error);
+        ssr_fs_[0] = fx_module(lo_glsl + "#define SSR_STEPS 12\n#define SSR_REFINE 3\n" + kSsrFs, "ssr_lite.frag", false, error);
+        ssr_fs_[1] = fx_module(lo_glsl + "#define SSR_STEPS 24\n#define SSR_REFINE 5\n" + kSsrFs, "ssr.frag", false, error);
+        ssr_apply_fs_ = fx_module(lo_glsl + kUpGlsl + kSsrApplyFs, "ssr_apply.frag", false, error);
+        if (!lo_fs_ || !blur_fs_) lo_fs_ = VK_NULL_HANDLE, ok = false;
+        if (!gi_fs_[0] || !gi_fs_[1] || !gi_apply_fs_) gi_apply_fs_ = VK_NULL_HANDLE, ok = false;
+        if (!ssr_fs_[0] || !ssr_fs_[1] || !ssr_apply_fs_) ssr_apply_fs_ = VK_NULL_HANDLE, ok = false;
+        static const char* const kLevel[] = {"off", "lite", "full"};
+        if (want_gi_ && lo_fs_ && gi_apply_fs_)
+            std::printf("renderer: global illumination %s (radius %g, strength %g)\n", kLevel[want_gi_.load()], gi_radius_, gi_strength_);
+        if (want_ssr_ && lo_fs_ && ssr_apply_fs_)
+            std::printf("renderer: reflections %s (strength %g, F0 %g, thickness %g)\n", kLevel[want_ssr_.load()], ssr_strength_, ssr_f0_,
+                        ssr_thickness_);
     }
     {
         ao_fs_ = fx_module(depth_glsl + kAoFs, "ao.frag", false, error);
@@ -2954,12 +3189,7 @@ bool VkRenderer::init_post(std::string* error) {
         if (!focus_fs_ || !dof_fs_) dof_fs_ = VK_NULL_HANDLE, ok = false;
         else if (want_dof_) std::printf("renderer: depth of field on (radius %g, start %g, range %g, near %g)\n", dof_radius_, dof_start_, dof_range_, dof_near_);
     }
-    tri_ = want_look_ && tri_fs_;
-    vignette_ = want_vignette_;
-    look_ = vignette_ && post_pipe_ ? 1 : 0;
-    ao_ = want_ao_ && ao_fs_;
-    dof_ = want_dof_ && dof_fs_;
-    gi_ = want_gi_ && gi_fs_;
+    latch_effects();
     return ok;
 }
 
@@ -2991,22 +3221,25 @@ void VkRenderer::scene_effects(Image& color, Image& depth) {
         logged = true;
         std::printf("renderer: scene effects on target %08X (%ux%u), depth %08X\n", color.surf.image, color.width, color.height, depth.surf.image);
     }
-    // order: global illumination (bounce light from the scene as lit), ambient occlusion, the Tri grade, depth of field
-    if (gi_) {
-        const uint32_t w = std::max(1u, color.width / 2), h = std::max(1u, color.height / 2);  // half resolution, blurred
-        if (!gi_img_ || gi_img_->width != w || gi_img_->height != h) {
-            if (gi_img_) fc().garbage.push_back(std::move(gi_img_));
-            gi_img_ = create_image(VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TYPE_2D, w, h, 1, false,
-                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-        }
-        if (gi_img_) {
-            Image* src = snapshot(color);
-            const float pg[8] = {gi_radius_};
-            fx_pass(fx_pipeline(gi_fs_, VK_FORMAT_R16G16B16A16_SFLOAT, FxBlend::None), *gi_img_, {src, &depth}, pg);
-            src = snapshot(color);
-            const float pa[8] = {gi_strength_};
-            fx_pass(fx_pipeline(gi_apply_fs_, color.format, FxBlend::None), color, {gi_img_.get(), &depth, src}, pa);
-        }
+    // order: global illumination (bounce light from the scene as lit), ambient occlusion, reflections, the Tri grade,
+    // depth of field. GI and reflections share lo (the half-resolution scene before either), read in place - no copy of
+    // the scene colour - and are blended onto it (trace, blur and upsample: research log 2026-11-09).
+    constexpr VkFormat kLoFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    Image* lo = gi_ || ssr_ ? fx_target(lo_img_, kLoFormat, color.width / 2, color.height / 2) : nullptr;
+    if (lo) fx_pass(fx_pipeline(lo_fs_, kLoFormat, FxBlend::None), *lo, {&color, &depth}, nullptr);
+    // an effect traced at 1/div resolution (Full: half, Lite: quarter), blurred there, blended onto the scene
+    const auto low_res = [&](VkShaderModule trace, VkShaderModule apply, FxBlend blend, std::unique_ptr<Image>& img,
+                             std::unique_ptr<Image>& blur, VkFormat fmt, uint32_t div, const float* pt, const float* pa) {
+        Image* t = fx_target(img, fmt, color.width / div, color.height / div);
+        Image* b = fx_target(blur, fmt, color.width / div, color.height / div);
+        if (!t || !b) return;
+        fx_pass(fx_pipeline(trace, fmt, FxBlend::None), *t, {lo}, pt);
+        fx_pass(fx_pipeline(blur_fs_, fmt, FxBlend::None), *b, {t, lo}, nullptr);
+        fx_pass(fx_pipeline(apply, color.format, blend), color, {b, &depth, lo}, pa);
+    };
+    if (gi_ && lo) {
+        const float pg[8] = {gi_radius_}, pa[8] = {gi_strength_};
+        low_res(gi_fs_[gi_ - 1], gi_apply_fs_, FxBlend::Bounce, gi_img_, gi_blur_img_, gi_format_, gi_ == 2 ? 2 : 4, pg, pa);
     }
     if (ao_) {
         // half resolution above 1440p: the blur in the apply pass hides it
@@ -3021,6 +3254,10 @@ void VkRenderer::scene_effects(Image& color, Image& depth) {
             fx_pass(fx_pipeline(ao_fs_, VK_FORMAT_R8_UNORM, FxBlend::None), *ao_img_, {&depth}, p);
             fx_pass(fx_pipeline(ao_apply_fs_, color.format, FxBlend::Multiply), color, {ao_img_.get(), &depth}, nullptr);
         }
+    }
+    if (ssr_ && lo) {
+        const float ps[8] = {ssr_strength_, ssr_f0_, ssr_thickness_};
+        low_res(ssr_fs_[ssr_ - 1], ssr_apply_fs_, FxBlend::Over, ssr_img_, ssr_blur_img_, kLoFormat, ssr_ == 2 ? 2 : 4, ps, nullptr);
     }
     if (tri_) {
         Image* src = snapshot(color);
@@ -3109,12 +3346,7 @@ Renderer::Frame VkRenderer::end_frame() {
     }
     scene_color_ = scene_depth_ = 0;
     scene_done_ = false;
-    tri_ = want_look_ && tri_fs_;
-    vignette_ = want_vignette_;
-    look_ = vignette_ && post_pipe_ ? 1 : 0;
-    ao_ = want_ao_ && ao_fs_;
-    dof_ = want_dof_ && dof_fs_;
-    gi_ = want_gi_ && gi_fs_;
+    latch_effects();
     Image* shown = graded ? graded : gamepad_view_ == 2 && drc_written_ ? drc_.get() : tv_written_ ? tv_.get() : nullptr;
     if (shown) {
         out.tv_image = shown->image;

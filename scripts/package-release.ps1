@@ -45,7 +45,6 @@ Copy-Item (Join-Path $root "input.example.ini") $stage
 Copy-Item (Join-Path $root "LICENSE") (Join-Path $stage "LICENSE.txt")  # Cha-Cha: GPL-3.0
 Copy-Item (Join-Path $root "docs\release\THIRD_PARTY_NOTICES.md") (Join-Path $stage "licenses")
 Copy-Item (Join-Path $root "$BuildDir\_deps\zstd-src\LICENSE") (Join-Path $stage "licenses\zstd-LICENSE.txt")
-Copy-Item (Join-Path $root "$BuildDir\_deps\imgui-src\LICENSE.txt") (Join-Path $stage "licenses\DearImGui-LICENSE.txt")
 $sdkVersion = Split-Path -Leaf $env:VULKAN_SDK
 Set-Content -Encoding utf8 (Join-Path $stage "BUILDINFO.txt") @"
 Version: $Version

@@ -21,7 +21,7 @@ void cmd_begin_rendering(VkCommandBuffer cmd, const VkRenderingInfo& info, const
 void cmd_end_rendering(VkCommandBuffer cmd);
 void cmd_pipeline_barrier2(VkCommandBuffer cmd, const VkDependencyInfo& info);
 
-// A render pass compatible with `rendering` (for pipelines made elsewhere, e.g. Dear ImGui's) where dynamic rendering
+// A render pass compatible with `rendering` (for pipelines made elsewhere) where dynamic rendering
 // is emulated; VK_NULL_HANDLE otherwise. Owned here.
 VkRenderPass render_pass_for(const VkPipelineRenderingCreateInfo& rendering);
 // For vkCreateGraphicsPipelines: sets pci.renderPass to a render pass compatible with `rendering` when dynamic

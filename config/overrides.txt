@@ -21,6 +21,7 @@
 0x02687D38 uIDLobbyMaki::drawBoxMenu? # src/game/item_sets.cpp: Item Sets' sub-list pop-up placed at row 3
 0x02AE1E40 cGUIInstAnimation::updateTransforms? # src/game/item_sets.cpp: box menu with Item Sets - the separator and the scroll's lower part one row down (object PosY before the transforms are redone)
 0x020ECA2C sCockpit::obtainItem? # src/game/carving.cpp: hold to gather - after an item is obtained the held button keeps repeating
+0x028BC31C gatherReward? # src/game/carving.cpp: one gathering / mining / net reward (item, gathering skills, tool breakage); Instant Gathering repeats it until the spot is used up
 0x020E0CFC sAppPad::vf6 # src/game/menu_mouse.cpp: pad per-frame update; afterwards the menu state decides whether the mouse is a pointer
 0x0221A430 sLobby::menuDirections? # src/game/menu_mouse.cpp: lobby menus key-repeat directions (1 up 2 down 4 left 8 right); wrapped: a call means a lobby menu is open
 0x0275BD84 uIDOption::stepPage? # src/game/menu_mouse.cpp: one Options page step (r4 = page 8/18-24); wrapped to know the page and its object for hover
@@ -36,6 +37,8 @@
 0x02286DE8 cameraAutoTurn? # src/game/camera_speed.cpp: step that swings the camera behind the hunter; scaled by the frame time
 0x02286F18 cameraTurnInput? # src/game/camera_speed.cpp: camera left / right input -> target yaw (block +0x94) per frame; scaled by the frame time
 0x02286890 cameraPitchInput? # src/game/camera_speed.cpp: camera up / down -> target pitch (block +0x90; per frame under water); scaled by the frame time
+0x02287D70 uGameCamera::shake? # src/game/modern_camera.cpp: camera shake (block +0x140 / +0x160 offsets), handed the eye / look-at targets (+0x70 / +0x80); Camera Distance pushes the eye target back first
+0x02288824 uGameCamera::eventCamera? # src/game/modern_camera.cpp: the field camera's monster-event step (roars); the Modern Camera mod writes its eye / look-at at its entry
 0x0227E138 cameraPadCopy? # src/game/play_log.cpp: copies pad buttons / right stick into the camera block once a frame (hunter at block +0x690); wrapped only with MH3U_PLAY_LOG
 0x025F2810 uIDCockpitAbovehead::vf63 # src/game/play_log.cpp: places the above-head display, picks its animation; wrapped only with MH3U_PLAY_LOG
 0x028ABC3C playerWindpress? # src/game/windpress.cpp: windpress reaction (phase pad +7); its per-frame push in phase 1 scaled by the frame time
@@ -63,3 +66,20 @@
 0x021C4304 sLobby::furnishingRemoveStep? # src/game/menu_mouse.cpp: house furnishing Remove (r4 = pick: state +2; state 1 the occupied-spot picker like Place, removable bit 2 of +0xBB[]); hover as the Place picker
 0x020E8DD4 questResultStep? # src/game/menu_mouse.cpp: quest results (r4 = res: state +0 / +1, hunter +0x20 of +0x21, view +0x2F, detail cursors +0x29 / +0x2A / +0x2C / +0x2D / +0x44); pointer kept on, learn screenshots per view
 0x02180870 sResult::rewardStep? # src/game/menu_mouse.cpp: solo quest results / rewards (r4 = res: state +0x2FF4, sub +2, cursor +0x3066 of +0x3067, grid +0x3073 / +0x3075, Yes / No +0x3084); pointer kept on, learn screenshots per state
+0x02763A88 uIDStartMenu::gameOptionsStep? # src/game/game_options.cpp: Game Options list with Cha-Cha's right column (cursor, A, help)
+0x02AE1A50 cGUIInstAnimation::draw? # src/game/gui_util.cpp: vf11, draws the instance's object tree (FUN_02AF4BA8); Game Options plates drawn again as the right column
+0x0275B3DC uIDOption::gameSettingsStep? # src/game/settings_page.cpp: Game Settings page step; Cha-Cha's settings pages (Graphics Settings) on its layout
+0x020135F4 aDLContents::vf7 # src/game/dlc_menu.cpp: DLC area step; the DLC Menu as Official / Quests / Mods, the Mods list
+0x02710998 uIDDLContents::detailPanel? # src/game/dlc_menu.cpp: on the Mods list only the summary page (03/03), its page indicator hidden
+0x02743EBC uIDDLContents::labelStep? # src/game/dlc_menu.cpp: DLC Menu texts set again when +0x298 differs from DAT_1030C0E0; forced after Official / top relabels
+0x026615A8 uIDCommonPauch::listStep? # src/game/field_gfx.cpp: the field menu list (tabs, rows); the GFX tab after the last tab
+0x02664F74 uIDCommonPauch::optionsStep? # src/game/field_gfx.cpp: the field menu's Options screen; Display / Graphics Settings shown in it
+0x022273B8 sLobby::argosyTradeStep? # src/game/menu_mouse.cpp: Argosy trade (r4 = trade: state +1; panel cursor +0x38 of 2/3; list row +0x3A of +0x3C, last row OK); hover / click
+0x02228210 sLobby::argosyDestinationsStep? # src/game/menu_mouse.cpp: Argosy Destinations (r4 = voyage: state +1; row +0x3A of +0x3C, row kinds +9+row); hover / click
+0x021EC78C sLobby::fisheryFleetStep? # src/game/menu_mouse.cpp: Fishery (r4 = fleet: state +1; Quest Settings cursor +4; Regions row +0x10 of +0x12, page +0x14); hover / click
+0x02AFF91C cGUIObjMessage::setTextLen? # src/game/quest_markers.cpp: (message, text, length) - logged with its caller while a quest list is open (MH3U_QUEST_PROBE)
+0x0294B8DC sMain::framePacing? # src/game/effect_speed.cpp: after it, the console frames (1/30 s) this frame covers -> particle steps due
+0x02B0DC4C cParticleGenerator::vf17 # src/game/effect_speed.cpp: emitter / particle step (counts whole frames), run per 1/30 s, not per frame
+0x02B8D5A4 cParticleNode::vf17 # src/game/effect_speed.cpp: node step (frame timers), run per 1/30 s
+0x02B8E7FC cParticleNodeInfinite::vf17 # src/game/effect_speed.cpp: node step, run per 1/30 s
+0x02B05284 cEffectUnitGenerator::vf17 # src/game/effect_speed.cpp: effect-unit emitter step, run per 1/30 s

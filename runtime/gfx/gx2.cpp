@@ -14,6 +14,8 @@
 #include "renderer.h"
 #include "tiling.h"
 
+#include "dev_anchor.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -554,6 +556,7 @@ uint64_t g_total_draws = 0, g_total_clears = 0, g_total_copies = 0;
 std::vector<uint8_t> g_tv_image;
 uint32_t g_tv_w = 0, g_tv_h = 0;
 std::set<uint32_t> g_dump_frames;  // MH3U_DUMP_FRAME=N[,N...]
+std::vector<uint32_t> g_dump_from_menu;  // its "@N" entries: N swaps after the main menu opened (core/dev_anchor.h)
 std::atomic<int> g_gamepad_view{0};  // see gx2.h cycle_gamepad_view
 bool g_watch_targets = false;          // MH3U_WATCH_TARGETS: log CPU accesses to render-target memory
 // host time spent in CPU surface work, by kind (clear, copy, scan-out)
@@ -1017,6 +1020,11 @@ GX2_FUNC(GX2SwapScanBuffers) {
             else if (!g_tv_image.empty()) rt().presenter->present_image(g_tv_image.data(), g_tv_w, g_tv_h);
             else rt().presenter->present_clear(0.08f, 0.10f, 0.14f);
         }
+        if (!g_dump_from_menu.empty() && core::g_main_menu_opened.load()) {
+            for (uint32_t d : g_dump_from_menu) g_dump_frames.insert(n + d);
+            std::printf("gx2: main menu open at frame %u\n", n);
+            g_dump_from_menu.clear();
+        }
         if (g_dump_frames.count(n)) {
             if (f.tv_image) g_renderer->read_tv(g_tv_image, g_tv_w, g_tv_h);
             if (g_renderer) g_trace = g_renderer->take_trace();
@@ -1183,8 +1191,8 @@ void precompile_pipelines(const std::function<void(size_t, size_t)>& progress) {
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
 }
 
-void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, bool global_illumination) {
-    if (g_renderer) g_renderer->set_effects(tri_look, ambient_occlusion, depth_of_field, vignette, global_illumination);
+void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, int global_illumination, int reflections) {
+    if (g_renderer) g_renderer->set_effects(tri_look, ambient_occlusion, depth_of_field, vignette, global_illumination, reflections);
 }
 
 void set_texture_packs(bool on) {
@@ -1217,10 +1225,13 @@ void register_gx2(os::Runtime& r) {
     size_t len = 0;
     if (_dupenv_s(&env, &len, "MH3U_DUMP_FRAME") == 0 && env)
         for (char* p = env; *p;) {
+            const bool from_menu = *p == '@';
+            if (from_menu) ++p;
             char* end = nullptr;
             const unsigned long f = std::strtoul(p, &end, 10);
             if (end == p) break;
-            g_dump_frames.insert(static_cast<uint32_t>(f));
+            if (from_menu) g_dump_from_menu.push_back(static_cast<uint32_t>(f));
+            else g_dump_frames.insert(static_cast<uint32_t>(f));
             p = *end ? end + 1 : end;
         }
     std::free(env);

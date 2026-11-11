@@ -22,13 +22,19 @@ exist (user decision 2026-10-28).
 - `scripts/package-appimage.sh` builds `Cha-Cha-<version>-x86_64.AppImage` (72 MB) with linuxdeploy (downloaded on
   first use, user OK 2026-10-28); the Vulkan loader is left to the system. The AppImage boots headless to the title
   in WSL (`APPIMAGE_EXTRACT_AND_RUN=1`).
+- Tarball (2026-11-10, issue #16: a third-party tarball linked against the system's FFmpeg 8 and failed on FFmpeg 9
+  distributions): `scripts/package-appimage.sh` also writes `Cha-Cha-<version>-linux-x86_64.tar.gz` from the same
+  AppDir: `Cha-Cha` at the top with runpath `$ORIGIN/lib` (set with the patchelf inside linuxdeploy), every
+  library linuxdeploy gathered (SDL3, libavcodec / libavutil and theirs) in `lib/`, `README.txt` from
+  `docs/release/README-linux.txt`. The script refuses to pack when `ldd` resolves libav* / SDL3 outside `lib/`.
+  Extracted in WSL, it boots headless to the title's start menu.
 - Size: Ubuntu's libavcodec brings about 50 libraries (x264, x265, VA-API, OpenCL, cairo...). A minimal FFmpeg
   build (H.264 decoder only, static) would cut most of that.
 
 ## Already portable
 
 - The recompiled game code (`recomp/out/`, about 384 MB of C++): plain C++20, no MSVC intrinsics, no inline asm.
-- Graphics (Vulkan), windows / input / audio / file dialogs (SDL3), Dear ImGui, zstd, the shader translator.
+- Graphics (Vulkan), windows / input / audio / message boxes (SDL3), zstd, the shader translator.
 - Guest threads are `std::thread` (no fibers); locks are standard C++.
 
 ## What was ported (survey of the tree)
@@ -39,16 +45,14 @@ exist (user decision 2026-10-28).
 | Dirty-page tracking for textures | `MEM_WRITE_WATCH` + `GetWriteWatch` | pages read-only + a `SIGSEGV` handler that marks and unprotects them |
 | Fault reporter | `AddVectoredExceptionHandler`, `__try` (2 places) | `sigaction(SIGSEGV)`; module + offset via `dladdr` |
 | Movies (`runtime/os/h264.cpp`) | Media Foundation H.264 decoder | FFmpeg `libavcodec` (H.264 only), bundled in the AppImage |
-| Launcher pictures (`launcher_image.cpp`) | WIC | SDL3's `SDL_LoadPNG` (the pictures are PNG files) |
 | RPX SHA-1 (`game_image.cpp`) | BCrypt | a small SHA-1 of our own |
-| UI font (`setup.cpp`) | Bahnschrift from `C:\Windows\Fonts` | for now the first installed of Noto Sans / DejaVu Sans / Liberation Sans; bundling an OFL font is still a decision |
 | Data folder (`app_paths.cpp`) | `%APPDATA%\Cha-Cha` | `$XDG_DATA_HOME/Cha-Cha` (`~/.local/share/Cha-Cha`); `portable.txt` next to the AppImage still works |
 | CRT | `_dupenv_s` (36), `_wdupenv_s` (2), `sscanf_s` (5) | `runtime/core/win_compat.h`, force-included by CMake off Windows |
 | Build | `add_executable(WIN32)`; links `shell32 ole32 mfplat bcrypt windowscodecs ...` | `if(WIN32)` guards; Linux links `dl pthread avcodec avutil` |
 | Packaging | `scripts/package-release.ps1` | `scripts/package-appimage.sh`: linuxdeploy with SDL3 and libavcodec, `Cha-Cha.desktop`, the icon. Not bundled: the Vulkan loader and GPU drivers (the system's) |
 
-Files with `windows.h` to sweep: `runtime/audio/ax.cpp`, `runtime/boot/{main,profiler,read_watch,setup,
-launcher_image,app_paths}.cpp`, `runtime/core/guest_memory.cpp`, `runtime/fs/{game_image,host_tree,zarchive}.cpp`,
+Files with `windows.h` to sweep: `runtime/audio/ax.cpp`, `runtime/boot/{main,profiler,read_watch,
+app_paths}.cpp`, `runtime/core/guest_memory.cpp`, `runtime/fs/{game_image,host_tree,zarchive}.cpp`,
 `runtime/gfx/{gx2,presenter,renderer}.cpp`, `runtime/input/host_input.cpp`, `runtime/os/{coreinit_thread,h264,
 input}.cpp`, `src/game/{boot_prompts,item_sets,text_trace}.cpp`.
 

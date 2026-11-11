@@ -16,11 +16,17 @@
 //
 // MH3U_INPUT_SCRIPT="frame[+frames]:BUTTON[|BUTTON...];..." presses GamePad buttons at given swap counts (default 6
 // frames), e.g. "700:A;760+10:A|R" - for headless tests. LSTICK_LEFT/RIGHT/UP/DOWN (RSTICK_... the right stick) push a stick fully. MH3U_INPUT_CLOCK=time reads the numbers as 1/60 s since
-// the script was loaded instead, so a script keeps its timing at any frame rate (MH3U_FPS).
+// the script was loaded instead, so a script keeps its timing at any frame rate (MH3U_FPS). "@N:..." counts N from the
+// first pad read after the title's main menu opened (core/dev_anchor.h): boot length varies, menu routes then don't.
+// In a script with "@" entries the plain-numbered presses stop once the main menu is open, so a burst of A presses
+// gets through the attract movie and the title whenever they come: "500+400:A;@120:DOWN;@180:A".
 #include "hle.h"
+
+#include "dev_anchor.h"
 
 #include "host_input.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -37,6 +43,7 @@ constexpr int32_t kKpadNoSamples = -1;      // KPAD_ERROR_NO_SAMPLES
 
 struct ScriptPress {
     uint32_t frame, frames, buttons;
+    bool from_menu = false;  // "@N": N counts from the main menu's opening
     float lx = 0, ly = 0;  // left stick
     float rx = 0, ry = 0;  // right stick
 };
@@ -52,6 +59,7 @@ uint32_t script_now() {
     const auto t = std::chrono::steady_clock::now() - g_script_start;
     return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(t).count() * 60 / 1000000);
 }
+uint32_t g_menu_anchor = 0;  // script clock when the main menu was first seen open (0: not yet)
 uint32_t g_prev_hold = 0;
 bool g_pro = true;                 // host input is a Pro Controller (default; MH3U_CONTROLLER=gamepad turns it off)
 bool g_no_gamepad = true;          // VPADRead reports no GamePad (default pro-only; MH3U_CONTROLLER=pro keeps it)
@@ -103,7 +111,9 @@ void load_script() {
         pos = end + 1;
         const size_t colon = item.find(':');
         if (colon == std::string::npos) continue;
-        ScriptPress p{static_cast<uint32_t>(std::strtoul(item.c_str(), nullptr, 10)), 6, 0, 0, 0};
+        const bool rel = !item.empty() && item[0] == '@';
+        ScriptPress p{static_cast<uint32_t>(std::strtoul(item.c_str() + (rel ? 1 : 0), nullptr, 10)), 6, 0};
+        p.from_menu = rel;
         if (const size_t plus = item.find('+'); plus < colon) p.frames = static_cast<uint32_t>(std::strtoul(item.c_str() + plus + 1, nullptr, 10));
         std::string names = item.substr(colon + 1);
         for (char& c : names) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -132,8 +142,19 @@ void load_script() {
 }
 
 void apply_script(input::PadState& s, uint32_t frame) {
+    if (!g_menu_anchor && core::g_main_menu_opened.load()) {
+        g_menu_anchor = frame ? frame : 1;
+        if (!g_script.empty()) std::printf("input: main menu open at script frame %u\n", g_menu_anchor);
+    }
+    static const bool any_from_menu =
+        std::any_of(g_script.begin(), g_script.end(), [](const ScriptPress& p) { return p.from_menu; });
     for (const ScriptPress& p : g_script) {
-        if (frame < p.frame || frame >= p.frame + p.frames) continue;
+        if (p.from_menu && !g_menu_anchor) continue;
+        // with "@" presses, the plain ones only get the game to the main menu (a burst of A through the attract movie
+        // and the title) and stop once it is open
+        if (!p.from_menu && any_from_menu && g_menu_anchor) continue;
+        const uint32_t at = p.from_menu ? g_menu_anchor + p.frame : p.frame;
+        if (frame < at || frame >= at + p.frames) continue;
         s.buttons |= p.buttons;
         if (p.lx || p.ly) {
             s.lx = p.lx;
@@ -188,6 +209,7 @@ HLE_FUNC(vpad, VPADRead) {
     if (!g_pro) {
         s = input::read();
         apply_script(s, script_now());
+        input::pass_read(s);
     }
     const uint32_t st = arg(ctx, 1);
     std::memset(base + st, 0, kVpadStatusSize);
@@ -249,6 +271,7 @@ HLE_FUNC(padscore, KPADReadEx) {
     }
     input::PadState s = input::read();
     apply_script(s, script_now());
+    input::pass_read(s);
     const uint32_t hold = pro_buttons(s.buttons);
     std::memset(base + st, 0, 0xF0);
     base[st + 0x5C] = 31;  // devType: URCC

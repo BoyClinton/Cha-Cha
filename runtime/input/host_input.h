@@ -77,6 +77,12 @@ struct ControlOptions {
 ControlOptions control_options();
 void set_control_options(const ControlOptions& options);
 void reset_bindings();  // the built-in defaults
+// The controller and the keyboard / mouse on their own (Controller Settings / Keyboard Settings each reset only theirs):
+// the controller back to the Nintendo layout's buttons, the keys / mouse back to Cha-Cha's defaults.
+void reset_pad_bindings();
+void reset_key_bindings();
+// The controller buttons are the Nintendo layout's defaults (else a custom mapping: "Custom" in Controller Settings).
+bool pad_is_default();
 bool save_bindings();   // input.ini in the data folder
 
 // Main thread: while suspended (the launcher overlay is up) the game reads no input and the mouse is never captured;
@@ -92,12 +98,18 @@ void repeat_held(uint32_t button, uint32_t ms);
 // mouse is a pointer (a cursor in the game's style; right click = B, wheel = up / down) and left clicks are queued for
 // the game side (take_clicks), which decides what they hit.
 void set_menu_open(bool open);
+// Direct mouse look (the Modern Camera mod, src/game/modern_camera.cpp; guest thread, each camera update): while on,
+// captured mouse movement no longer deflects the right stick; take_look returns it - degrees in right-stick directions
+// (x right, y up; Mouse Sensitivity and Invert Camera Y applied) - since the last call.
+void set_direct_look(bool on);
+void take_look(float& x, float& y);
 // The pointer on the TV image, 0..1 across and down (the image is fitted into the window, centred); false when the
 // mouse is not a pointer now or is outside the image.
 bool pointer_position(float& u, float& v);
 // Left clicks in pointer mode since the last call.
 int take_clicks();
-// Presses buttons (VPAD bits) for the next 3 reads, as a click does.
+// Presses buttons (VPAD bits) for the next 3 reads, as a click does; d-pad directions alone for the next read only
+// (one step: held longer, some menus step twice).
 void tap(uint32_t buttons);
 // VPADControlMotor: rumble on every connected gamepad.
 void rumble(float strength, uint32_t ms);
@@ -116,9 +128,13 @@ struct TextEntry {
 void begin_text(const std::u16string& initial, size_t max_len);
 void end_text();
 TextEntry text_state();
-// The launcher's on-screen keyboard (main thread): while on, the controller and the window title belong to it; it
-// edits the text and confirms / cancels through these. The physical keyboard keeps typing into the same text.
+// The on-screen keyboard (src/game/soft_keyboard.cpp, any thread): while on, the controller and the window title belong
+// to it; it edits the text and confirms / cancels through these. The physical keyboard keeps typing into the same text.
 void set_soft_keyboard(bool on);
+// Guest thread, every pad read (VPADRead / KPADReadEx, after the input script): its buttons (VPAD bits) are kept for the
+// on-screen keyboard (last_buttons), and while the keyboard is on the game reads an idle pad instead.
+void pass_read(PadState& state);
+uint32_t last_buttons();
 void set_text(const std::u16string& text);
 void finish_text(bool confirm);
 size_t text_max();  // the game's length limit (0 = none)

@@ -18,6 +18,7 @@
 #include <cstdio>
 
 #include "functions.h"
+#include "mods.h"
 
 namespace mh3u::game {
 namespace {
@@ -50,7 +51,7 @@ PPC_FUNC(set_max_hp) {
     // flags 0x100000 / 0x10 there): scaled for the hunters
     const bool reduced = (flags & 0x100010) != 0;
     uint32_t hp = game_hp;
-    if (village != 1 && !reduced) {
+    if (village != 1 && !reduced && mod_enabled(Mod::QuestScaling)) {
         hp = static_cast<uint32_t>(static_cast<float>(game_hp) * kHunterScale[kHunters - 1]);
         if (hp < 1) hp = 1;
         ppc::st32(base, state + 0x8BC, hp);
