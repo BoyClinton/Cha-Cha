@@ -20,7 +20,7 @@ mods/
 
 A folder with none of `mod.ini`, `content/` or `plugins/` is not listed. On/off states are kept in
 `<data folder>/mods.ini` as `mod.<folder>=on|off`, next to the quest packs' `pack.` lines. New mods start on,
-unless their `mod.ini` says `default = off` (optional mods: True Attack, Key Quests).
+unless their `mod.ini` says `default = off` (optional mods: True Attack, Key Quests, Charm Table Fix).
 
 ## Content mods (file replacement)
 
@@ -82,6 +82,7 @@ they chain in load order.
 | `0x020ECA2C` | `sCockpit::obtainItem?` | |
 | `0x02045108` | `itemDisplayAttack?`: a weapon's attack as menus show it (raw x class multiplier / 100) | r3 = item, r4 = raw attack; returns the shown value |
 | `0x021E3978` | `sLobby::questListStep?`: the Quest Counter's quest list, once a frame while open | r4 = list: count +0x18, row +0x16, quest numbers u16 +0x1A[8] |
+| `0x0217F63C` | `makeTalisman?`: rolls one talisman; every draw from RNG slot 1 (`*(0x101FDB9C) + 0x42`) | r4 = talisman out (+1 slots, +4/+5 skill 1, +6/+7 skill 2), r5 = charm 0x25-0x28 |
 
 Every other entry in `config/overrides.txt` works too.
 

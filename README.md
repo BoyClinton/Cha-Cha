@@ -154,7 +154,7 @@ Cha-Cha-<version>/
 ├── Cha-Cha                 the program
 ├── Cha-Cha.ini             settings (makes this folder Cha-Cha's data folder)
 ├── game/                   your dump: the game and update folders, or a .wua (found by itself)
-├── mods/                   mods, one folder each (Damage Numbers, True Attack, Key Quests included)
+├── mods/                   mods, one folder each (Damage Numbers, True Attack, Key Quests, Charm Table Fix included)
 │   └── damage-numbers/
 ├── licenses/               Cha-Cha's GPL-3.0 and the bundled libraries' licences
 ├── README.txt
@@ -215,6 +215,8 @@ Included:
   attack instead of the bloated number (Iron Hammer 70 instead of 364). Damage is not changed.
 - **Key Quests** ([mods/key-quests](mods/key-quests/README.md), optional, starts off): a gold key icon, "2 OF 5" and URGENT tags on
   the Quest Counter's list, for the quests that unlock the next urgent quest.
+- **Charm Table Fix** ([mods/charm-table-fix](mods/charm-table-fix/README.md), optional, starts off): any talisman can
+  come from any save. Cursed charm tables no longer lock talismans out, and your save keeps its own table.
 
 Switch mods on or off in MODS → Mods (F2 in game). Making mods: [docs/modding.md](docs/modding.md).
 

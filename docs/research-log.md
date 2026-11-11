@@ -1051,3 +1051,25 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 - Hub position send 0x022627CC (from 0x02798F68) fires when a countdown reloaded from sLobbyNetwork +0x594 runs out; the receiver 0x02262DA0 glides over the
   same +0x594 ticks (0x02797DF0). Only the constructor 0x022601B8 sets it, to 20. Headless host + joiner: lag 0.73 s at 20, 0.15 s at 4. The backend now writes 4
   while online. Details in docs/online.md "Hub movement delay".
+
+## 2026-11-11 - Charm tables: the talisman generator and its RNG slot (fork, issue #8)
+- Talisman generator 0x0217F63C (makeTalisman?, one caller 0x0217FF18 next to the quest reward code): r4 = talisman
+  out (+0 type 6, +1 slots, +2 rarity u16, +4/+5 skill 1 id / points, +6/+7 skill 2), r5 = charm 0x25-0x28 (skill-1
+  list sizes 60 / 62 / 35 / 55, "no second skill" odds 100 / 35 / 25 / 20, tables from 0x1020598C, slot odds rows
+  0x10206040 / 6094 / 60E8 / 613C). Same logic as the 3DS generator described by the MH3U Talisman Tables project.
+- Every draw is 0x0211971C(sGame, 1): sGame = *(0x101FDB9C), u16 slots at +0x40 (slot 1 = +0x42), x -> (x || 1) * 176
+  mod 65363 (the same step as the pure 0x02119770). 65363 = 163 * 401, so the 65362 states form 17 cycles: twelve of
+  5400 (ids 1 2 3 4 5 6 9 12 13 15 18 26), two of 200 (163, 489) and three of 54 (401, 802, 1203). A save keeps slot 1
+  and never reseeds it, so it never leaves its cycle: the cycles are the 17 charm tables, the five short ones the
+  cursed tables (community numbering: 163 = T11, 401 = T12, 489 = T15, 802 = T16, 1203 = T17).
+- No emulator patch for this was found (searched: Cemu graphic packs repo has only Infinite Sharpness for MH3U; no
+  Gecko / Cemu cheat; the known fixes are save editors that move the save to another cycle, or a timed New Game).
+- Fix (mods/charm-table-fix, hook point 0x0217F63C): before the generator, slot 1 gets a random state from 1..65362;
+  after it, the save's own state comes back moved on by the draws the roll made (counted from the random start), so
+  the save stays on its cycle. MH3U_CHARM_PROBE=<frame> (src/game/charm_probe.cpp) rolls every state for every charm
+  through the hook point; results below.
+- Probe, headless (2026-11-11): without the mod, 121,952 different talismans (charm, slots, rarity, skills) over all
+  261,448 rolls; a 5400-state table gives 12,745-13,049 of them, the 200-state tables 768 / 778, the 54-state tables
+  211-213. Every roll uses 4 or 7 draws and leaves slot 1 on its cycle. With the mod: no talisman outside the vanilla
+  set (0 of 80,324), slot 1 never leaves the save's cycle, and most talismans rolled from a table are ones that table
+  cannot give (e.g. 204 of 212 from the 54-state cycle 401). Not seen yet: a charm from a real quest reward.

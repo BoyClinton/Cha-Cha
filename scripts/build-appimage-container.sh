@@ -46,7 +46,7 @@ cmake -S '$src' -B '$root/out' -G Ninja -DCMAKE_BUILD_TYPE=Release -DMH3U_RECOMP
       -DVulkan_LIBRARY=/usr/lib/x86_64-linux-gnu/libvulkan.so -DVulkan_INCLUDE_DIR='$root/sdk/include' \
       -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld-15 -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld-15 -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld-15 \\
       -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
-cmake --build '$root/out' --target mh3u damage_numbers true_attack key_quests -j \${JOBS:-8}
+cmake --build '$root/out' --target mh3u damage_numbers true_attack key_quests charm_table_fix -j \${JOBS:-8}
 case '$package' in appimage|both) bash scripts/package-appimage.sh '$root/out' '$version' ;; esac
 if [ '$package' = folder ] || [ '$package' = both ]; then
     libs=\$(bash scripts/package-appimage.sh --libs-only '$root/out')
