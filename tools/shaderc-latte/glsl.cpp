@@ -116,7 +116,16 @@ bool alpha_pass(float a) {
 }
 )";
 
-const char* kVertexPushConstants = "layout(push_constant) uniform PushConstants { layout(offset = 16) float point_size; } pc;\n";
+// Vertex / geometry push constants (shader_abi.h VertexPushConstants). hud_pos: the runtime's widescreen HUD squeeze
+// (x *= hud_scale) for the HUD shaders it names with hud_mode: 1 where w != 1 (panels, gauges; full-screen fades have
+// w == 1), 2 where w == 1 and |x| != 1 (text, icons; full-screen quads and 3D particles keep theirs).
+const char* kVertexPushConstants = R"(layout(push_constant) uniform PushConstants { layout(offset = 16) float point_size; float hud_scale; uint hud_mode; } pc;
+vec4 hud_pos(vec4 p) {
+    if (pc.hud_mode == 1u && p.w != 1.0) p.x *= pc.hud_scale;
+    else if (pc.hud_mode == 2u && p.w == 1.0 && abs(p.x) != 1.0) p.x *= pc.hud_scale;
+    return p;
+}
+)";
 
 class Emitter {
 public:
@@ -643,7 +652,7 @@ private:
                         v += (c ? ", " : "") + (s < 4 ? fmt("%s.%c", reg(r).c_str(), kChan[s]) : s == 5 ? "0x3F800000" : "0");
                     }
                     v += "))";
-                    if (cf.export_type == EXPORT_POS && base == 60) body += "    gl_Position = " + v + ";\n";
+                    if (cf.export_type == EXPORT_POS && base == 60) body += "    gl_Position = hud_pos(" + v + ");\n";
                     else if (cf.export_type == EXPORT_PARAM && base < sem.size() && sem[base] != 0xFF)
                         body += fmt("    v%u = %s;\n", vary_.at(sem[base]), v.c_str());
                     else error(fmt("copy shader: export type %u base %u", cf.export_type, base));
@@ -688,7 +697,7 @@ private:
                     error(fmt("CF %u: pixel export to %u", cf.index, base));
                 }
             } else if (sh_.stage == Stage::Vertex && cf.export_type == EXPORT_POS) {
-                if (base == 60) line("gl_Position = " + export_value(cf, r) + ";");
+                if (base == 60) line("gl_Position = hud_pos(" + export_value(cf, r) + ");");
                 else error(fmt("CF %u: position export to %u", cf.index, base));
             } else if (sh_.stage == Stage::Vertex && cf.export_type == EXPORT_PARAM) {
                 const std::vector<uint32_t> sem = vs_param_semantics(sh_);
@@ -846,7 +855,8 @@ private:
         }
         if (sh_.stage == Stage::Vertex) {
             for (uint32_t a : vs_inputs_) s += fmt("layout(location = %u) in uvec4 a%u;\n", a, a);
-            if (es_outputs_.empty()) s += param_outputs() + kVertexPushConstants;
+            if (es_outputs_.empty()) s += param_outputs();
+            s += kVertexPushConstants;
             for (uint32_t e : es_outputs_) s += fmt("layout(location = %u) out vec4 es%u;  // ES->GS ring\n", e, e);
         } else if (sh_.stage == Stage::Geometry) {
             static const char* kPrim[] = {"points", "line_strip", "triangle_strip"};
@@ -857,6 +867,7 @@ private:
             s += fmt("layout(points) in;\nlayout(%s, max_vertices = %u) out;\n", kPrim[prim % 3], std::max(emits_, 1u));
             for (uint32_t e : gs_inputs_) s += fmt("layout(location = %u) in vec4 es%u[];  // ES->GS ring\n", e, e);
             s += param_outputs();
+            s += kVertexPushConstants;
             s += fmt("const int GS_ITEMS = %u;  // vec4s per vertex in the GS->VS ring\n", item_dw / 4);
             s += fmt("ivec4 gsr[%u];\n", std::max(ring_size_, std::max(emits_, 1u) * (item_dw / 4)));
         } else if (sh_.stage == Stage::Pixel) {

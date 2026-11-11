@@ -77,7 +77,7 @@ else()
 add_custom_command(
   OUTPUT ${game_sources} ${MH3U_RECOMP_OUT}/functions.h
   COMMAND recomp_emit ${MH3U_REPO_ROOT} ${MH3U_RECOMP_OUT} ${MH3U_RECOMP_FILES}
-  DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt
+  DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt ${MH3U_REPO_ROOT}/config/hooks.txt
   COMMENT "Recompiling the game into recomp/out")
 endif()
 add_library(mh3u_recomp_game STATIC ${game_sources})

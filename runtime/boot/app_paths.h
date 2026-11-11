@@ -41,6 +41,8 @@ struct Settings {
     std::string display_mode = "windowed";  // "windowed", "borderless" (desktop-sized) or "fullscreen" (exclusive)
     std::string window_size = "1280x720";   // windowed mode; independent of render_scale
     bool sharp_scaling = false;              // the game image scaled to the window with nearest pixels, not smoothed
+    // the picture's shape: "16:9" (the game's), "21:9", "32:9" (wider 3D view, HUD in the middle 16:9) or "auto" (the window's)
+    std::string aspect_ratio = "16:9";
     bool bloom = true;
     // "off", "original" (the game's own DOF filters, where it uses them) or "enhanced" (also our gameplay DOF)
     std::string depth_of_field = "original";

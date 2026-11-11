@@ -149,6 +149,10 @@ public:
     virtual void save_caches() = 0;
     // Our full-screen effects on/off (any thread; applied from the next frame).
     virtual void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, bool global_illumination) = 0;
+    // Widescreen (any thread; from the end of the frame): the TV-sized render targets (tv_w x tv_h, the guest TV
+    // buffer, and their 1/2 .. 1/16 copies) are made `factor` times wider (1 = 16:9); the game's HUD shaders (MH3U_HUD_SHADERS)
+    // keep the HUD in the middle 16:9 of them.
+    virtual void set_widescreen(float factor, uint32_t tv_w, uint32_t tv_h) = 0;
     // Texture packs (<data>/texture_replacements, see texture_pack.h) on/off; any thread, from the next draw.
     virtual void set_texture_packs(bool on) = 0;
     // Texture dumping (tex_<w>x<h>_<crc>.dds into <data>/texture_dump) on/off, and how many files it wrote.

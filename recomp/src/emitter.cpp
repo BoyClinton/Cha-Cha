@@ -508,6 +508,11 @@ EmitResult emit_function(uint32_t entry, const std::vector<CodeRange>& ranges_in
         }
         if (cx.labels.count(it.pc)) o << label(it.pc) << ":\n";
         o << "    { " << stmt << " }  // " << ppc::format(it.in, it.pc) << "\n";
+        if (env.hook_after && env.hook_after(it.pc)) {
+            if (it.in.op == Op::b || it.in.op == Op::bc || it.in.op == Op::bclr || it.in.op == Op::bcctr) return fail("hook on a branch", hex32(it.pc));
+            o << "    { static ppc::GuestFunction* const hook = ppc::hook_slot(" << hex32(it.pc)
+              << "u); if (*hook) (*hook)(ctx, base); }  // config/hooks.txt\n";
+        }
         if (it.range_end && !is_unconditional_end(it.in)) {
             // execution runs on past the end of this range
             const uint32_t next = it.pc + 4;

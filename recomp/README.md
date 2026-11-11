@@ -44,6 +44,10 @@ Our own recompiler (decision in `CLAUDE.md`). Pipeline, as it gets built:
   `ppc::trap` (report + stop) when it holds. Calls to `$UNDEF` weak symbols call address 0 through `call_indirect`
   (reported if ever reached; the crt tests these pointers first). `.syscall` (0x02000000, `nop; blr`) is emitted as
   a function: crt code calls it.
+- **Hooks inside a function** (`config/hooks.txt`, `0xADDR name # note`): after the listed instruction the emitter
+  calls the hook registered for that address with `ppc::set_hook` (none registered: nothing happens), with the
+  registers as they are there. For patching one value mid-function where an override of the whole function
+  (`config/overrides.txt`) cannot reach, e.g. the camera aspect in `src/game/widescreen.cpp`. Branches cannot be hooked.
 - Output (`recomp/out/`): `recomp_00..63.cpp`, `functions.h` (all declarations), `stubs.cpp` (rejected functions →
   `unimplemented_function(addr)` with the reason as a comment), `imports.cpp`, `function_table.cpp` (all 88,225
   `{addr, fn}` sorted – for indirect calls), `emit_report.txt`.

@@ -127,7 +127,8 @@ typedef struct ChaChaApi {
     /* World position to window pixels through the live camera; 0 when behind the camera or no camera.
      * depth (may be NULL) gets the distance along the view direction. */
     int (*world_to_screen)(const float world[3], float* sx, float* sy, float* depth);
-    /* the game picture's rectangle in the window (it keeps 16:9, centred), in pixels */
+    /* the game picture's 16:9 rectangle in the window, centred, in pixels (with a wider Aspect ratio the 3D view
+     * reaches past it to the sides; the HUD stays inside it) */
     void (*game_rect)(float* x, float* y, float* w, float* h);
     /* seconds since start, for animations (main thread) */
     double (*time)(void);

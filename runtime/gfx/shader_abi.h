@@ -30,10 +30,14 @@ struct PixelPushConstants {
     uint32_t alpha_func;  // GX2CompareFunction: 0 never .. 7 always
     float alpha_ref;
 };
-// Vertex-shader push constants (offset 16): point size for point lists (GX2SetPointSize), written to gl_PointSize.
+// Vertex- and geometry-shader push constants (offset 16): point size for point lists (GX2SetPointSize), written to
+// gl_PointSize; the widescreen HUD squeeze: gl_Position.x *= hud_scale when hud_mode says so (glsl.cpp hud_pos:
+// 0 never, 1 where w != 1, 2 where w == 1 and |x| != 1).
 constexpr uint32_t kVertexPushOffset = 16;
 struct VertexPushConstants {
     float point_size;
+    float hud_scale;
+    uint32_t hud_mode;
 };
 
 // Next to each <key>.<stage>.spv the translator writes <key>.<stage>.meta listing what the shader uses:

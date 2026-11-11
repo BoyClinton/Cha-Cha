@@ -1,0 +1,7 @@
+# Instructions followed by a call to a hook registered with ppc::set_hook (recomp_emit; ppc_context.h hook_slot).
+# Format: 0xADDR name # hook, purpose
+0x02BA0474 sCamera::vf6+0x23C # src/game/widescreen.cpp: fdivs f11 = viewport width (r0) / height (r8), the camera aspect (stored to +0x38 next); widened for the 1920x1080 TV viewport
+0x02618214 nameTagX1 # src/game/widescreen.cpp: fmuls f1 = fraction f7 x width f8, a name tag's HUD x; spread around the centre to match the squeezed HUD
+0x026182BC nameTagX2 # src/game/widescreen.cpp: as above (f7, f8)
+0x026189D4 nameTagX3 # src/game/widescreen.cpp: as above with fraction f0, width f7
+0x02618A7C nameTagX4 # src/game/widescreen.cpp: as above (f0, f7)
