@@ -15,6 +15,7 @@
 #include "filters.h"
 #include "camera_speed.h"
 #include "movie_skip.h"
+#include "charm_probe.h"
 #include "net_backend.h"
 #include "net_probe.h"
 #include "play_log.h"
@@ -575,6 +576,7 @@ int main(int argc, char** argv) {
     gfx::register_gx2(r);
     game::register_net_backend_tick();
     game::register_net_probe_jump();
+    game::register_charm_probe();  // MH3U_CHARM_PROBE: talismans per charm table (research)
     audio::register_ax(r, !headless);
 
     std::atomic<bool> guest_done{false}, pipelines_ready{false};
