@@ -95,14 +95,15 @@ not an emulator, and there is no emulator code in it.
 | **Auto Delivery** | Delivery goals are handed in as soon as your pouch holds enough (eggs and other carried items still go to camp). | Off |
 | **Key Quest Markers** | A star on key and urgent quests: gold while you still need them, grey once cleared. | Off |
 
-Switch them in the main menu's **DLC → Mods** or in the pause menu's **CFG → Mods**, also on a quest.
+Switch them in the main menu's **DLC → Mods** or in the in-game menu's **CFG → Mods**, also on a quest.
 
 ### Made for PC
 
 - **Settings inside the game, no launcher.** Game Options gains **Display Settings** and **Graphics Settings**,
-  **Controller Settings** remaps your controller and **Keyboard Settings** your keys and mouse. The pause menu's new
-  **CFG** tab holds Display, Graphics and Camera Settings and the mods, changed on the spot. Every page works with a
-  controller, the keyboard or the mouse, and says what each setting does.
+  **Controller Settings** remaps your controller and **Keyboard Settings** your keys and mouse. The in-game menu's new
+  **CFG** tab holds Display, Graphics and Camera Settings and the mods, changed on the spot
+  ([how](#change-settings-while-you-play-the-cfg-tab)). Every page works with a controller, the keyboard or the
+  mouse, and says what each setting does.
 - **Your resolution and frame rate:** internal resolution from 0.5× to 4× (up to 5120×2880), a frame rate limit up
   to unlimited, V-sync, windowed / borderless / fullscreen, smooth or sharp scaling to the window.
 - **Tri look:** the softer, muted, hazier picture of Monster Hunter Tri on the Wii, applied to the world only (menus
@@ -114,12 +115,31 @@ Switch them in the main menu's **DLC → Mods** or in the pause menu's **CFG →
   button can be rebound, and the pages show which button does what for your controller (Xbox, PlayStation or
   Nintendo names).
 - **Menus you can point at:** in the game's menus the mouse is a pointer; hovering a row selects it and a click picks
-  it, from the start and pause menus to the item box, shops, Smithy, Quest Counter, Canteen, house, Farm, Ferry,
-  Supply Box and their prompts.
+  it, from the main and in-game menus to the item box, shops, Smithy, Quest Counter, Canteen, house, Farm, Ferry,
+  Argosy, Fishmongress, Supply Box and their prompts.
 - **An on-screen keyboard in the game's style** whenever the game asks for text, for the controller or the mouse; the
   PC keyboard types too.
 - **F3** cycles the GamePad screen (hidden, picture-in-picture, GamePad only); **F11** switches between fullscreen
   and a window and frees the mouse.
+
+### Change settings while you play: the CFG tab
+
+You don't have to go back to the title screen to change anything:
+
+1. Open the in-game menu with **−** (**M** on the keyboard), in town or on a quest.
+2. Move right past the game's last tab to **CFG** (d-pad / arrow keys left and right).
+3. Pick a row:
+
+| Row | What you change |
+|---|---|
+| **Display Settings** | Display Mode (windowed, borderless, fullscreen), Window Size, Internal Resolution, Scaling (smooth or sharp), Frame Rate Limit, VSync |
+| **Graphics Settings** | Look (Original or Tri), Bloom, Depth of Field, Ambient Occlusion, Global Illumination, Reflections, Vignette |
+| **Camera Settings** | Modern Camera (on / off), Camera Distance (the game's own up to 200 %) |
+| **Mods** | Quest Scaling, Auto Carve, Texture Packs, Instant Gathering, Auto Delivery, Key Quest Markers |
+
+Left / right (or a click on a value) changes it, and it is saved at once; most changes show straight away, while
+Internal Resolution, Frame Rate Limit and VSync apply the next time you start. **B** goes back. Display and Graphics
+Settings are also in the title screen's Options → Game Options, next to Controller and Keyboard Settings.
 
 <p align="center">
   <img src="docs/images/0.2.0/game-options.jpg" width="49%" alt="Game Options with Display Settings and Graphics Settings in a second column">

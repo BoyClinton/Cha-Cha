@@ -16,11 +16,30 @@ add-on menu, fixes from your reports, and a first experimental Android build.
 | | |
 |---|---|
 | **Game Options** (title screen) | A second column next to the game's own: **Display Settings** and **Graphics Settings**. **Controller Settings** opens Cha-Cha's button remapping, and **Keyboard Settings** takes the place of the old Game Settings page for keys and mouse. |
-| **Pause menu: new CFG tab** | Display, Graphics and **Camera Settings** and **Mods**, changed and saved on the spot, in town and on quests. |
+| **In-game menu: new CFG tab** | Display, Graphics and **Camera Settings** and **Mods**, changed and saved on the spot, in town and on quests ([how](#change-settings-while-you-play-the-cfg-tab)). |
 | **Main menu: DLC** | Official DLC, your custom quests and the mods list (see below). The connection notices before it are skipped. |
 
 Every page works with a controller (L / R turn pages), the keyboard, and the mouse: hover selects, a click chooses
 or changes a value. The pages show what each setting does and when it takes effect.
+
+### Change settings while you play: the CFG tab
+
+You don't have to go back to the title screen to change anything:
+
+1. Open the in-game menu with **−** (**M** on the keyboard), in town or on a quest.
+2. Move right past the game's last tab to **CFG** (d-pad / arrow keys left and right).
+3. Pick a row:
+
+| Row | What you change |
+|---|---|
+| **Display Settings** | Display Mode (windowed, borderless, fullscreen), Window Size, Internal Resolution, Scaling (smooth or sharp), Frame Rate Limit, VSync |
+| **Graphics Settings** | Look (Original or Tri), Bloom, Depth of Field, Ambient Occlusion, Global Illumination, Reflections, Vignette |
+| **Camera Settings** | Modern Camera (on / off), Camera Distance (the game's own up to 200 %) |
+| **Mods** | Quest Scaling, Auto Carve, Texture Packs, Instant Gathering, Auto Delivery, Key Quest Markers |
+
+Left / right (or a click on a value) changes it, and it is saved at once; most changes show straight away, while
+Internal Resolution, Frame Rate Limit and VSync apply the next time you start. **B** goes back. The same Display and
+Graphics pages are also in the title screen's Options → Game Options.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/BoyClinton/Cha-Cha/main/docs/images/0.2.0/game-options.jpg" width="49%" alt="Game Options with Cha-Cha's Display Settings and Graphics Settings in a second column">
@@ -33,8 +52,9 @@ or changes a value. The pages show what each setting does and when it takes effe
   <img src="https://raw.githubusercontent.com/BoyClinton/Cha-Cha/main/docs/images/0.2.0/keyboard.jpg" width="60%" alt="The on-screen keyboard on the character name">
 - **A loading screen** while the game's shaders are translated on first start: "Compiling shaders...", a bar and a
   percentage.
-- **The mouse in more menus:** hover now jumps straight to the row under the pointer instead of walking through every
-  row in between (main menu, Character Select and the rest of the game's menus).
+- **The mouse in more menus:** the Argosy and the Fishmongress now follow the pointer too (#14), and hover jumps
+  straight to the row under the pointer instead of walking through every row in between (main menu, Character
+  Select and the rest of the game's menus).
 
 ## Camera
 
@@ -45,7 +65,7 @@ or changes a value. The pages show what each setting does and when it takes effe
 
 ## Mods you can switch
 
-Every mod is in **DLC → Mods** and in the pause menu's **CFG → Mods**, ticked on or off and saved at once.
+Every mod is in **DLC → Mods** and in the in-game menu's **CFG → Mods**, ticked on or off and saved at once.
 
 | Mod | What it does | Default |
 |---|---|---|
@@ -102,7 +122,7 @@ the `log.txt` are very welcome on #18.
 
 - **Replace the program files** and keep your data folder (`%APPDATA%\Cha-Cha`, `~/.local/share/Cha-Cha`, or `data\`
   of a portable install): saves, settings, key bindings and texture packs carry over.
-- **No launcher any more.** What was in its Settings window is now in Game Options and the pause menu's CFG tab. F3
+- **No launcher any more.** What was in its Settings window is now in Game Options and the in-game menu's CFG tab. F3
   (GamePad screen) and F11 (fullscreen / window) work as before.
 - **DLC quests** no longer install themselves when the game starts. Quests in the old `quests` folder still show up:
   open DLC → Official (or Quests), tick them and choose Download.
@@ -112,7 +132,6 @@ the `log.txt` are very welcome on #18.
 
 - The red markers above characters still move too fast above 30 FPS (#7).
 - Underwater god rays and the roar dimming under water (#15).
-- The Fishmongress and Argosy menus follow the mouse now, but are not tested on a save that has them open (#14).
 
 ## Downloads
 
