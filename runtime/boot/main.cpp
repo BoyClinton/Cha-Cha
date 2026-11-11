@@ -27,6 +27,7 @@
 #include "item_sets.h"
 #include "menu_mouse.h"
 #include "text_trace.h"
+#include "widescreen.h"
 #include "setup.h"
 #include "game_image.h"
 #include "guest_memory.h"
@@ -47,6 +48,7 @@
 #endif
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -524,6 +526,8 @@ int main(int argc, char** argv) {
     game::register_filters(settings.bloom, settings.depth_of_field != "off");
     game::register_frame_limit(!headless);  // windowed runs pace frames themselves (FRAME RATE LIMIT)
     game::register_camera_speed();  // camera turns and eases by the frame time, not per frame
+    game::register_widescreen();    // 21:9 / 32:9: the camera's aspect and name tags (the renderer widens the picture)
+    game::set_aspect_mode(game::aspect_mode_from(settings.aspect_ratio.c_str()));
     game::set_camera_speed(input::control_options().camera_speed);  // Settings -> Input -> Camera speed
     game::register_windpress();     // the windpress push by the frame time, not per frame
     game::register_grab_escape();   // each wiggle out of a grab counts as on the console
@@ -655,8 +659,20 @@ int main(int argc, char** argv) {
     uint32_t fps_frames = 0;
     const bool profiling = profiler::running();  // also log the FPS every 5 s
     auto last_clear = start;
+    float widescreen = 1.0f;
     while (!guest_done) {
         bool closed = !headless && !presenter.pump_events();
+        {  // Aspect ratio: fixed, or the window's shape (auto); applied from the next frame
+            int ww = 0, wh = 0;
+            if (presenter.window_handle()) SDL_GetWindowSizeInPixels(static_cast<SDL_Window*>(presenter.window_handle()), &ww, &wh);
+            const float k = game::aspect_factor(game::aspect_mode(), ww, wh);
+            if (std::fabs(k - widescreen) > 0.002f) {
+                widescreen = k;
+                std::printf("widescreen: %s, window %dx%d -> %.3f x 16:9\n", game::aspect_mode_name(game::aspect_mode()), ww, wh, k);
+                game::set_widescreen(k);
+                gfx::set_widescreen(k);
+            }
+        }
         if (launcher) {
             // every iteration, also while hidden: the launcher notices the game asking for text (on-screen keyboard)
             // itself. Visible, it is drawn over the game, or over its backdrop until the game shows frames.

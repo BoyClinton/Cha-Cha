@@ -1083,3 +1083,18 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   both driven by host input (one host read shared by a VPADRead and a KPADReadEx in a row), so Options -> Controller Settings can choose either; with the
   GamePad chosen a save loads into Moga Village and the hunter walks (headless). − -> Customize Panels -> drag Target Cam to the bin -> OK done headless with
   scripted touches and with synthetic mouse events on the F3 inset (MH3U_MOUSE_AT). Target camera on the TV HUD in the field not checked yet.
+
+## 2026-11-11 - Widescreen 21:9 / 32:9 (fork, issue #5)
+- Idea and addresses from the MH3U ultrawide pack for the console emulator (MIT; read for understanding, no code taken):
+  sCamera::vf6 0x02BA0238 sets each camera's aspect (uCamera +0x38) every frame from the viewport rect,
+  `fdivs f11 = width r0 / height r8` at 0x02BA0474, stored at 0x02BA0478 and used for the projection later in the same
+  function, so a function override cannot reach it: added mid-function hooks to the emitter (config/hooks.txt).
+  Name tags: fmuls f1 = fraction x width at 0x02618214 / 0x026182BC (f7, f8) and 0x026189D4 / 0x02618A7C (f0, f7).
+- Our TV is mode 5 (1920x1080) at render scale 1; the pack's HUD shaders map to our keys: GS 1e2db7fd12a1ef03 (text,
+  icons, menus - its GLSL matches), VS 0b23f38235fb8aa3 and 39081fe338e695da (5 attributes, 21 uniform vec4; the
+  same uniform comparisons as the pack's 718db615...). 0b23 also draws world billboards (the red door marker, before
+  the bloom pass), so its squeeze waits until a draw samples the scene target.
+- Headless captures (village, start menu) at 2560x1080 and 3840x1080: 3D fills the screen unstretched, the menu and
+  the "To House" prompt sit in the middle 16:9, speech bubbles stay over off-centre NPCs; 1920x1080 unchanged; fixed
+  16:9 on 2560x1080 gives the old pillarbox; with bloom off the prompt is still squeezed (the colour filter samples
+  the scene). Not seen yet: a hunt's HUD (HP / stamina gauges, minimap, item bar), cutscenes, the map screen.

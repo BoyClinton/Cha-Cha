@@ -5,6 +5,7 @@
 #include "camera_speed.h"
 #include "monster_hp.h"
 #include "net_backend.h"
+#include "widescreen.h"
 #include "plugins.h"
 
 #include "filters.h"
@@ -736,6 +737,7 @@ struct Launcher::Impl {
     void apply_live() {
         presenter.set_display_mode(settings.display_mode == "fullscreen" ? 2 : settings.display_mode == "borderless" ? 1 : 0);
         presenter.set_sharp_scaling(settings.sharp_scaling);
+        game::set_aspect_mode(game::aspect_mode_from(settings.aspect_ratio.c_str()));  // main's loop applies it
         if (int w = 0, h = 0; settings.display_mode == "windowed" && sscanf_s(settings.window_size.c_str(), "%dx%d", &w, &h) == 2)
             presenter.set_window_size(w, h);
         game::set_filters(settings.bloom, settings.depth_of_field != "off");
@@ -1595,6 +1597,16 @@ void Launcher::Impl::draw_page_display(PanelLayout& p) {
                         "the internal resolution. The game itself has no anti-aliasing."),
               sharp, 2))
         draft.sharp_scaling = sharp != 0;
+    static const std::vector<std::string> kAspects = {"16:9", "21:9", "32:9", "auto"};
+    static const std::vector<std::string> kAspectNames = {"16:9", "21:9", "32:9", "Auto (window)"};
+    int aspect_i = static_cast<int>(std::find(kAspects.begin(), kAspects.end(), draft.aspect_ratio) - kAspects.begin());
+    if (aspect_i >= static_cast<int>(kAspects.size())) aspect_i = 0;
+    if (cycle(value_row(p, "Aspect ratio", kAspectNames[static_cast<size_t>(aspect_i)],
+                        "The picture's shape. 16:9 is the game's own (bars at the sides on a wider screen). 21:9 and 32:9 "
+                        "show more of the world to the left and right on ultrawide screens, with the HUD kept 16:9 in the "
+                        "middle. Auto follows the window's shape."),
+              aspect_i, static_cast<int>(kAspects.size())))
+        draft.aspect_ratio = kAspects[static_cast<size_t>(aspect_i)];
     group_end(p);
 
     group_begin(p, "Performance");

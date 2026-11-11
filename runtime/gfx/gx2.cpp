@@ -140,8 +140,10 @@ GX2_FUNC(GX2CalcDRCSize) {
     if (arg(ctx, 4)) ppc::st32(base, arg(ctx, 4), 0);
 }
 // void GX2SetTVBuffer(void* buffer, u32 size, mode, format, buffering)
+void apply_widescreen();
 GX2_FUNC(GX2SetTVBuffer) {
     g_tv_mode = arg(ctx, 2);
+    apply_widescreen();
     g_tv_format = arg(ctx, 3);
     g_tv_buffering = arg(ctx, 4);
     if (rt().trace_imports) std::fprintf(stderr, "  GX2SetTVBuffer(%08X, %X, mode %u, format %X, buffering %u)\n", arg(ctx, 0), arg(ctx, 1), arg(ctx, 2), arg(ctx, 3), arg(ctx, 4));
@@ -1184,6 +1186,19 @@ void precompile_pipelines(const std::function<void(size_t, size_t)>& progress) {
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
 }
 
+namespace {
+std::atomic<float> g_widescreen{1.0f};
+void apply_widescreen() {
+    uint32_t w = 0, h = 0;
+    if (g_tv_mode) tv_dims(g_tv_mode, w, h);
+    if (g_renderer) g_renderer->set_widescreen(g_widescreen, w, h);
+}
+}  // namespace
+void set_widescreen(float factor) {
+    g_widescreen = factor;
+    apply_widescreen();
+}
+
 void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, bool global_illumination) {
     if (g_renderer) g_renderer->set_effects(tri_look, ambient_occlusion, depth_of_field, vignette, global_illumination);
 }
@@ -1213,6 +1228,7 @@ void register_gx2(os::Runtime& r) {
         std::string err;
         g_renderer = Renderer::create(r.presenter->vk(), r.mem->base(), r.shader_dir, &err);
         if (!g_renderer) std::fprintf(stderr, "renderer unavailable (%s): CPU surface paths only\n", err.c_str());
+        apply_widescreen();
     }
     char* env = nullptr;
     size_t len = 0;

@@ -61,4 +61,13 @@ GuestFunction* override_slot(uint32_t guest_addr) {
 
 void set_override(uint32_t guest_addr, GuestFunction fn) { *override_slot(guest_addr) = fn; }
 
+GuestFunction* hook_slot(uint32_t insn_addr) {
+    static std::mutex m;
+    static std::map<uint32_t, GuestFunction> slots;
+    std::lock_guard g(m);
+    return &slots[insn_addr];
+}
+
+void set_hook(uint32_t insn_addr, GuestFunction fn) { *hook_slot(insn_addr) = fn; }
+
 }  // namespace mh3u::ppc

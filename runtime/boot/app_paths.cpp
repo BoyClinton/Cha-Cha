@@ -117,6 +117,7 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "display_mode") s.display_mode = v == "borderless" || v == "fullscreen" ? v : "windowed";
         else if (k == "window_size") s.window_size = v;
         else if (k == "scaling") s.sharp_scaling = v == "sharp";
+        else if (k == "aspect_ratio") s.aspect_ratio = v == "auto" || v == "21:9" || v == "32:9" ? v : "16:9";
         else if (k == "bloom") s.bloom = on;
         else if (k == "depth_of_field") s.depth_of_field = v == "enhanced" || v == "2" ? "enhanced" : on || v == "original" ? "original" : "off";
         else if (k == "ambient_occlusion") s.ambient_occlusion = on;
@@ -146,6 +147,7 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "display_mode=" << s.display_mode << '\n'
       << "window_size=" << s.window_size << '\n'
       << "scaling=" << (s.sharp_scaling ? "sharp" : "smooth") << '\n'
+      << "aspect_ratio=" << s.aspect_ratio << '\n'
       << "bloom=" << (s.bloom ? 1 : 0) << '\n'
       << "depth_of_field=" << s.depth_of_field << '\n'
       << "ambient_occlusion=" << (s.ambient_occlusion ? 1 : 0) << '\n'

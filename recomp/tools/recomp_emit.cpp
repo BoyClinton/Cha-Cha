@@ -133,6 +133,15 @@ int main(int argc, char** argv) {
                 if (l.rfind("0x", 0) == 0) overrides.insert(static_cast<uint32_t>(std::stoul(l.substr(0, 10), nullptr, 16)));
         }
 
+        // config/hooks.txt: "0xADDR name # note" - instructions followed by a call to a registered hook (ppc::set_hook)
+        std::set<uint32_t> hooks;
+        {
+            std::ifstream hk(repo / "config/hooks.txt");
+            for (std::string l; std::getline(hk, l);)
+                if (l.rfind("0x", 0) == 0) hooks.insert(static_cast<uint32_t>(std::stoul(l.substr(0, 10), nullptr, 16)));
+        }
+        env.hook_after = [&](uint32_t a) { return hooks.count(a) != 0; };
+
         size_t ok = 0, insns = 0, total_insns = 0;
         std::map<std::string, size_t> reasons;
         for (const Fn& f : fns) {

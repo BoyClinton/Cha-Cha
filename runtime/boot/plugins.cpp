@@ -4,6 +4,7 @@
 #include "chacha_plugin.h"
 #include "hle.h"
 #include "ppc_context.h"
+#include "widescreen.h"
 
 #include <imgui.h>
 
@@ -183,14 +184,18 @@ void camera_after(void*, ChaChaCall* call) {
     g_cam_at = std::chrono::steady_clock::now();
 }
 
-void game_rect(float* x, float* y, float* w, float* h) {
-    const float k = std::min(g_display_w / 1280.0f, g_display_h / 720.0f);
-    const float gw = 1280.0f * k, gh = 720.0f * k;
+// the game's picture in the window; `wide`: the whole 3D view (wider than 16:9 with an Aspect ratio of 21:9 / 32:9),
+// else its middle 16:9, where the HUD is
+void picture_rect(bool wide, float* x, float* y, float* w, float* h) {
+    const float pw = 1280.0f * (wide ? game::widescreen() : 1.0f);
+    const float full = std::min(g_display_w / (1280.0f * game::widescreen()), g_display_h / 720.0f);
+    const float gw = pw * full, gh = 720.0f * full;
     *x = (g_display_w - gw) * 0.5f;
     *y = (g_display_h - gh) * 0.5f;
     *w = gw;
     *h = gh;
 }
+void game_rect(float* x, float* y, float* w, float* h) { picture_rect(false, x, y, w, h); }
 
 bool get_camera(ChaChaCamera* out) {
     std::lock_guard g(g_cam_m);
@@ -224,9 +229,9 @@ int world_to_screen(const float p[3], float* sx, float* sy, float* depth) {
     if (fov > 3.2f) fov *= 3.14159265f / 180.0f;  // degrees (MT Framework) - radians accepted too
     if (!(fov > 0.01f && fov < 3.1f)) fov = 50.0f * 3.14159265f / 180.0f;
     float gx, gy, gw, gh;
-    game_rect(&gx, &gy, &gw, &gh);
-    // the picture's 16:9: uCamera's mAspect stays 1.0 on the game's cameras (seen 2026-11-02), the projection
-    // takes the viewport's
+    picture_rect(true, &gx, &gy, &gw, &gh);
+    // the picture's shape: uCamera's mAspect stays 1.0 on the game's cameras (seen 2026-11-02), the projection
+    // takes the viewport's (times the widescreen factor, src/game/widescreen.cpp)
     const float aspect = gw / gh;
     const float t = std::tan(fov * 0.5f);
     const float nx = x / (z * t * aspect), ny = y / (z * t);
