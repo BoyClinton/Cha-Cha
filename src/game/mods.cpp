@@ -19,7 +19,10 @@ const ModInfo kInfo[kCount] = {
      "Textures in the\ntexture_replacements folder (in\nCha-Cha's data folder) are used\nin place of the game's own. Turn\nit off to see the original ones.", true},
     {"instant_gathering", "Instant Gathering",
      {"One gather, mine or net swing", "takes all a spot has to offer."},
-     "One gathering, mining or bug net\nanimation collects everything\nthe spot has left. Each item\nstill rolls its reward and the\ntool's breakage as usual; a\nbroken tool stops it there.\nCarving monsters is not affected.", false},
+     "One gathering, mining or bug net\nanimation collects everything\nthe spot has left. Each item\nstill rolls its reward and the\ntool's breakage as usual; a\nbroken tool stops it there.\nCarving is Instant Carve.", false},
+    {"instant_carve", "Instant Carve",
+     {"One carve takes every carve", "a monster has left."},
+     "One carving motion takes all\nthe carves left on a monster,\non land and under water. Each\ncarve still rolls its own\nreward, as usual.", false},
     {"auto_delivery", "Auto Delivery",
      {"Delivery goals are handed in as", "soon as your pouch holds enough."},
      "On gathering quests the items\nasked for are delivered on the\nspot as soon as your pouch holds\nenough of them - no trip to the\ndelivery box. Items you carry in\nyour arms, like eggs, still go\nto camp as usual.", false},
@@ -29,8 +32,8 @@ const ModInfo kInfo[kCount] = {
 };
 
 std::atomic<bool> g_on[kCount] = {kInfo[0].default_on, kInfo[1].default_on, kInfo[2].default_on, kInfo[3].default_on,
-                                  kInfo[4].default_on, kInfo[5].default_on};
-static_assert(kCount == 6, "g_on: one default per mod");
+                                  kInfo[4].default_on, kInfo[5].default_on, kInfo[6].default_on};
+static_assert(kCount == 7, "g_on: one default per mod");
 std::function<void(Mod, bool)> g_listener;
 
 }  // namespace

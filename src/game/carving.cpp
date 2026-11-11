@@ -9,7 +9,9 @@
 // a few seconds pass without another item.
 //
 // Instant Gathering (user 2026-11-10): one gathering / mining / bug net animation takes everything the spot has left;
-// each item still rolls its reward and the tool's breakage; carving monsters is not affected.
+// each item still rolls its reward and the tool's breakage. Instant Carve (user 2026-11-11): the same for carving
+// (the gather action's kinds 1 and 5, carving on land / under water? - the only kinds with a crouch first stage),
+// split out because Instant Gathering also emptied carcasses in one carve.
 // Replaces: FUN_028BC31C gatherReward? (player, kind, roll, item), called only from the gather action state
 // FUN_028BC650 (player, kind) at the animation's reward moment, after
 //   FUN_02162430 sPop::rollSpot? (sPop, area pad+0x56, position pad+0xE0, spot pad+0x9BC): finds the spot's slot
@@ -86,7 +88,11 @@ PPC_FUNC(gather_reward) {
     Uses before = uses(base, pad);
     g_last_obtain = 0xFFFFFFFF;
     sub_028BC31C__orig(ctx, base);
-    if (!mod_enabled(Mod::InstantGathering) || roll != 1 || (item & 0xFFFF) == 0) return;  // 2: that was the last
+    // kinds 1 and 5 are carving (on land / under water; FUN_028d204c's gather states pass 0-9, and only these two
+    // start with the crouch, anims 0x131 / 0x138 and 0x13F / 0x143): Instant Carve, the rest Instant Gathering
+    const bool carve = kind == 1 || kind == 5;
+    if (!mod_enabled(carve ? Mod::InstantCarve : Mod::InstantGathering)) return;
+    if (roll != 1 || (item & 0xFFFF) == 0) return;  // 2: that was the last
     if (ppc::ld16(base, pad + 0x9C0) == 0x10) return;                                     // the game's own special item
     for (int n = 0; n < kMaxExtra; ++n) {
         Uses after = uses(base, pad);

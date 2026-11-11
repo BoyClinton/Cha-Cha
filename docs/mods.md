@@ -67,7 +67,9 @@ Every mod is also in the pause menu's CFG tab > Mods (On / Off), on quests too: 
 - **Instant Gathering** (off by default): one gathering, mining or bug net animation collects everything the spot
   has left. Each item still rolls its reward, the gathering skills and the tool's breakage as in the game; a broken
   tool, a full pouch or the spot running out ends it there. Endless spots give one item a swing, as usual. Carving
-  monsters is not affected. Code: `src/game/carving.cpp`.
+  monsters is Instant Carve. Code: `src/game/carving.cpp`.
+- **Instant Carve** (off by default): one carving motion takes all the carves left on a monster, on land and under
+  water. Each carve still rolls its own reward. Code: `src/game/carving.cpp` (gather kinds 1 and 5).
 - **Auto Delivery** (off by default): a quest's item delivery goals are handed in on the spot (the game's own
   "delivered" message) as soon as your pouch holds the whole remaining amount - no trip to the delivery box. Items
   carried in your arms (eggs and the like; the game's own list of carried items) still go to camp. Not while a

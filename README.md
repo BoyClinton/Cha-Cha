@@ -91,7 +91,8 @@ not an emulator, and there is no emulator code in it.
 | **Quest Scaling** | Monster HP on Port Tanzia quests follows the number of hunters (table above). | On |
 | **Auto Carve** | Hold the gather button on a carcass, a gathering spot or a mining point and you keep going until the spot is used up. | On |
 | **Texture Packs** | Your replacement textures, [see below](#texture-packs). | On |
-| **Instant Gathering** | One gather, mine or bug-net swing takes everything a spot has left; each item still rolls its reward and tool breakage. | Off |
+| **Instant Gathering** | One gather, mine or bug-net swing takes everything a spot has left; each item still rolls its reward and tool breakage. Carving is Instant Carve. | Off |
+| **Instant Carve** | One carving motion takes every carve a monster has left, on land and under water; each carve still rolls its own reward. | Off |
 | **Auto Delivery** | Delivery goals are handed in as soon as your pouch holds enough (eggs and other carried items still go to camp). | Off |
 | **Key Quest Markers** | A star on key and urgent quests: gold while you still need them, grey once cleared. | Off |
 
@@ -108,7 +109,7 @@ Switch them in the main menu's **DLC â†’ Mods** or in the in-game menu's **CFG â
   to unlimited, V-sync, windowed / borderless / fullscreen, smooth or sharp scaling to the window.
 - **Tri look:** the softer, muted, hazier picture of Monster Hunter Tri on the Wii, applied to the world only (menus
   and the HUD stay as they are).
-- **Effects the original never had:** global illumination and screen-space reflections (each with a Lite mode for
+- **Effects the original never had:** global illumination and screen-space reflections on water (each with a Lite mode for
   weaker GPUs), ambient occlusion, an enhanced depth of field and a vignette, each optional. The game's own bloom and
   depth of field can be switched off.
 - **Controls your way:** keyboard and mouse, or any controller SDL supports, played as a Wii U Pro Controller. Every
@@ -135,7 +136,7 @@ You don't have to go back to the title screen to change anything:
 | **Display Settings** | Display Mode (windowed, borderless, fullscreen), Window Size, Internal Resolution, Scaling (smooth or sharp), Frame Rate Limit, VSync |
 | **Graphics Settings** | Look (Original or Tri), Bloom, Depth of Field, Ambient Occlusion, Global Illumination, Reflections, Vignette |
 | **Camera Settings** | Modern Camera (on / off), Camera Distance (the game's own up to 200 %) |
-| **Mods** | Quest Scaling, Auto Carve, Texture Packs, Instant Gathering, Auto Delivery, Key Quest Markers |
+| **Mods** | Quest Scaling, Auto Carve, Texture Packs, Instant Gathering, Instant Carve, Auto Delivery, Key Quest Markers |
 
 Left / right (or a click on a value) changes it, and it is saved at once; most changes show straight away, while
 Internal Resolution, Frame Rate Limit and VSync apply the next time you start. **B** goes back. Display and Graphics

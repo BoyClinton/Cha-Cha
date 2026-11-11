@@ -9,7 +9,7 @@
 
 namespace mh3u::game {
 
-enum class Mod { QuestScaling, AutoCarve, TexturePacks, InstantGathering, AutoDelivery, KeyQuestMarkers, Count };
+enum class Mod { QuestScaling, AutoCarve, TexturePacks, InstantGathering, InstantCarve, AutoDelivery, KeyQuestMarkers, Count };
 
 struct ModInfo {
     const char* key;      // mods.ini key

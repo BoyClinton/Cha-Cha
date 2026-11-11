@@ -20,7 +20,6 @@
 #include "quest_markers.h"
 #include "play_log.h"
 #include "windpress.h"
-#include "effect_speed.h"
 #include "grab_escape.h"
 #include "frame_limit.h"
 #include "monster_hp.h"
@@ -543,7 +542,6 @@ int main(int argc, char** argv) {
     game::set_camera_distance(static_cast<float>(settings.camera_distance) / 100.0f);  // (issue #17)
     game::set_modern_camera_mouse({&input::take_look, &input::set_direct_look});  // the Modern Camera mod's mouse
     game::register_windpress();     // the windpress push by the frame time, not per frame
-    game::register_effect_speed();  // particles step 30 times a second, not once a frame (issue #15)
     game::register_grab_escape();   // each wiggle out of a grab counts as on the console
     // MH3U_PLAY_LOG: per-frame hunter / marker log (frame-rate bugs); MH3U_PLAY_WATCH=1 adds who writes the position
     std::function<void(uint32_t)> play_watch;

@@ -23,7 +23,9 @@
 #include <sstream>
 #include <thread>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "guest_memory.h"
@@ -70,6 +72,12 @@ uint64_t hash_words(const uint8_t* p, size_t n) {
     }
     for (; i < n; ++i) r = (r ^ p[i]) * 0x100000001B3ull;
     return r;
+}
+bool is_water_texture(uint64_t level0_hash) {
+    static const std::unordered_set<uint64_t> water = {
+#include "water_textures.inc"
+    };
+    return water.count(level0_hash) != 0;
 }
 
 float half_to_float(uint16_t h) {
@@ -407,6 +415,7 @@ struct Image {
     GuestSurface surf;
     VkComponentMapping base_swizzle{};
     uint64_t hash = 0, checked_frame = ~0ull;
+    bool water = false;  // level 0 is one of the water textures (water_textures.inc): reflections land on its draws
     uint32_t seen_epoch = 0;  // guest-memory write epoch when the contents were last checked (texture())
     std::unique_ptr<Image> depth_alias;  // R32F render target sampled with depth compare
     std::unique_ptr<Image> snapshot;     // copy for draws that sample their own render target
@@ -687,6 +696,20 @@ private:
     VkFormat gi_format_ = VK_FORMAT_R16G16B16A16_SFLOAT;  // B10G11R11 where it can be drawn to (half the bandwidth)
     // the half-resolution scene (colour + eye depth) both GI and reflections read; their traces and blurs
     std::unique_ptr<Image> lo_img_, gi_img_, gi_blur_img_, ssr_img_, ssr_blur_img_;
+    // Reflections on water only (user 2026-11-11): each water draw (a draw into the scene sampling one of the water
+    // textures in its pixel stage, Image::water; the material's blend state does not tell water from decals) is drawn a
+    // second time into this R8 mask, same vertex shader and depth test, with a fragment shader writing 1. The reflections
+    // pass reflects only where it is set, and is skipped in frames without water (water_frame_ != frame_).
+    std::unique_ptr<Image> water_mask_;
+    VkShaderModule water_fs_ = VK_NULL_HANDLE;
+    ShaderInfo water_ps_;  // water_fs_ as a pixel stage for create_pipeline
+    std::unordered_map<std::string, VkPipeline> water_pipes_;
+    uint64_t water_frame_ = ~0ull;
+    float water_debug_ = 0;  // MH3U_WATER_DEBUG=1: the mask shown in red
+    bool draw_water_ = false;  // the current draw's pixel stage samples a water texture
+    bool is_water_draw(const DrawState& st) const;
+    void water_mask_draw(const PipelineDesc& d, VkPipelineLayout layout, const ShaderInfo* vs, const ShaderInfo* gs, Image* depth,
+                         uint32_t rw, uint32_t rh, uint32_t index_count, uint32_t vertex_count, uint32_t instances);
     // Tri: glow radius (px at 1080p), haze strength / start / per unit (near-plane units), glow strength (MH3U_TRI_*)
     float tri_glow_radius_ = 18.0f, tri_haze_ = 0.30f, tri_haze_start_ = 3000.0f, tri_haze_k_ = 1.0f / 25000.0f, tri_glow_ = 0.16f;
     // AO radius in near-plane units (MH3U's near plane is small: the hunter is ~1500 away in a village shot)
@@ -731,6 +754,8 @@ VkRenderer::~VkRenderer() {
     if (dummy_shadow_) destroy_image(*dummy_shadow_);
     if (tv_) destroy_image(*tv_);
     for (auto& [k, p] : pipelines_) vkDestroyPipeline(dev_, p, nullptr);
+    for (auto& [k, p] : water_pipes_)
+        if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& [k, l] : pipe_layouts_) vkDestroyPipelineLayout(dev_, l, nullptr);
     for (auto& [k, l] : set_layouts_) vkDestroyDescriptorSetLayout(dev_, l, nullptr);
     for (auto& [k, s] : samplers_) vkDestroySampler(dev_, s, nullptr);
@@ -738,7 +763,7 @@ VkRenderer::~VkRenderer() {
         if (s->module) vkDestroyShaderModule(dev_, s->module, nullptr);
     if (pipeline_cache_) vkDestroyPipelineCache(dev_, pipeline_cache_, nullptr);
     for (Image* i : {post_.get(), ao_img_.get(), focus_img_.get(), lo_img_.get(), gi_img_.get(), gi_blur_img_.get(), ssr_img_.get(),
-                     ssr_blur_img_.get()})
+                     ssr_blur_img_.get(), water_mask_.get()})
         if (i) destroy_image(*i);
     for (auto& [k, p] : fx_pipes_)
         if (p) vkDestroyPipeline(dev_, p, nullptr);
@@ -1493,6 +1518,7 @@ Image* VkRenderer::texture(const TextureBinding& t, uint32_t sampler_type) {
         if (written) {
             ++n_texture_hashes_;
             h = hash_words(base_ + s.image, image_bytes);
+            img->water = is_water_texture(h);  // h is still level 0 alone here
             if (mip_bytes) h ^= hash_words(base_ + mips, mip_bytes) * 31;
         }
         if (h != img->hash || img->layout == VK_IMAGE_LAYOUT_UNDEFINED) {
@@ -1508,7 +1534,10 @@ Image* VkRenderer::texture(const TextureBinding& t, uint32_t sampler_type) {
             if (lookup) replace_texture(*img, s, fd, image_bytes, level0, row);
         }
     }
-    if (img->replacement && want_packs_) return img->replacement.get();
+    if (img->replacement && want_packs_) {
+        img->replacement->water = img->water;
+        return img->replacement.get();
+    }
     return img;
 }
 
@@ -1963,6 +1992,51 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     ShaderInfo* gs = st.gs ? shader(kStageGeometry, st.gs) : nullptr;
     if (!vs || !ps || (st.gs && !gs)) return skip("shader missing");
     if ((debug_ & 8) && !gs) return skip("MH3U_RENDER_DEBUG: non-GS draw");
+    // MH3U_SKIP_PS=<hex>[,<hex>...]: leave out draws whose pixel shader key starts with one of them (which draws make
+    // what: compare a frame dump with and without)
+    static const std::vector<std::string> skip_ps = [] {
+        std::vector<std::string> v;
+        char* e = nullptr;
+        size_t n = 0;
+        if (_dupenv_s(&e, &n, "MH3U_SKIP_PS") == 0 && e)
+            for (std::string s = e; !s.empty();) {
+                const size_t c = s.find(',');
+                v.push_back(s.substr(0, c));
+                s = c == std::string::npos ? "" : s.substr(c + 1);
+            }
+        std::free(e);
+        return v;
+    }();
+    if (!skip_ps.empty()) {
+        char key[17];
+        std::snprintf(key, sizeof key, "%016llx", static_cast<unsigned long long>(ps->key));
+        for (const std::string& p : skip_ps)
+            if (std::string_view(key).substr(0, p.size()) == p) return skip("MH3U_SKIP_PS");
+    }
+    // MH3U_SKIP_TEX=<hex level-0 hash>[,...] (the trace's h0; addresses differ from run to run): leave out draws whose
+    // pixel shader samples one of these textures
+    static const std::vector<uint64_t> skip_tex = [] {
+        std::vector<uint64_t> v;
+        char* e = nullptr;
+        size_t n = 0;
+        if (_dupenv_s(&e, &n, "MH3U_SKIP_TEX") == 0 && e)
+            for (char* p = e; *p;) {
+                char* end = nullptr;
+                const unsigned long long a = std::strtoull(p, &end, 16);
+                if (end == p) break;
+                v.push_back(a);
+                p = *end ? end + 1 : end;
+            }
+        std::free(e);
+        return v;
+    }();
+    if (!skip_tex.empty())
+        for (const TextureBinding& t : st.stage[kStagePixel].tex)
+            if (t.bound && t.surf.image && t.surf.image_size &&
+                std::find(skip_tex.begin(), skip_tex.end(),
+                          hash_words(base_ + t.surf.image, std::min<size_t>(t.surf.image_size, (size_t{1} << 32) - t.surf.image))) !=
+                    skip_tex.end())
+                return skip("MH3U_SKIP_TEX");
 
     // ---- vertex range and indices
     std::vector<uint32_t>& indices = scratch_indices_;  // member buffers: no allocation per draw
@@ -2209,9 +2283,13 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
             for (auto [slot, type] : sh[s]->samplers) {
                 const TextureBinding& tb = st.stage[s].tex[slot];
                 const SamplerState& sm = st.stage[s].samp[slot];
-                tracef("  %s tex %u (type %u): %s image %08X %ux%u fmt %03X tile %u compsel %08X sampler %08X %08X%s\n",
+                // level 0's content hash (Image::hash0): the same texture on any map, in any run
+                const uint64_t h0 = tb.bound && tb.surf.image && tb.surf.image_size
+                                        ? hash_words(base_ + tb.surf.image, std::min<size_t>(tb.surf.image_size, (size_t{1} << 32) - tb.surf.image))
+                                        : 0;
+                tracef("  %s tex %u (type %u): %s image %08X %ux%u fmt %03X tile %u compsel %08X sampler %08X %08X h0 %016llx%s\n",
                        kStageExt[s], slot, type, tb.bound ? "bound" : "unbound", tb.surf.image, tb.surf.width, tb.surf.height,
-                       tb.surf.format, tb.surf.tile, tb.comp_sel, sm.words[0], sm.words[1],
+                       tb.surf.format, tb.surf.tile, tb.comp_sel, sm.words[0], sm.words[1], static_cast<unsigned long long>(h0),
                        targets_.count(tb.surf.image) ? " (render target)" : "");
             }
             for (auto [block, n] : sh[s]->ubos) {
@@ -2275,6 +2353,7 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     // ---- descriptors (uploads and layout transitions happen before rendering starts)
     ShaderInfo* stages[3] = {vs, ps, gs};
     VkDescriptorSet sets[3] = {};
+    draw_water_ = false;
     for (int s = 0; s < 3; ++s) {
         ShaderInfo* sh = stages[s];
         if (!sh || (sh->ubos.empty() && sh->samplers.empty())) continue;
@@ -2306,6 +2385,7 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
             const auto [slot, type] = sh->samplers[i];
             const TextureBinding& tb = st.stage[s].tex[slot];
             Image* img = tb.bound ? texture(tb, type) : nullptr;
+            if (s == kStagePixel && img && img->water) draw_water_ = true;
             if (img && (img == depth || std::find(colors, colors + 8, img) != colors + 8)) img = snapshot(*img);
             const bool shadow = type == 6;
             VkImageViewType vt = type == 0 ? VK_IMAGE_VIEW_TYPE_1D : type == 4 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
@@ -2494,6 +2574,74 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
         vkCmdDraw(c, call.count, call.instances, 0, 0);
     }
     ++n_draws_;
+    if (ssr_ && water_fs_ && depth && is_water_draw(st))
+        water_mask_draw(d, layout, vs, gs, depth, rw, rh, index_count, call.count, call.instances);
+}
+
+bool VkRenderer::is_water_draw(const DrawState& st) const {
+    return draw_water_ && !scene_done_ && scene_color_ && st.color_bound[0] && st.color[0].image == scene_color_;
+}
+
+// The draw just recorded, again into the water mask: its vertex buffers, descriptor sets, push constants and dynamic
+// state are still bound (they outlive the rendering instance); only the attachments and the pipeline change.
+void VkRenderer::water_mask_draw(const PipelineDesc& d, VkPipelineLayout layout, const ShaderInfo* vs, const ShaderInfo* gs,
+                                 Image* depth, uint32_t rw, uint32_t rh, uint32_t index_count, uint32_t vertex_count,
+                                 uint32_t instances) {
+    if (!water_mask_ || water_mask_->width != rw || water_mask_->height != rh) {
+        if (water_mask_) fc().garbage.push_back(std::move(water_mask_));
+        water_mask_ = create_image(VK_FORMAT_R8_UNORM, VK_IMAGE_TYPE_2D, rw, rh, 1, false,
+                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        if (!water_mask_) return;
+        water_frame_ = ~0ull;
+    }
+    PipelineDesc md = d;
+    md.shader[1] = 0x57A7E3A5C0FFEE01ull;  // the mask shader: its own pipelines
+    md.ncolor = 1;
+    md.color_format[0] = VK_FORMAT_R8_UNORM;
+    md.blend_enable[0] = 0;
+    md.write_mask[0] = 0xF;
+    md.depth_write = 0;
+    md.stencil = 0;
+    std::string key;
+    KeyWriter kw{key};
+    serialize(kw, md);
+    VkPipeline& pipe = water_pipes_[key];
+    if (!pipe) {
+        const ShaderInfo* stages[3] = {vs, &water_ps_, gs};
+        pipe = create_pipeline(md, layout, stages);
+        if (!pipe) return;
+    }
+    end_rendering();
+    transition(*water_mask_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo ca{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    ca.imageView = view(*water_mask_, VK_IMAGE_VIEW_TYPE_2D, {});
+    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    ca.loadOp = water_frame_ == frame_ ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;  // cleared once a frame
+    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    da.imageView = view(*depth, VK_IMAGE_VIEW_TYPE_2D, {});
+    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {rw, rh}};
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = 1;
+    ri.pColorAttachments = &ca;
+    ri.pDepthAttachment = &da;
+    ri.pStencilAttachment = has_stencil(depth->format) ? &da : nullptr;
+    const VkFormat fmt = VK_FORMAT_R8_UNORM;
+    VkCommandBuffer c = cmd();
+    vkc::cmd_begin_rendering(c, ri, &fmt, depth->format);
+    vkCmdBindPipeline(c, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    if (index_count) vkCmdDrawIndexed(c, index_count, instances, 0, 0, 0);
+    else vkCmdDraw(c, vertex_count, instances, 0, 0);
+    vkc::cmd_end_rendering(c);
+    rendering_ = false;  // the next game draw begins its own attachments again
+    active_color_.clear();
+    active_depth_ = nullptr;
+    water_frame_ = frame_;
+    (void)layout;
 }
 
 // ---- our full-screen passes: look grade, ambient occlusion, depth of field ---------------------------------------
@@ -2565,6 +2713,12 @@ void main() {
     float R = p.a.x;
     float rpx = min(R * 0.5 * float(ds.y) / (kTanHalfFov * P.z), 0.1 * float(ds.y));
     if (rpx < 1.5) return;
+    // Issue #19: far away (the sky dome is geometry, not cleared depth) one depth step (~6e-8, D24 or D32F near 1) spans
+    // more than a pixel's width, so the quantised depth reads as terraces and the AO draws rings. Faded out from where
+    // a step is a quarter pixel to half a pixel: q = step / pixel = (z^2 / 2 * 6e-8) / (2 * tan * z / height).
+    float q = P.z * 3e-8 * float(ds.y) / (2.0 * kTanHalfFov);
+    float keep = 1.0 - smoothstep(0.25, 0.5, q);
+    if (keep <= 0.0) return;
     float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     float sum = 0.0;
     for (int i = 0; i < 12; ++i) {
@@ -2574,7 +2728,7 @@ void main() {
         float vv = dot(v, v);
         sum += max(dot(v, N) * inversesqrt(vv + 1e-6) - 0.1, 0.0) * max(1.0 - vv / (R * R), 0.0);
     }
-    frag = vec4(max(1.0 - p.a.y * sum / 12.0, 0.0));
+    frag = vec4(max(1.0 - keep * p.a.y * sum / 12.0, 0.0));
 }
 )";
 
@@ -2741,9 +2895,10 @@ void main() {
 // angles - and a smoothness guess (flat colour is smooth: water, stone; busy texture is rough: grass, rock), faded at
 // the screen's edges and for rays turning towards the camera. Pixels whose reflection would be faint are skipped
 // before the march (most of the screen when it is not seen at a grazing angle). Out: premultiplied (rgb * w, w).
-// p.a = (strength, F0, thickness, -).
+// p.a = (strength, F0, thickness, -). Only on water (user 2026-11-11): the mask of this frame's water draws.
 const char* kSsrFs = R"(
 layout(set = 0, binding = 0) uniform sampler2D lo;
+layout(set = 0, binding = 1) uniform sampler2D water;
 float zat(vec2 s) { return zz(lofetch(lo, ivec2(s)).a); }
 vec2 proj(vec3 v) { return (v.xy / (v.z * vec2(kTanHalfFov * float(ls.x) / float(ls.y), kTanHalfFov)) * 0.5 + 0.5) * vec2(ls); }
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -2751,6 +2906,11 @@ void main() {
     ls = textureSize(lo, 0);
     ivec2 c = ivec2(uv * vec2(ls));
     frag = vec4(0.0);
+    if (texture(water, uv).r < 0.5) return;  // not water
+    if (p.a.w > 0.0) {  // MH3U_WATER_DEBUG=1: the mask in red
+        frag = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+    }
     vec4 c0 = texelFetch(lo, c, 0);
     if (c0.a <= 0.0) return;  // sky
     vec4 l = lofetch(lo, c - ivec2(1, 0)), r = lofetch(lo, c + ivec2(1, 0)), u = lofetch(lo, c - ivec2(0, 1)), d = lofetch(lo, c + ivec2(0, 1));
@@ -3119,6 +3279,7 @@ bool VkRenderer::init_post(std::string* error) {
     ssr_strength_ = env_float("MH3U_SSR_STRENGTH", ssr_strength_);
     ssr_f0_ = env_float("MH3U_SSR_F0", ssr_f0_);
     ssr_thickness_ = env_float("MH3U_SSR_THICKNESS", ssr_thickness_);
+    water_debug_ = env_float("MH3U_WATER_DEBUG", 0.0f);  // 1: the water mask in red instead of reflections
     tri_glow_radius_ = env_float("MH3U_TRI_GLOW_RADIUS", tri_glow_radius_);
     tri_glow_ = env_float("MH3U_TRI_GLOW", tri_glow_);
     tri_haze_ = env_float("MH3U_TRI_HAZE", tri_haze_);
@@ -3170,6 +3331,11 @@ bool VkRenderer::init_post(std::string* error) {
         if (!lo_fs_ || !blur_fs_) lo_fs_ = VK_NULL_HANDLE, ok = false;
         if (!gi_fs_[0] || !gi_fs_[1] || !gi_apply_fs_) gi_apply_fs_ = VK_NULL_HANDLE, ok = false;
         if (!ssr_fs_[0] || !ssr_fs_[1] || !ssr_apply_fs_) ssr_apply_fs_ = VK_NULL_HANDLE, ok = false;
+        // the water mask (reflections on water only): coverage of the water draws, nothing else
+        water_fs_ = fx_module("#version 450\nlayout(location = 0) out vec4 o;\nvoid main() { o = vec4(1.0); }\n", "water_mask.frag",
+                              false, error);
+        water_ps_.ok = water_fs_ != VK_NULL_HANDLE;
+        water_ps_.module = water_fs_;
         static const char* const kLevel[] = {"off", "lite", "full"};
         if (want_gi_ && lo_fs_ && gi_apply_fs_)
             std::printf("renderer: global illumination %s (radius %g, strength %g)\n", kLevel[want_gi_.load()], gi_radius_, gi_strength_);
@@ -3229,11 +3395,13 @@ void VkRenderer::scene_effects(Image& color, Image& depth) {
     if (lo) fx_pass(fx_pipeline(lo_fs_, kLoFormat, FxBlend::None), *lo, {&color, &depth}, nullptr);
     // an effect traced at 1/div resolution (Full: half, Lite: quarter), blurred there, blended onto the scene
     const auto low_res = [&](VkShaderModule trace, VkShaderModule apply, FxBlend blend, std::unique_ptr<Image>& img,
-                             std::unique_ptr<Image>& blur, VkFormat fmt, uint32_t div, const float* pt, const float* pa) {
+                             std::unique_ptr<Image>& blur, VkFormat fmt, uint32_t div, const float* pt, const float* pa,
+                             Image* trace_in2 = nullptr) {
         Image* t = fx_target(img, fmt, color.width / div, color.height / div);
         Image* b = fx_target(blur, fmt, color.width / div, color.height / div);
         if (!t || !b) return;
-        fx_pass(fx_pipeline(trace, fmt, FxBlend::None), *t, {lo}, pt);
+        if (trace_in2) fx_pass(fx_pipeline(trace, fmt, FxBlend::None), *t, {lo, trace_in2}, pt);
+        else fx_pass(fx_pipeline(trace, fmt, FxBlend::None), *t, {lo}, pt);
         fx_pass(fx_pipeline(blur_fs_, fmt, FxBlend::None), *b, {t, lo}, nullptr);
         fx_pass(fx_pipeline(apply, color.format, blend), color, {b, &depth, lo}, pa);
     };
@@ -3255,9 +3423,10 @@ void VkRenderer::scene_effects(Image& color, Image& depth) {
             fx_pass(fx_pipeline(ao_apply_fs_, color.format, FxBlend::Multiply), color, {ao_img_.get(), &depth}, nullptr);
         }
     }
-    if (ssr_ && lo) {
-        const float ps[8] = {ssr_strength_, ssr_f0_, ssr_thickness_};
-        low_res(ssr_fs_[ssr_ - 1], ssr_apply_fs_, FxBlend::Over, ssr_img_, ssr_blur_img_, kLoFormat, ssr_ == 2 ? 2 : 4, ps, nullptr);
+    if (ssr_ && lo && water_mask_ && water_frame_ == frame_) {  // water only: nothing to reflect in a frame without it
+        const float ps[8] = {ssr_strength_, ssr_f0_, ssr_thickness_, water_debug_};
+        low_res(ssr_fs_[ssr_ - 1], ssr_apply_fs_, FxBlend::Over, ssr_img_, ssr_blur_img_, kLoFormat, ssr_ == 2 ? 2 : 4, ps, nullptr,
+                water_mask_.get());
     }
     if (tri_) {
         Image* src = snapshot(color);
