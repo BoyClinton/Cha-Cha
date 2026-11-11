@@ -12,6 +12,7 @@ struct Pointer {
     std::function<bool(float&, float&)> position;    // 0..1 across / down the TV image; false if none
     std::function<int()> take_clicks;                 // left clicks since the last call
     std::function<void(uint32_t)> tap;                // presses VPAD buttons for a few reads
+    std::function<bool()> both_controllers;           // host input drives the Pro Controller and the GamePad alike
 };
 void register_menu_mouse(Pointer pointer);
 

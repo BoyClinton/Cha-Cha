@@ -299,6 +299,32 @@ struct Timed {
 };
 Timed g_shots("MH3U_SHOT"), g_settings_at("MH3U_SETTINGS_AT");
 const auto g_process_start = std::chrono::steady_clock::now();
+// MH3U_MOUSE_AT="s:x,y:down|move|up;..." hands host input left-button presses / moves / releases at x, y (window
+// units) at those seconds after start, as if the mouse did them - for checking the mouse on the GamePad image headless.
+struct MouseAt {
+    double at;
+    float x, y;
+    int kind;  // 0 down, 1 move, 2 up
+};
+std::vector<MouseAt> g_mouse_at = [] {
+    std::vector<MouseAt> v;
+    char* e = nullptr;
+    size_t n = 0;
+    if (_dupenv_s(&e, &n, "MH3U_MOUSE_AT") == 0 && e)
+        for (char* q = e; *q;) {
+            MouseAt m{};
+            char kind[8] = {};
+            if (std::sscanf(q, "%lf:%f,%f:%7[a-z]", &m.at, &m.x, &m.y, kind) == 4) {
+                m.kind = std::string(kind) == "down" ? 0 : std::string(kind) == "move" ? 1 : 2;
+                v.push_back(m);
+            }
+            char* semi = std::strchr(q, ';');
+            q = semi ? semi + 1 : q + std::strlen(q);
+        }
+    std::free(e);
+    return v;
+}();
+size_t g_mouse_next = 0;
 void timed_actions(gfx::Presenter& p, const boot::AppPaths& paths) {
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_process_start).count();
     if (const double s = g_shots.due(secs); s >= 0) {
@@ -306,6 +332,20 @@ void timed_actions(gfx::Presenter& p, const boot::AppPaths& paths) {
         p.capture((dir / ("shot_" + std::to_string(static_cast<int>(s)) + ".bmp")).string());
     }
     if (g_settings_at.due(secs) >= 0 && g_launcher) g_launcher->toggle_settings();
+    for (; g_mouse_next < g_mouse_at.size() && secs >= g_mouse_at[g_mouse_next].at; ++g_mouse_next) {
+        const MouseAt& m = g_mouse_at[g_mouse_next];
+        SDL_Event ev{};
+        if (m.kind == 1) {
+            ev.type = SDL_EVENT_MOUSE_MOTION;
+            ev.motion.x = m.x, ev.motion.y = m.y;
+        } else {
+            ev.type = m.kind == 0 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.down = m.kind == 0;
+            ev.button.x = m.x, ev.button.y = m.y;
+        }
+        input::handle_event(&ev);
+    }
 }
 // MH3U_DUMP_KEY=1: F9 dumps a burst of 6 frames, 4 apart (build/frame_<n>.bmp and _draws.txt, as MH3U_DUMP_FRAME),
 // for catching a rendering bug that comes and goes while playing.
@@ -501,7 +541,7 @@ int main(int argc, char** argv) {
     game::register_item_sets(paths.data / "save" / "80000001", [](const std::string& msg) {
         if (g_launcher) g_launcher->post_toast(msg);  // shown over the game
     });
-    game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap});  // menus: mouse = pointer
+    game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap, &input::both_controllers});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
     {  // the network backend, and MH3U_NET_PROBE, which logs its calls (docs/online.md)
         std::vector<std::string> fp_imports;

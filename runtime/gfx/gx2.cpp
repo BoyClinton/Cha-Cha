@@ -1151,6 +1151,7 @@ GX2_STATE_ONLY(X)
 void cycle_gamepad_view() {
     const int v = (g_gamepad_view + 1) % 3;
     g_gamepad_view = v;
+    input::set_touch_view(v);  // the mouse touches the GamePad screen where its image is shown
     static const char* names[] = {"hidden", "picture-in-picture", "GamePad only"};
     std::printf("GamePad screen: %s\n", names[v]);
     // applied by GX2SwapScanBuffers on the guest thread (the renderer is not thread-safe)
@@ -1242,6 +1243,7 @@ void register_gx2(os::Runtime& r) {
     if (_dupenv_s(&env, &len, "MH3U_GAMEPAD_VIEW") == 0 && env) {
         const std::string v = env;
         g_gamepad_view = v == "pip" ? 1 : v == "only" ? 2 : 0;
+        input::set_touch_view(g_gamepad_view);
     }
     std::free(env);
 #define R(name) ppc::register_import("gx2." #name, &hle_gx2_##name);

@@ -89,6 +89,17 @@ bool save_bindings();   // input.ini in the data folder
 void set_suspended(bool on);
 // Guest thread: the merged state for this read; consumes accumulated mouse movement and wheel pulses.
 PadState read();
+// Guest thread: only the GamePad touch screen of this read (mouse on the shown GamePad image, PlayStation touchpad);
+// consumes nothing.
+PadState touch_state();
+// How the GamePad image is shown (gx2 cycle_gamepad_view: 0 not, 1 inset, 2 instead of the TV image): while it is,
+// the left mouse button held on it touches the GamePad screen there (when the mouse is not captured for mouse look;
+// with the GamePad image alone, clicks never capture it). Any thread.
+void set_touch_view(int mode);
+// Whether the game sees both a Pro Controller and a GamePad driven by host input (MH3U_CONTROLLER=both, the default),
+// so either choice in the game's Controller Settings works. Set by runtime/os/input.cpp. Any thread.
+void set_both_controllers(bool on);
+bool both_controllers();
 // Hold to gather (src/game/carving.cpp, after each item obtained): while `button` (VPAD bits) stays held, the game
 // sees it released for 2 reads out of every 8 - pressed again and again, as when mashing it - until `ms` after this
 // call. Any thread.

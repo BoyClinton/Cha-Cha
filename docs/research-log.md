@@ -1051,3 +1051,13 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
 - Hub position send 0x022627CC (from 0x02798F68) fires when a countdown reloaded from sLobbyNetwork +0x594 runs out; the receiver 0x02262DA0 glides over the
   same +0x594 ticks (0x02797DF0). Only the constructor 0x022601B8 sets it, to 20. Headless host + joiner: lag 0.73 s at 20, 0.15 s at 4. The backend now writes 4
   while online. Details in docs/online.md "Hub movement delay".
+
+## 2026-11-11 - GamePad touch screen and Controller Settings (fork, issue #6)
+- Touch: MH3U reads touch only through `VPADGetTPCalibratedPoint`, whose output is 1280x720 (the game then scales to 854x480). Handing it 854x480 pixels
+  through a pass-through put a touch at (512, 352) on the panel at about (341, 235). Raw samples are now 12-bit and calibrated to 1280x720; checked
+  headless (Customize Panels: the Target Cam panel at (512, 352) is the one picked).
+- Touch works whatever the game's controller option is (its own notice: "Touch controls using the touch screen can be used with any controller
+  setting"), but `pro-only` had no GamePad at all and `pro` handed VPADRead no touch. New default `MH3U_CONTROLLER=both`: Pro Controller and GamePad
+  both driven by host input (one host read shared by a VPADRead and a KPADReadEx in a row), so Options -> Controller Settings can choose either; with the
+  GamePad chosen a save loads into Moga Village and the hunter walks (headless). − -> Customize Panels -> drag Target Cam to the bin -> OK done headless with
+  scripted touches and with synthetic mouse events on the F3 inset (MH3U_MOUSE_AT). Target camera on the TV HUD in the field not checked yet.
