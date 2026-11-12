@@ -58,7 +58,7 @@ public:
     void present_image(const uint8_t* rgba, uint32_t width, uint32_t height);
     // Presents a device image (TRANSFER_SRC_OPTIMAL, written by an earlier submission on the queue), scaled to fit.
     void present_vk_image(VkImage image, uint32_t width, uint32_t height);
-    // Drawn over every presented frame (the launcher): called with the queue lock held, inside rendering on the
+    // Drawn over every presented frame (unused at present): called with the queue lock held, inside rendering on the
     // swapchain image (colour attachment, contents kept; a render pass where dynamic rendering is emulated, see
     // vkc::pipeline_rendering), from whichever thread presents.
     using Overlay = std::function<void(VkCommandBuffer cmd, VkExtent2D extent)>;

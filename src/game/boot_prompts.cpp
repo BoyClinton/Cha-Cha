@@ -18,6 +18,7 @@
 // title are unchanged.
 #include "boot_prompts.h"
 
+#include "dev_anchor.h"
 #include "functions.h"
 
 #include <atomic>
@@ -45,15 +46,18 @@ thread_local bool t_confirming = false;  // inside a boot-state step: Yes/No ans
 std::set<uint32_t> g_states = {0, 1};
 bool boot_state(uint32_t state) { return g_states.count(state) != 0; }
 
-std::atomic<uint32_t> g_widget{0};  // start_menu_widget
+std::atomic<uint32_t> g_widget{0};      // start_menu_widget
+std::atomic<uint32_t> g_generation{0};  // start_menu_generation
 
 PPC_FUNC(start_menu_step) {
     const uint32_t self = ctx.r[3], state = ppc::ld32(base, self + kMenuState);
-    g_widget = self;
     static uint32_t seen = ~0u;
+    if (self != g_widget.load() || (state == 0 && seen != 0)) ++g_generation;  // a new start menu
+    g_widget = self;
     if (state != seen) {
         seen = state;
         std::printf("boot prompts: start menu state %u\n", state);
+        if (state == 7) core::g_main_menu_opened = true;  // the main menu: anchor for "@N" scripts (dev_anchor.h)
     }
     if (!g_enabled || !boot_state(state)) return sub_027695A0__orig(ctx, base);
     const uint32_t pad = ppc::ld32(base, kSAppPad), save = ppc::ld32(base, kSAppSaveData);
@@ -153,6 +157,7 @@ PPC_FUNC(notice_message) {  // 0x0201A020
 }  // namespace
 
 uint32_t start_menu_widget() { return g_widget.load(); }
+uint32_t start_menu_generation() { return g_generation.load(); }
 
 void register_boot_prompts(bool enabled) {
     g_enabled = enabled;

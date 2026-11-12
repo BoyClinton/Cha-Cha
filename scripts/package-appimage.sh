@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Packages a Linux build (scripts/build-linux.sh) as build/release/Cha-Cha-<version>-x86_64.AppImage (docs/linux.md).
+# Packages a Linux build (scripts/build-linux.sh) as build/release/Cha-Cha-<version>-x86_64.AppImage and
+# build/release/Cha-Cha-<version>-linux-x86_64.tar.gz (the same files unpacked; docs/linux.md).
 # Usage: scripts/package-appimage.sh [build dir] [version]
 #        scripts/package-appimage.sh --libs-only [build dir]: only gather the libraries (with RUNPATH $ORIGIN) into
 #        <build>/AppDir/usr/lib and print that folder, for scripts/package-folder.sh's LIB_DIR
@@ -83,3 +84,29 @@ export LDAI_OUTPUT="$out/Cha-Cha-$version-x86_64.AppImage"
 "$ld" --appdir "$app" --exclude-library 'libvulkan.so*' --desktop-file "$app/usr/share/applications/cha-cha.desktop" \
       --icon-file "$app/usr/share/icons/hicolor/256x256/apps/cha-cha.png" --output appimage
 ls -l "$LDAI_OUTPUT"
+
+# the same files as a plain tarball (issue #16): Cha-Cha at the top, every library linuxdeploy gathered (FFmpeg
+# included, so the system's FFmpeg version does not matter) in lib/. linuxdeploy gave the binary the runpath
+# $ORIGIN/../lib (usr/bin -> usr/lib); here it becomes $ORIGIN/lib, with the patchelf inside linuxdeploy.
+pe="$tools/linuxdeploy-root/usr/bin/patchelf"
+if [ ! -x "$pe" ]; then
+    rm -rf "$tools/linuxdeploy-root" "$tools/squashfs-root"
+    (cd "$tools" && "$ld" --appimage-extract >/dev/null && mv squashfs-root linuxdeploy-root)
+fi
+name="Cha-Cha-$version-linux-x86_64"
+tar_stage="$build/$name"
+rm -rf "$tar_stage"
+mkdir -p "$tar_stage/lib"
+install -m 755 "$app/usr/bin/Cha-Cha" "$tar_stage/Cha-Cha"
+"$pe" --set-rpath '$ORIGIN/lib' "$tar_stage/Cha-Cha"
+cp -a "$app/usr/lib/." "$tar_stage/lib/"
+cp "$app/usr/share/doc/cha-cha/"* "$tar_stage/"
+sed "s/{VERSION}/$version/" "$src/docs/release/README-linux.txt" > "$tar_stage/README.txt"
+cp "$app/usr/share/icons/hicolor/256x256/apps/cha-cha.png" "$tar_stage/"
+# nothing may still resolve outside lib/ except the system libraries linuxdeploy leaves out on purpose
+if ldd "$tar_stage/Cha-Cha" | grep -E 'libav|libsw|libSDL3' | grep -v "$tar_stage/lib/"; then
+    echo "tarball binary does not load its bundled libraries" >&2
+    exit 1
+fi
+tar -C "$build" -czf "$out/$name.tar.gz" "$name"
+ls -l "$out/$name.tar.gz"

@@ -68,17 +68,19 @@ endforeach()
 add_executable(recomp_emit tools/recomp_emit.cpp)
 target_link_libraries(recomp_emit PRIVATE mh3u_recomp_core)
 if(CMAKE_CROSSCOMPILING)
-  # a cross build (Windows from Linux) cannot run recomp_emit: MH3U_RECOMP_OUT must already hold the generated code
-  # of a native build from the same config/ (the C++ is the same for every platform)
-  if(NOT EXISTS ${MH3U_RECOMP_OUT}/functions.h)
-    message(FATAL_ERROR "cross build: no generated game code in ${MH3U_RECOMP_OUT} - build natively first")
-  endif()
+  # a cross build (Windows from Linux, Android) cannot run recomp_emit: MH3U_RECOMP_OUT must already hold the
+  # generated code of a native build from the same config/ (the C++ is the same for every platform)
+  foreach(f ${MH3U_RECOMP_OUT}/functions.h ${game_sources})
+    if(NOT EXISTS ${f})
+      message(FATAL_ERROR "cross build: ${f} missing - generate the game code with a native build first (scripts/build-android.ps1 does that for Android)")
+    endif()
+  endforeach()
 else()
-add_custom_command(
-  OUTPUT ${game_sources} ${MH3U_RECOMP_OUT}/functions.h
-  COMMAND recomp_emit ${MH3U_REPO_ROOT} ${MH3U_RECOMP_OUT} ${MH3U_RECOMP_FILES}
-  DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt ${MH3U_REPO_ROOT}/config/hooks.txt
-  COMMENT "Recompiling the game into recomp/out")
+  add_custom_command(
+    OUTPUT ${game_sources} ${MH3U_RECOMP_OUT}/functions.h
+    COMMAND recomp_emit ${MH3U_REPO_ROOT} ${MH3U_RECOMP_OUT} ${MH3U_RECOMP_FILES}
+    DEPENDS recomp_emit ${MH3U_REPO_ROOT}/config/functions.csv ${MH3U_REPO_ROOT}/config/overrides.txt ${MH3U_REPO_ROOT}/config/hooks.txt
+    COMMENT "Recompiling the game into recomp/out")
 endif()
 add_library(mh3u_recomp_game STATIC ${game_sources})
 target_include_directories(mh3u_recomp_game PUBLIC ${MH3U_RECOMP_OUT})

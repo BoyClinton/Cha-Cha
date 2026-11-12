@@ -14,8 +14,8 @@ void register_gx2(os::Runtime& r);
 // Builds the pipelines earlier runs used (progress: done, total); before the game starts, on any thread.
 void precompile_pipelines(const std::function<void(size_t, size_t)>& progress);
 // Our effects, switched live (from the next frame): the Tri look, ambient occlusion, enhanced depth of field, vignette,
-// global illumination.
-void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, bool global_illumination);
+// global illumination and screen-space reflections (levels: 0 off, 1 Lite, 2 Full).
+void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, int global_illumination, int reflections);
 // Widescreen: the TV picture `factor` times wider than 16:9 (1 = 16:9, 1.3125 = 21:9, 2 = 32:9), HUD kept 16:9 in the
 // middle; any thread, from the next frame. The game's camera follows through src/game/widescreen.cpp.
 void set_widescreen(float factor);

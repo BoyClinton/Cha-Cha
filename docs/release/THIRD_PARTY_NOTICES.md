@@ -9,7 +9,6 @@ Shaders and pipeline caches are generated on your PC from your copy and stay in 
 | Component | Version | License | Use | Source |
 |---|---|---|---|---|
 | zstd (decoder only) | 1.5.7 | BSD-3-Clause (`zstd-LICENSE.txt`) | Reads `.wua` archives | <https://github.com/facebook/zstd> |
-| Dear ImGui | 1.91.9b | MIT (`DearImGui-LICENSE.txt`) | Setup screens | <https://github.com/ocornut/imgui> |
 | shaderc, glslang, SPIRV-Tools (`shaderc_combined` from the Vulkan SDK) | SDK 1.4.363.0 | Apache-2.0 / BSD-3-Clause and others (see the projects) | Compiles the translated shaders on first start | <https://github.com/google/shaderc> |
 
 ## Shipped as separate libraries
@@ -32,3 +31,15 @@ own license:
 | FFmpeg `libavcodec`, `libavutil`, `libswresample` (Ubuntu's build, with the libraries it links) | GPL-2.0-or-later as built by Ubuntu | <https://ffmpeg.org>, Ubuntu's `ffmpeg` source package |
 
 The Vulkan loader, the GPU drivers and the C / C++ runtime libraries come from your system.
+
+## Android APK (experimental)
+
+| Component | License | Use | Source |
+|---|---|---|---|
+| zstd (decoder only, 1.5.7) | BSD-3-Clause | Reads `.wua` archives | <https://github.com/facebook/zstd> |
+| shaderc, glslang, SPIRV-Tools (the sources shipped with Android NDK r30, built for arm64) | Apache-2.0 / BSD-3-Clause and others | Compiles the translated shaders on first start | <https://github.com/google/shaderc> |
+| FFmpeg `libavcodec`, `libavutil` 9.0.2 (H.264 decoder only, static, built without GPL or nonfree parts) | LGPL-2.1-or-later | Plays the game's movies | <https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz>, configured by `scripts/android/build-ffmpeg.sh` |
+| `libSDL3.so` (3.4.16) and SDL's Java glue (`org.libsdl.app`) | zlib | Window, input, audio, the Android activity | <https://github.com/libsdl-org/SDL> |
+| LLVM libc++ (static, from the NDK) | Apache-2.0 with LLVM exceptions | C++ standard library | <https://github.com/llvm/llvm-project> |
+
+The Vulkan loader and the GPU driver come with the device.

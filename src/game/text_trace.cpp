@@ -97,9 +97,19 @@ void register_text_trace() {
 void set_text(uint32_t group, uint32_t index, const std::string& utf8, uint32_t caller) {
     {
         std::lock_guard g(g_m);
-        g_replace[{group, index, caller}].text = utf8;  // its guest copy is refreshed at the next lookup
+        Replacement& r = g_replace[{group, index, caller}];
+        r.text = utf8;  // its guest copy is refreshed at the next lookup - and now, when it fits: text objects that
+                        // were given that copy keep pointing at it, so labels already on screen change too
+        if (r.guest && r.text.size() + 1 <= r.cap)
+            if (core::GuestMemory* gm = core::GuestMemory::current()) std::memcpy(gm->base() + r.guest, r.text.c_str(), r.text.size() + 1);
     }
     if (!g_installed) install();
+}
+
+uint32_t text_guest(uint32_t group, uint32_t index, uint32_t caller) {
+    std::lock_guard g(g_m);
+    auto it = g_replace.find({group, index, caller});
+    return it == g_replace.end() ? 0 : it->second.guest;
 }
 
 }  // namespace mh3u::game

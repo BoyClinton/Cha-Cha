@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -122,6 +123,14 @@ bool g_captured = false;
 std::set<int> g_down;  // held keys / mouse buttons
 std::map<int, int> g_pulses;  // wheel: source -> reads left
 float g_mouse_dx = 0, g_mouse_dy = 0, g_prev_rx = 0, g_prev_ry = 0;
+// set_direct_look: the mouse turns the camera itself (src/game/modern_camera.cpp) instead of deflecting the right
+// stick; its movement collects here until take_look
+// (a lease: on for 200 ms after each set_direct_look(true), so it ends by itself when the camera stops updating)
+std::atomic<int64_t> g_direct_until{0};
+bool direct_look() {
+    return std::chrono::steady_clock::now().time_since_epoch().count() < g_direct_until.load(std::memory_order_relaxed);
+}
+float g_look_dx = 0, g_look_dy = 0;
 bool g_cursor_hidden = false;
 bool g_freed = false;  // the mouse was released with Esc / F11: its cursor stays visible until captured again
 std::map<SDL_JoystickID, Pad> g_pads;
@@ -135,7 +144,7 @@ bool g_text_start = false, g_text_stop = false, g_title_dirty = false;
 std::string g_base_title, g_title_status;  // window title at set_window, and set_title_status's text
 // set_suspended: the launcher overlay owns input. Buttons still held when it ends stay masked until released.
 bool g_suspended = false;
-bool g_soft_keyboard = false;  // set_soft_keyboard: the launcher's keyboard takes the controller and the title
+bool g_soft_keyboard = false;  // set_soft_keyboard: the on-screen keyboard takes the controller and the title
 uint32_t g_masked = 0;
 // Menu pointer (set_menu_open): while a game menu is open the mouse is a pointer - not captured, no mouse look; left
 // click = A, right click = B, wheel = up / down. Switched on the main thread (update()); the capture comes back when the
@@ -818,8 +827,13 @@ PadState read() {
         }
     }
     s.lx = axes[0], s.ly = axes[1], s.rx = axes[2], s.ry = axes[3];
-    // mouse look: movement since the previous read, averaged with that read to smooth single-frame spikes
-    if (g_captured) {
+    // mouse look: movement since the previous read, averaged with that read to smooth single-frame spikes; with direct
+    // look it is kept for take_look instead
+    if (g_captured && direct_look()) {
+        g_look_dx += g_mouse_dx;
+        g_look_dy += g_mouse_dy;
+        g_prev_rx = g_prev_ry = 0;
+    } else if (g_captured) {
         const float rx = g_mouse_dx * g_cfg.mouse_sensitivity, ry = (g_cfg.invert_y ? 1.0f : -1.0f) * g_mouse_dy * g_cfg.mouse_sensitivity;
         const float mx = 0.5f * (rx + g_prev_rx), my = 0.5f * (ry + g_prev_ry);
         g_prev_rx = rx;
@@ -827,6 +841,7 @@ PadState read() {
         s.rx = std::clamp(s.rx + mx, -1.0f, 1.0f);
         s.ry = std::clamp(s.ry + my, -1.0f, 1.0f);
     }
+    if (!g_captured || !direct_look()) g_look_dx = g_look_dy = 0;
     g_mouse_dx = g_mouse_dy = 0;
     // gamepads: buttons OR'ed, the stick with the larger deflection wins
     const auto merge = [](float& x, float& y, float px, float py) {
@@ -918,6 +933,20 @@ void set_menu_open(bool open) {
     g_menu_open = open;
 }
 
+void set_direct_look(bool on) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    g_direct_until.store(on ? until.time_since_epoch().count() : 0, std::memory_order_relaxed);
+}
+
+void take_look(float& x, float& y) {
+    std::lock_guard g(g_m);
+    // degrees, in right-stick directions (x right, y up); the Medium sensitivity (0.05) is 0.15 degrees a pixel
+    const float k = g_cfg.mouse_sensitivity * 3.0f;
+    x = g_look_dx * k;
+    y = (g_cfg.invert_y ? 1.0f : -1.0f) * g_look_dy * k;
+    g_look_dx = g_look_dy = 0;
+}
+
 bool pointer_position(float& u, float& v) {
     std::lock_guard g(g_m);
     if (!g_pointer || g_win_w <= 0 || g_win_h <= 0 || g_ptr_x < 0) return false;
@@ -938,7 +967,10 @@ int take_clicks() {
 
 void tap(uint32_t buttons) {
     std::lock_guard g(g_m);
-    g_taps[buttons] = 3;
+    // A and the like for 3 reads (a press the game may only see on a later read); directions for one read: held
+    // longer, the title menus took a second step in a window (log 2026-11-09: one tap, cursor 3 -> 4 -> 0)
+    constexpr uint32_t kDirections = kUp | kDown | kLeft | kRight;
+    g_taps[buttons] = (buttons & ~kDirections) == 0 ? 1 : 3;
 }
 
 void begin_text(const std::u16string& initial, size_t max_len) {
@@ -949,7 +981,16 @@ void begin_text(const std::u16string& initial, size_t max_len) {
     g_text.text = max_len && initial.size() > max_len ? initial.substr(0, max_len) : initial;
     g_down.clear();  // keys held for the game are released; typing must not move the hunter
     capture(false);
-    if (!g_window) {  // headless: scripted text, confirmed at once
+    // headless: scripted text, confirmed at once (MH3U_TEXT_HOLD=1 keeps the entry open for the on-screen keyboard,
+    // driven by the input script)
+    static const bool hold = [] {
+        char* v = nullptr;
+        size_t n = 0;
+        const bool on = _dupenv_s(&v, &n, "MH3U_TEXT_HOLD") == 0 && v && *v == '1';
+        std::free(v);
+        return on;
+    }();
+    if (!g_window && !hold) {
         char* env = nullptr;
         size_t len = 0;
         std::u16string t = u"Hunter";
@@ -980,6 +1021,14 @@ void set_soft_keyboard(bool on) {
     g_soft_keyboard = on;
     g_title_dirty = true;
 }
+
+static std::atomic<uint32_t> g_last_buttons{0};  // pass_read
+void pass_read(PadState& state) {
+    g_last_buttons = state.buttons;
+    std::lock_guard g(g_m);
+    if (g_soft_keyboard) state = PadState{};
+}
+uint32_t last_buttons() { return g_last_buttons.load(); }
 
 void set_text(const std::u16string& text) {
     std::lock_guard g(g_m);
@@ -1258,6 +1307,26 @@ void reset_bindings() {
     g_cfg.bindings.clear();
     set_defaults(g_cfg);
     default_pad(g_cfg);
+}
+
+void reset_pad_bindings() {
+    std::lock_guard g(g_m);
+    g_cfg.nintendo_layout = true;
+    default_pad(g_cfg);
+}
+
+void reset_key_bindings() {
+    std::lock_guard g(g_m);
+    g_cfg.bindings.clear();
+    set_defaults(g_cfg);
+}
+
+bool pad_is_default() {
+    std::lock_guard g(g_m);
+    Config d;
+    d.nintendo_layout = true;
+    default_pad(d);
+    return g_cfg.pad == d.pad;
 }
 
 bool save_bindings() {

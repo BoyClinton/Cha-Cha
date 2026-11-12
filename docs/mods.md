@@ -1,82 +1,103 @@
 # Mods
 
-**MODS** is on the title menu, and **F2** opens it over the game. F1 switches to the settings, and F2 again or Esc / B
-closes it. It has two tabs: QUESTS (below) and MODS, the mods in `<data folder>/mods` (content mods and plugins,
-[modding.md](modding.md)). The gameplay changes below are always on.
+The main menu's **DLC** screen is Cha-Cha's add-on menu. It still looks and sounds like the game's own DLC screen
+(Capcom's download server is gone, so Cha-Cha answers the game's downloads itself; nothing goes online). Its three
+buttons:
 
-## QUESTS: event and challenge quests
+In the Cha-Cha Plus fork, **F2** also opens the overlay's Mods page over the game: the plugin mods in
+`<data folder>/mods` (content mods and plugins, [modding.md](modding.md)) with their settings.
 
-MH3U got its event and challenge quests as free downloads from Capcom's server (`goshawk.capcom.co.jp`). That server
-is gone. The game keeps downloaded quests in its save, in four files:
-
-| Save file | Holds | Slots |
+| Button | What it opens | Folder |
 |---|---|---|
-| `quest1`, `quest2`, `quest3` | event quests (`q_2xxxx`) | 20 each |
-| `quest4` | challenge quests (`q_61xxx`) | 20 |
+| **Official** | the game's own DLC menus (Content Previews, Quests, Extras) with Capcom's event and challenge quests | `<data>/bonus` |
+| **Quests** | the game's Quests screen with your custom quests | `<data>/custom` |
+| **Mods** | a list of Cha-Cha's mods with a tick each: ticked = on, X saves | `<data>/mods` |
 
-Each slot holds one quest: its `.quest` data (`QTDS`, at most 0x2000 bytes), followed by its 16-byte file name. The game
-creates the files, empty, together with the save.
+`<data>` is `%APPDATA%\Cha-Cha` for a release (or the `data` folder of a portable install) and the checkout itself
+when running from source. The folders are made at start.
 
-Cha-Cha installs quests into those slots from the **quest folder** `<data folder>/quests`. That's
-`%APPDATA%\Cha-Cha\quests` for a release and `quests\` in a source checkout.
+## Official and Quests: event and challenge quests
 
-### Packs
+Put quests in `bonus` (Capcom's) or `custom` (yours), as:
 
-Each top-level folder in the quest folder is a **pack**. Files directly in the quest folder are **single quests**.
+- `q_<number>.quest` files: one quest each (QTDS data, at most 0x2000 bytes); subfolders are fine;
+- `quest1` ... `quest4` copied from a Wii U save: every quest in them is offered.
 
-```
-quests/
-  DLC MH3U EU/            official pack: quest1-quest4 copied from a Wii U save
-    quest1  quest2  quest4
-  Frontier Pack/          custom pack
-    pack.json             {"name": "Frontier Pack", "author": "...", "description": "..."}
-    cover.png             the pack's picture (or pack.png)
-    q_25001.quest         a quest
-    q_25001.png           its picture (.png, .jpg, .webp or .bmp)
-    q_25001.txt           its description
-  q_29999.quest           a single quest
-```
+Then open DLC > Official (or Quests) > Quests > Event Quests or Challenge Quests, tick the quests and choose
+Download. The game's own download screen fills its bar, and the quests land in your save's quest slots
+(`quest1`-`quest3` event, `quest4` challenge; 20 slots each), so they appear at the **Port Tanzia Gathering Hall**.
+Quests you have already appear as downloaded.
 
-- **Quest files.** A quest file is `q_<number>.quest`, holding SDTQ quest data of at most 0x2000 bytes. Numbers
-  60000-69999 are challenge quests, and everything else is an event quest. Subfolders inside a pack are fine.
-- **Official packs.** A pack whose quests come from a Wii U save's `quest1`-`quest4` files (for example a
-  console save backup) is Capcom's DLC. It's marked official and shows no pictures.
+The list shows what each quest file holds: title, goal, failure, client, summary, quest level, locale, time limit,
+reward and fee, and the target monsters (names and icons in the game's own words).
 
-Every pack has a mode, chosen on its row:
+### Quest numbers
 
-- **All**: every quest of the pack is kept installed, including quests added to the folder later. This is the default
-  for official packs, so dropping the DLC files in is enough.
-- **Choose**: the pack's quests are listed under it, to install or remove one by one. This is the default for custom
-  packs.
-- **Off**: none of the pack's quests are installed.
+The game's DLC lists show only two number ranges, and Cha-Cha lists exactly what the game will take:
 
-Modes are saved in `<data folder>/mods.ini` (`pack.<folder>=all|choose|off`). They're applied when Cha-Cha starts and
-whenever the QUESTS tab is opened or changed.
+| Numbers | Kind | Stored in |
+|---|---|---|
+| `q_20000` - `q_20999` | event quest | `quest1`-`quest3` |
+| `q_61000` - `q_61999` | challenge quest (arena) | `quest4` |
 
-### The QUESTS tab
+A quest file numbered outside these ranges is skipped, and the log says so (`dlc: q_25001.quest skipped`). The number
+is also written inside the quest data, so renaming the file does not change it: a custom quest needs a number in a
+range above when it is made. Capcom's quests use 20101-20399 and 61000-61009, so custom event quests are safest from
+20500 up; 20990-20999 are Cha-Cha's own (the Mods list's rows) and are skipped in quest folders.
 
-- **QUEST FOLDER** opens the folder, and **REFRESH** reads it again.
-- **INSTALLED** counts the slots in use.
-- **PACKS** lists every pack with its mode, then the **SINGLE QUESTS**, and **ONLY IN YOUR SAVE** lists installed
-  quests that aren't in the folder, each with **Remove**.
-- The selected quest's or pack's text and picture show on the right.
+Quests from the old `<data>/quests` folder (before 2026-11-05) still show: its official packs under Official, the rest
+under Quests. Quests are no longer put into the save at start; they come through Download.
 
-Installed quests appear at the **Port Tanzia Gathering Hall**, not in Moga Village.
+## Mods
 
-**While the game runs**, the game reads its quest files into memory once. To make a change show there without
-reloading, Cha-Cha remembers where the game read each save file to (`runtime/os/save_reads.h`). When a slot changes, it
-also writes the new slot into that copy, provided the copy still holds the old bytes. If the game keeps the list
-somewhere else, the toast says to reload the save. The log shows `save: game read questN ...` when the game loads a
-file, and `quests: questN slot ...: game copies N, updated N` for each change.
+DLC > Mods lists the gameplay mods, each with a tick: tick or untick with A (or a click); each change is saved at once, no Save
+button. The choice is kept in `<data>/mods/mods.ini` (`quest_scaling=1`, `auto_carve=1`, ...) and applies at once.
+Every mod is also in the pause menu's CFG tab > Mods (On / Off), on quests too: both lists come from the one table in
+`src/game/mods.cpp`, so a new mod is in both by itself (user rule 2026-11-09).
 
-Quest files are game data: they stay out of git (`quests/` is ignored), and Cha-Cha ships none.
+- **Quest Scaling**: monster HP on Port Tanzia quests follows the number of hunters (65 % alone, 80 % for two, 90 %
+  for three, full for four; the page's Solo / Duo / Trio HP).
+- **Auto Carve**: hold the gather button to keep carving, gathering and mining.
+- **Texture Packs**: textures from `<data>/texture_replacements` in place of the game's (`docs/texture-packs.md`).
+- **Modern Camera** - no longer a mod since 2026-11-10: it is in the pause menu's CFG tab > **Camera Settings**,
+  with **Camera Distance** (issue #17: Default, 110% ... 200% of the game's own distance; both saved in config.ini).
+  On quests and in the field the camera is a free orbit camera, as in later
+  games. The mouse moves it directly (Mouse Sensitivity and Invert Camera Y in Keyboard Settings), the right stick
+  turns and tilts it at the same time, and after a short pause it drifts back behind you while you run. Its heights
+  and distances follow the game's own six camera heights, smoothly, from a low view looking up to a high one (up to
+  60 degrees). L resets and targets as before; the game's own Camera options (reverse left / right, up / down) still
+  apply. Under water the classic camera stays. Code: `src/game/modern_camera.cpp`.
+- **Instant Gathering** (off by default): one gathering, mining or bug net animation collects everything the spot
+  has left. Each item still rolls its reward, the gathering skills and the tool's breakage as in the game; a broken
+  tool, a full pouch or the spot running out ends it there. Endless spots give one item a swing, as usual. Carving
+  monsters is Instant Carve. Code: `src/game/carving.cpp`.
+- **Instant Carve** (off by default): one carving motion takes all the carves left on a monster, on land and under
+  water. Each carve still rolls its own reward. Code: `src/game/carving.cpp` (a carve is a spot tied to a monster).
+- **Auto Delivery** (off by default): a quest's item delivery goals are handed in on the spot (the game's own
+  "delivered" message) as soon as your pouch holds the whole remaining amount - no trip to the delivery box. Items
+  carried in your arms (eggs and the like; the game's own list of carried items) still go to camp. Not while a
+  menu is open.
+  Code: `src/game/delivery.cpp`.
+- **Key Quest Markers** (off by default): in the Moga Village and Port Tanzia quest lists, key quests get a gold star
+  and urgent quests a red-orange one, with the game's own highlight frame around the row in gold (75 %), while you
+  still need them to progress; once cleared, star and frame turn grey. Key and urgent quests are the ones the game's
+  own unlock checks wait for; quests that are only one choice of several get nothing. Code: `src/game/quest_markers.cpp`.
+- **Texture Dump** is not a row but the list's button bar, **X Texture Dump** (Y or a click on it does the same).
+  Say Yes, and the game's download screen shows the dump of every texture of the game going (its bar and sounds);
+  Cancel download (B or a click) stops it. Files go to `<data>/texture_dump` as
+  `tex_<w>x<h>_<CRC32>.dds`, ready to make texture packs from (`docs/texture-packs.md`). Files already there are kept.
 
-Code: `runtime/boot/quests.*` (scan, packs, install, remove; `quests_test`), `runtime/boot/launcher_image.*` (pictures),
-and the QUESTS tab in `runtime/boot/setup.cpp`.
+Everything here works with the menu pointer: hovering moves the cursor, a click chooses, the L / R page arrows
+turn pages (only shown with more rows than a page holds: five), and a click closes the game's notices.
+
+Quest files are game data: they stay out of git (`bonus/`, `custom/` and `quests/` are ignored), and Cha-Cha ships
+none. Code: `src/game/dlc_menu.cpp` (the menu), `runtime/boot/dlc_content.cpp` (the lists and files),
+`runtime/os/dlc_server.cpp` (the download protocol), `src/game/mods.h` (the switches).
 
 ## Built-in gameplay changes
 
-These are always on; the MODS panel has no switches for them (user decision 2026-10-28).
+Item Sets is always on. Hold to gather is the **Auto Carve** mod and monster HP scaling the **Quest Scaling** mod:
+both are on by default and switched in DLC > Mods (user decision 2026-11-05).
 
 ### Item Sets
 

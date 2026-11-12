@@ -40,6 +40,7 @@
 #include <string>
 
 #include "functions.h"
+#include "modern_camera.h"
 
 namespace mh3u::game {
 namespace {
@@ -94,6 +95,10 @@ PPC_FUNC(camera_ease) {
 }
 
 PPC_FUNC(camera_auto_turn) {
+    if (modern_camera_engaged()) {  // the Modern Camera follows the hunter its own way
+        ctx.r[3] = 0;
+        return;
+    }
     const float t = frame_time(base, ctx.r[3]);
     sub_02286DE8__orig(ctx, base);
     if (!same(t)) ctx.r[3] = static_cast<uint32_t>(static_cast<int16_t>(std::lround(static_cast<int16_t>(ctx.r[3]) * t)));
@@ -103,6 +108,10 @@ PPC_FUNC(camera_turn_input) {
     const uint32_t cam = ctx.r[3], block = ctx.r[4], player = ctx.r[5];
     const uint32_t before = ppc::ld32(base, block + 0x94);
     sub_02286F18__orig(ctx, base);
+    if (modern_camera_engaged()) {  // the Modern Camera reads the stick itself; L and the game's other yaws stay
+        if (input(base, player, 9) && (input(base, player, 6) || input(base, player, 8))) ppc::st32(base, block + 0x94, before);
+        return;
+    }
     const float t = frame_time(base, cam) * speed();
     ++g_turns;
     if (same(t) || !input(base, player, 9) || !(input(base, player, 6) || input(base, player, 8))) return;
@@ -121,7 +130,7 @@ PPC_FUNC(camera_turn_input) {
     ppc::st32(base, block + 0x94, left ? before + signed_step(t) : before - signed_step(t));
 }
 
-PPC_FUNC(camera_pitch_input) {
+void camera_pitch_step(ppc::Context& ctx, uint8_t* base) {
     const uint32_t cam = ctx.r[3], block = ctx.r[4], player = ctx.r[5];
     const uint32_t before = ppc::ld32(base, block + 0x90);
     sub_02286890__orig(ctx, base);
@@ -148,6 +157,13 @@ PPC_FUNC(camera_pitch_input) {
     ppc::st32(base, block + 0x90, pitch(t));
 }
 
+PPC_FUNC(camera_pitch_input) {
+    const uint32_t block = ctx.r[4];
+    const ModernPitchSave saved = modern_before_pitch(base, block);
+    camera_pitch_step(ctx, base);
+    modern_after_pitch(base, block, saved);
+}
+
 }  // namespace
 
 void set_camera_speed(float s) { g_speed.store(std::clamp(std::isfinite(s) ? s : 1.0f, 0.1f, 1.0f)); }
@@ -161,6 +177,7 @@ void register_camera_speed() {
     ppc::set_override(0x02286DE8, &camera_auto_turn);
     ppc::set_override(0x02286F18, &camera_turn_input);
     ppc::set_override(0x02286890, &camera_pitch_input);
+    register_modern_camera();  // the Modern Camera mod hooks in through the steps above
 }
 
 }  // namespace mh3u::game

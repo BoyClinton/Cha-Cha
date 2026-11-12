@@ -569,7 +569,12 @@ private:
                                      [&](const UniformBlock& b) { return b.index == block; });
         uint32_t& cnt = ubo_vec4s_[block];
         cnt = std::max(cnt, it != sh_.uniform_blocks.end() ? (it->size + 15) / 16 : 1u);
-        write_fetched(v.dst_gpr, v.dst_sel, fmt("ub%u.d[%s.%c + %u]", block, gpr(v.src_gpr).c_str(), kChan[v.src_sel_x], v.offset / 16));
+        // Indexed by data (MH3U's pixel shaders look their fog up in block 5's 128-entry table by depth): an index past
+        // the block would read whatever the streamed uniform buffer holds next, which changes from frame to frame
+        // (Vulkan has no defined out-of-range read without robustness), so it is clamped to the block.
+        write_fetched(v.dst_gpr, v.dst_sel,
+                      fmt("ub%u.d[clamp(%s.%c + %u, 0, ub%u.d.length() - 1)]", block, gpr(v.src_gpr).c_str(), kChan[v.src_sel_x],
+                          v.offset / 16, block));
     }
 
     void write_fetched(uint32_t dst, const uint8_t* dst_sel, const std::string& value) {

@@ -15,6 +15,14 @@ build/*
 !build/.gitkeep
 recomp/out/
 
+# Android: Gradle's own output and machine-local settings (the native build goes to build/android)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+
 # --- Third-party tool binaries (installed locally, see tools/README.md) ---
 tools/bin/*
 !tools/bin/.gitkeep
@@ -54,6 +62,10 @@ texture_dump/
 
 # quest library: official DLC and custom quests (game data)
 quests/
+# DLC menu folders (2026-11-05): official DLC, custom quests (game data), mod switches
+/bonus/
+/custom/
+/mods/
 mods.ini
 
 # run logs (the data folder is the repo when run from a checkout)

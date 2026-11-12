@@ -15,10 +15,10 @@
 // Current quest data: *(*(sQuest + 0xB050) + 0x3C); its byte +0x24F is the quest rank (sEnemy+0x4284, 0..3).
 #include "monster_hp.h"
 
-#include <atomic>
 #include <cstdio>
 
 #include "functions.h"
+#include "mods.h"
 
 namespace mh3u::game {
 namespace {
@@ -29,7 +29,6 @@ constexpr uint32_t kSQuest = 0x1031537C, kSGame = 0x101FDB9C, kSLobby = 0x103147
 // game's hub HP. Offline there is always one hunter.
 constexpr float kHunterScale[4] = {0.65f, 0.80f, 0.90f, 1.0f};
 constexpr int kHunters = 1;
-std::atomic<bool> g_scaling{true};  // the setting; off: the game's own HP everywhere
 
 PPC_FUNC(set_max_hp) {
     const uint32_t enemy = ctx.r[3], base_hp = ctx.r[4];
@@ -52,7 +51,7 @@ PPC_FUNC(set_max_hp) {
     // flags 0x100000 / 0x10 there): scaled for the hunters
     const bool reduced = (flags & 0x100010) != 0;
     uint32_t hp = game_hp;
-    if (village != 1 && !reduced && g_scaling) {
+    if (village != 1 && !reduced && mod_enabled(Mod::QuestScaling)) {
         hp = static_cast<uint32_t>(static_cast<float>(game_hp) * kHunterScale[kHunters - 1]);
         if (hp < 1) hp = 1;
         ppc::st32(base, state + 0x8BC, hp);
@@ -63,10 +62,6 @@ PPC_FUNC(set_max_hp) {
 
 }  // namespace
 
-void register_monster_hp(bool scaling) {
-    g_scaling = scaling;
-    ppc::set_override(0x0259FB84, &set_max_hp);
-}
-void set_monster_hp_scaling(bool on) { g_scaling = on; }
+void register_monster_hp() { ppc::set_override(0x0259FB84, &set_max_hp); }
 
 }  // namespace mh3u::game

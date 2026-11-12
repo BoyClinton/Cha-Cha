@@ -36,6 +36,34 @@ in the table so results are reproducible.
 | Noesis + MT Framework plugins | Inspect models/textures (`.mod`, `.tex`) |
 | [WiiUDownloader](https://github.com/Xpl0itU/WiiUDownloader)-style `meta.xml` reading | Title IDs / versions |
 
+## Android (APK) toolchain – installed 2026-11-10 (build: `scripts/build-android.ps1`, `docs/android.md`)
+
+| Component | Version | Where |
+|---|---|---|
+| Android Studio (winget `Google.AndroidStudio`) | 2026.2.2.8, bundled JBR = OpenJDK 25 | `C:\Program Files\Android\Android Studio` |
+| Android SDK (`ANDROID_HOME`, `ANDROID_SDK_ROOT`) | cmdline-tools 23.0 | `%LOCALAPPDATA%\Android\Sdk` |
+| NDK (`ANDROID_NDK_HOME`) | 30.0.16248370 (clang 21) | `<sdk>\ndk\30.0.16248370`, toolchain file `build\cmake\android.toolchain.cmake` |
+| CMake | 4.1.2 | `<sdk>\cmake\4.1.2` |
+| Platform-Tools (`adb`) | 37.0.1 | `<sdk>\platform-tools` |
+| SDK Platform / Build-Tools | android-36 / 36.1.0 | `<sdk>\platforms`, `<sdk>\build-tools` |
+
+`JAVA_HOME` points at Android Studio's JBR. Ghidra does not use it: `scripts/ghidra-headless.ps1` picks its own JDK
+(`-Java`, `GHIDRA_JAVA_HOME`, else the newest JDK 21+ under Program Files, here `jdk-26.0.1`), sets `JAVA_HOME` for
+the Ghidra process only, and clears Ghidra's compiled-script cache when that JDK changes. sdkmanager is `<sdk>\cmdline-tools\latest\bin\sdkmanager.bat` and takes
+package names with `/` (`ndk/30.0.16248370`); the `;` form is split apart by `cmd` when called from PowerShell.
+
+Sources fetched (nothing built yet):
+
+| What | Version | Where | Why |
+|---|---|---|---|
+| SDL3 source | `release-3.4.16` (same tag as the CMake FetchContent) | `tools/bin/android/SDL3` | `android-project/` = the Java glue (`SDLActivity`) and Gradle template |
+| Vulkan-Headers | `v1.4.363` (= our Vulkan SDK; the NDK only has 1.4.335) | `tools/bin/android/Vulkan-Headers` | |
+| Linux NDK (WSL) | r30 (= 30.0.16248370) | `~/android-deps/android-ndk-r30` | FFmpeg's `configure` needs a POSIX shell |
+| FFmpeg source (WSL) | 9.0.2, GPG-verified (key `FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8`) | `~/android-deps/ffmpeg-9.0.2` | libavcodec/libavutil (H.264) for arm64-v8a |
+
+Gradle: `android/`'s wrapper (Gradle 9.9.1, AGP 9.5.1) downloads it on first use. SDL's template pins Gradle 8.12,
+which cannot run on the JBR's Java 25, and its wrapper jar matches no published checksum, so it is not used.
+
 ## Useful-but-optional
 
 - **IDA / Binary Ninja** – if you have them; Ghidra is the shared baseline.

@@ -147,8 +147,10 @@ public:
     // pipeline cache if pipelines were added since the last save.
     virtual size_t precompile(const std::function<void(size_t, size_t)>& progress) = 0;
     virtual void save_caches() = 0;
-    // Our full-screen effects on/off (any thread; applied from the next frame).
-    virtual void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, bool global_illumination) = 0;
+    // Our full-screen effects (any thread; applied from the next frame). global_illumination and reflections are levels:
+    // 0 off, 1 Lite, 2 Full.
+    virtual void set_effects(bool tri_look, bool ambient_occlusion, bool depth_of_field, bool vignette, int global_illumination,
+                             int reflections) = 0;
     // Widescreen (any thread; from the end of the frame): the TV-sized render targets (tv_w x tv_h, the guest TV
     // buffer, and their 1/2 .. 1/16 copies) are made `factor` times wider (1 = 16:9); the game's HUD shaders (MH3U_HUD_SHADERS)
     // keep the HUD in the middle 16:9 of them.

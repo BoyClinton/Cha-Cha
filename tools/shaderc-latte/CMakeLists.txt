@@ -8,6 +8,9 @@ if(WIN32)
     "$ENV{VULKAN_SDK}/Lib/$<IF:$<CONFIG:Debug>,shaderc_combinedd,shaderc_combined>.lib")
   # the SDK ships the libraries without their PDBs
   target_link_options(mh3u_latte INTERFACE /ignore:4099)
+elseif(ANDROID)  # the NDK's shaderc, built by scripts/build-android.ps1
+  target_include_directories(mh3u_latte PUBLIC . ${CMAKE_SOURCE_DIR}/runtime/gfx PRIVATE "${MH3U_ANDROID_DEPS}/include")
+  target_link_libraries(mh3u_latte PRIVATE "${MH3U_ANDROID_DEPS}/lib/libshaderc_combined.a")
 else()  # the Linux SDK: x86_64/{include,lib}
   target_include_directories(mh3u_latte PUBLIC . ${CMAKE_SOURCE_DIR}/runtime/gfx PRIVATE "$ENV{VULKAN_SDK}/include")
   find_package(Threads REQUIRED)

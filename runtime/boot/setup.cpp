@@ -683,7 +683,6 @@ struct Launcher::Impl {
         settings = draft;
         save_settings(paths, settings);
         apply_live();
-        game::set_monster_hp_scaling(settings.monster_hp_scaling);
         game::net_configure(settings.online_lan, settings.online_host);
     }
     float scale = 1.0f;
@@ -741,8 +740,9 @@ struct Launcher::Impl {
         if (int w = 0, h = 0; settings.display_mode == "windowed" && sscanf_s(settings.window_size.c_str(), "%dx%d", &w, &h) == 2)
             presenter.set_window_size(w, h);
         game::set_filters(settings.bloom, settings.depth_of_field != "off");
+        const auto level = [](const std::string& v) { return v == "full" ? 2 : v == "lite" ? 1 : 0; };
         gfx::set_effects(settings.look == "tri", settings.ambient_occlusion, settings.depth_of_field == "enhanced", settings.vignette,
-                         settings.global_illumination);
+                         level(settings.global_illumination), level(settings.reflections));
         gfx::set_texture_packs(settings.texture_packs);
     }
     void hide() {
@@ -1004,8 +1004,9 @@ bool Launcher::frame(const LaunchState& st) {
         for (auto& t : d.posted) d.toast(std::move(t));
         d.posted.clear();
     }
-    const input::TextEntry text = input::text_state();
-    const bool kb = text.active && !text.done && !text.cancelled;
+    // the game's text entry is upstream's on-screen keyboard now (src/game/soft_keyboard.cpp, in the game's own GUI);
+    // this overlay's keyboard stays off
+    const bool kb = false;
     if (kb != d.keyboard) {  // the game opened / closed its keyboard
         d.keyboard = kb;
         d.kb_shift = false;
@@ -1656,8 +1657,14 @@ void Launcher::Impl::draw_page_graphics(PanelLayout& p) {
 
     group_begin(p, "Added by Cha-Cha");
     switch_row(p, "Ambient occlusion", draft.ambient_occlusion, "Soft contact shadows where surfaces meet. Not in the original game.");
-    switch_row(p, "Global illumination", draft.global_illumination,
-               "Light bounces between surfaces: sunlit ground and walls tint what is next to them. Not in the original game.");
+    static const std::vector<std::string> kLevels = {"Off", "Lite", "Full"}, kLevelKeys = {"off", "lite", "full"};
+    const auto level_row = [&](const char* name, std::string& value, const char* help) {
+        int v = value == "full" ? 2 : value == "lite" ? 1 : 0;
+        if (cycle(value_row(p, name, kLevels[static_cast<size_t>(v)], help), v, 3)) value = kLevelKeys[static_cast<size_t>(v)];
+    };
+    level_row("Global illumination", draft.global_illumination,
+              "Light bounces between surfaces: sunlit ground and walls tint what is next to them. Lite is for weaker GPUs. Not in the original game.");
+    level_row("Reflections", draft.reflections, "Screen-space reflections on water. Lite is for weaker GPUs. Not in the original game.");
     switch_row(p, "Vignette", draft.vignette, "Gently darker screen corners, drawing the eye to the middle. Not in the original game.");
     group_end(p);
 
@@ -1677,12 +1684,6 @@ void Launcher::Impl::draw_page_graphics(PanelLayout& p) {
 
 // Gameplay: changes to how the game plays, and what happens before the title screen.
 void Launcher::Impl::draw_page_gameplay(PanelLayout& p) {
-    group_begin(p, "Hunting");
-    switch_row(p, "Monster HP scaling", draft.monster_hp_scaling,
-               "Port Tanzia quests are made for four hunters. On: with fewer hunters monsters have less HP (1 hunter 65%, "
-               "2 80%, 3 90%, 4 100%), at every rank. Off: the game's own HP. Moga Village quests are never changed. "
-               "Takes effect for monsters that appear after the change.");
-    group_end(p);
     group_begin(p, "Online (experimental)");
     info_row(p, "Status", game::net_status(), "Talk to Neko: Host a Hunt or Join a Hunt, in his Destination list. The host picks the quest and the others follow.");
     switch_row(p, "Play over the network", draft.online_lan,

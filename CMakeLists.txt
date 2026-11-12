@@ -41,6 +41,15 @@ else()
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-include>" "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/runtime/core/win_compat.h>")
 endif()
 
+# Android (docs/android.md, scripts/build-android.ps1): FFmpeg's H.264 decoder and shaderc are prebuilt for the ABI
+# into one include/ + lib/ prefix; the game is libmain.so, loaded by SDL's Java activity.
+if(ANDROID)
+  set(MH3U_ANDROID_DEPS "" CACHE PATH "FFmpeg + shaderc for this ABI (include/, lib/)")
+  if(NOT EXISTS "${MH3U_ANDROID_DEPS}/lib/libavcodec.a" OR NOT EXISTS "${MH3U_ANDROID_DEPS}/lib/libshaderc_combined.a")
+    message(FATAL_ERROR "MH3U_ANDROID_DEPS (${MH3U_ANDROID_DEPS}) lacks FFmpeg or shaderc: use scripts/build-android.ps1")
+  endif()
+endif()
+
 enable_testing()
 
 # Repo root, so tests can find the user's extracted dump (extracted/ is gitignored).

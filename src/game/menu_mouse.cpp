@@ -37,7 +37,9 @@
 #include <vector>
 
 #include "boot_prompts.h"
+#include "game_options.h"
 #include "item_sets.h"
+#include "settings_page.h"
 #include "functions.h"
 #include "guest_memory.h"
 
@@ -335,6 +337,17 @@ struct Screen {
     uint32_t count = 0;               // a byte beside the cursor: how many of the items are shown now (0: all)
     uint32_t slots = 0, page_cursor = 0;  // a byte per item over all pages, at slots + page * items + item (< 0: an
                                           // empty row, not a target); the page number (s16) at page_cursor
+    // the hover jumps straight to the item (user rule 2026-11-06): the cursor is put on the target's neighbour and one
+    // step taken, so the game's own move lands on it. Only where checked: a screen that keeps its real position
+    // elsewhere (Character Creation) moves from there instead, walking longer and clicking the wrong row
+    bool jump = false;
+    // more fields the jump writes (u32, 0: none): a second copy of the cursor, and the grid row / column the game moves
+    // by (Character Creation: +0x86C, +0x880, +0x87C)
+    uint32_t cursor_copy = 0, row_field = 0, col_field = 0;
+    int copy_size = 4;  // cursor_copy's size (1 or 4)
+    // rows that carry their own highlight (field Options: sMenu+0xE4, 0x18 each, +1 selected, +0xC colour): the jump
+    // moves it from the cursor's row to the neighbour, as the game's own move does between those two
+    uint32_t row_flags = 0, row_flag_size = 0, row_colour = 0, colour_on = 0, colour_off = 0;
 };
 
 // a grid of `rows` x 4 cells (the creation sub-screens' type grids and colour swatches), cursor = row * 4 + column
@@ -346,6 +359,10 @@ Screen make_grid(const char* name, uint32_t sub, int rows, float top) {
             g.grid.push_back({r, c});
         }
     g.page = rows * 4;
+    // no jump yet: the grids have fewer types than cells (Face 11, Hairstyle 14 on page 1) and the count is not in
+    // uIDMakeCharacter, so a jump could land on an empty cell; walked (the walk stops at the last type). A copy of the
+    // cell follows the cursor at +0x888 (MH3U_MENU_SNAP_MAKE, 2026-11-09)
+    g.cursor_copy = 0x888;
     return g;
 }
 
@@ -359,21 +376,31 @@ const std::vector<Screen>& screens() {
     static const std::vector<Screen> s = [] {
         std::vector<Screen> v;
         // Main Menu: New Game, Continue, Options, Data Transfer, DLC
-        v.push_back({"main menu", Source::StartMenu, 7, 0x2AC, 4, false, true, rows(5, 588, 1336, 201, 110, 126)});
+        Screen main_menu{"main menu", Source::StartMenu, 7, 0x2AC, 4, false, true, rows(5, 588, 1336, 201, 110, 126)};
+        main_menu.jump = true;  // checked 2026-11-06
+        v.push_back(main_menu);
         // Character Select's "Use this character?" (sub-state +0x290 == 6; an empty slot asks nothing): Yes above No in
         // the help box, cursor the byte sMenu+0x59 (0 Yes, 1 No; up / down step it, wrapping), from FUN_02764E60
         Screen use{"character prompt", Source::StartMenu, 14, 0x59, 1, false, true, {{1250, 870, 1468, 922}, {1250, 936, 1468, 992}}};
         use.sub = 0x290, use.sub_value = 6, use.cursor_in_menu = true;
         v.push_back(use);
         // Character Select (Continue): three save slots
-        v.push_back({"character select", Source::StartMenu, 14, 0x318, 4, false, true, rows(3, 240, 930, 205, 190, 208)});
+        Screen select{"character select", Source::StartMenu, 14, 0x318, 4, false, true, rows(3, 240, 930, 205, 190, 208)};
+        select.jump = true;  // checked 2026-11-06
+        v.push_back(select);
         // New Game after Character Creation: Touch Panel Settings (state 12; Standard / Dynamic at the bottom right,
         // cursor +0x324), then the slot to save to (state 13; the same three slots, cursor +0x318), then "Welcome to the
         // world of Monster Hunter!" (state 15, a message: a click is A)
         v.push_back({"touch panel", Source::StartMenu, 12, 0x324, 4, false, true, {{1290, 873, 1770, 933}, {1290, 951, 1770, 1014}}});
-        v.push_back({"save slot", Source::StartMenu, 13, 0x318, 4, false, true, rows(3, 240, 930, 205, 190, 208)});
-        // Game Options: Monitor, Sound, Effect, Controller, Game, Language
-        v.push_back({"game options", Source::OptionPage, 8, 0x330, 2, false, true, rows(6, 175, 790, 190, 92, 106)});
+        Screen slot{"save slot", Source::StartMenu, 13, 0x318, 4, false, true, rows(3, 240, 930, 205, 190, 208)};
+        slot.jump = true;  // Character Select's slots and cursor
+        v.push_back(slot);
+        // Game Options: Monitor, Sound, Effect, Controller, Keyboard (the game's Game Settings), Language, then
+        // Cha-Cha's right column (Display / Graphics Settings; game_options.cpp), its mirror about x 960; items 6, 7
+        Screen options{"game options", Source::OptionPage, 8, 0x330, 2, false, true, rows(6, 175, 790, 190, 92, 106)};
+        for (const Box& b : rows(2, 1130, 1745, 190, 92, 106)) options.items.push_back(b);  // 175-790 mirrored
+        for (int i = 0; i < 8; ++i) options.grid.push_back({i < 6 ? i : i - 6, i / 6});
+        v.push_back(options);
         // Sound Settings: Music / SFX volume, 7 bars (levels 0-7 at +0x360 / +0x364)
         Screen sound{"sound", Source::OptionPage, 18, 0x368, 4, false, false, {{354, 366, 1590, 495}, {354, 600, 1590, 729}}};
         sound.vx0 = 750, sound.vx1 = 1545, sound.level = 0x360, sound.bar0 = 921, sound.bar_step = 68, sound.levels = 7;
@@ -393,7 +420,7 @@ const std::vector<Screen>& screens() {
         // opened from it): tabs Hunter / Info (sMenu+0x84), six rows sharing the cursor sMenu+0x5C (s16); a greyed row
         // (Quest Info in the village) is skipped by the game's cursor. Rows measured on frame dumps of both tabs.
         Screen field{"field menu", Source::FieldMenu, 0, 0x5C, 2, false, true, rows(6, 1412, 1826, 286, 44, 52)};
-        field.cursor_in_menu = true;
+        field.cursor_in_menu = true, field.jump = true;
         field.tabs = {{1424, 204, 1556, 248}, {1564, 204, 1684, 248}};
         field.tab_cursor = 0x84;
         v.push_back(field);
@@ -407,18 +434,25 @@ const std::vector<Screen>& screens() {
         };
         for (auto [name, id] : {std::pair<const char*, uint32_t>{"item pouch", 0}, {"combine", 1}, {"combo list", 2}, {"gestures", 11}}) {
             Screen list = field_sub(name, id, 0x21F, rows(8, 1415, 1815, 282, 46, 52));
-            list.page = 8;
+            list.page = 8, list.jump = true;
             v.push_back(list);
         }
         v.push_back(field_sub("hunter's notes", 3, 0x5F, rows(2, 1082, 1326, 436, 49, 52)));   // Monster List, Hunter Info
-        v.push_back(field_sub("guild card", 12, 0x36, rows(4, 1082, 1326, 438, 49, 52)));      // Check, Edit, Send, Card List
-        v.push_back(field_sub("equipment", 8, 0x5F,                                            // Weapon; 5 armour; Charm
-                              {{1415, 285, 1780, 335}, {1415, 365, 1780, 412}, {1415, 417, 1780, 464}, {1415, 469, 1780, 516},
-                               {1415, 521, 1780, 568}, {1415, 573, 1780, 620}, {1415, 653, 1780, 700}}));
+        Screen card = field_sub("guild card", 12, 0x36, rows(4, 1082, 1326, 438, 49, 52));    // Check, Edit, Send, Card List
+        card.jump = true;
+        v.push_back(card);
+        Screen equipment = field_sub("equipment", 8, 0x5F,                                     // Weapon; 5 armour; Charm
+                                     {{1415, 285, 1780, 335}, {1415, 365, 1780, 412}, {1415, 417, 1780, 464}, {1415, 469, 1780, 516},
+                                      {1415, 521, 1780, 568}, {1415, 573, 1780, 620}, {1415, 653, 1780, 700}});
+        equipment.jump = true;
+        v.push_back(equipment);
         // Options (in game): 7 rows a page (3 pages; left / right turn the page here, so a click on a row only goes there
         // and presses A, as with a pad)
         Screen opts = field_sub("field options", 4, 0x225, rows(7, 1410, 1830, 282, 46, 52));
-        opts.page = 7;
+        // it moves by sMenu+0x227 (the option; 0x225 follows) and lights rows by their flags (MH3U_MENU_SNAP_SMENU,
+        // 2026-11-09)
+        opts.page = 7, opts.jump = true, opts.cursor_copy = 0x227, opts.copy_size = 1;
+        opts.row_flags = 0xE4, opts.row_flag_size = 0x18, opts.row_colour = 0xC, opts.colour_on = 0xFFBEE67D, opts.colour_off = 0xFF7E8C6E;
         v.push_back(opts);
         // One level deeper (sMenu+0x35 != 0, the same +0x34 == 1; sMenu snapshots and frame dumps of each): an item's
         // Discard / Swap (cursor +0x5A) and Swap's "into which position?" (+0x35 == 2, the pouch list again); Hunter
@@ -431,10 +465,10 @@ const std::vector<Screen>& screens() {
         item_action.sub_value = 1;
         v.push_back(item_action);
         Screen swap = field_sub("swap to", 0, 0x21F, rows(8, 1415, 1815, 282, 46, 52));
-        swap.sub_value = 2, swap.page = 8;
+        swap.sub_value = 2, swap.page = 8, swap.jump = true;  // the item pouch's list and cursor
         v.push_back(swap);
         Screen hunter_info = field_sub("hunter info", 38, 0x225, rows(8, 1415, 1825, 284, 46, 52));
-        hunter_info.sub_value = 1, hunter_info.page = 8, hunter_info.count = 0x229;
+        hunter_info.sub_value = 1, hunter_info.page = 8, hunter_info.count = 0x229;  // jump not checked (one entry on the test save)
         v.push_back(hunter_info);
         Screen edit = field_sub("option value", 4, 0x225, rows(7, 1410, 1830, 282, 46, 52));
         edit.sub_value = 1, edit.page = 7, edit.vx0 = 1660, edit.vx1 = 1830;
@@ -442,7 +476,7 @@ const std::vector<Screen>& screens() {
         // Monster List (id 37): the same list as Hunter Info (+0x225, +0x229 the rows shown: 1 with "(No Data)" in a
         // save with no monster hunted; its row on the same place)
         Screen monsters = field_sub("monster list", 37, 0x225, rows(8, 1415, 1825, 284, 46, 52));
-        monsters.sub_value = 1, monsters.page = 8, monsters.count = 0x229;
+        monsters.sub_value = 1, monsters.page = 8, monsters.count = 0x229;  // jump not checked (one entry on the test save)
         v.push_back(monsters);
         // Guild Card List (+0x35 15): its own widget, uIDLobbyCardList (step FUN_0268E7DC, wrapped: card_list_step),
         // 8 rows a page: row +0x3D4 (s8; up / down, wrapping), page +0x3D8 (s16; left / right), the cards' slots s8 at
@@ -464,6 +498,9 @@ const std::vector<Screen>& screens() {
         make.values = {1, 2, 4, 5, 6, 7, 8, 9, 10, 3, 11};
         make.grid = {{0, 0}, {1, 0}, {2, 0}, {2, 1}, {3, 0}, {3, 1}, {4, 0}, {4, 1}, {5, 0}, {5, 1}, {6, 0}};
         make.toggle = 1;  // the gender symbol: a click flips it
+        // it moves by row +0x880 / column +0x87C (the grid above), the item +0x884 and a copy +0x86C following
+        // (MH3U_MENU_SNAP_MAKE over d-pad presses, 2026-11-09)
+        make.jump = true, make.cursor_copy = 0x86C, make.row_field = 0x880, make.col_field = 0x87C;
         v.push_back(make);
         // Its sub-screens (+0x868 = the item opened, numbered as the cursor; 0 = none), cursor +0x890: type grids of
         // up to 5 x 4 per page (L / R turn pages), Clothing's one row lower down; the colour swatches 3 x 4 (the
@@ -578,6 +615,12 @@ void analog_hover(ppc::Context& ctx, uint8_t* base, uint32_t m) {
     if (click && g_pointer.tap) g_pointer.tap(kVpadA);
 }
 
+std::function<bool(ppc::Context&, uint8_t*)> g_field_hook;  // set_field_menu_hook
+std::function<bool()> g_overlay_active;                     // set_overlay_hook
+std::function<void(ppc::Context&, uint8_t*)> g_overlay_step;
+std::vector<std::function<void(ppc::Context&, uint8_t*, bool)>> g_frame_hooks;  // add_frame_hook
+bool g_field_owned = false;
+
 const Screen* find_screen(uint8_t* base, uint32_t& object) {
     // Character Creation: its step ran lately, or the start menu is in its creation state (10; the step does not run
     // while a sub-screen is open)
@@ -612,6 +655,7 @@ const Screen* find_screen(uint8_t* base, uint32_t& object) {
             if (s.source == Source::CardList) return object = c, &s;
     if (const uint32_t menu = ppc::ld32(base, kSMenu); menu && game && ppc::ld8(base, game + 0x48) != 0 && ppc::ld8(base, menu + 0x4C)) {
         const uint8_t depth = ppc::ld8(base, menu + 0x34);
+        if (g_field_owned) return nullptr;  // the CFG tab and its settings screens (field_gfx.cpp): their own hover
         for (const Screen& s : screens())
             if ((depth == 0 && s.source == Source::FieldMenu) ||
                 (depth == 1 && s.source == Source::FieldSub && s.key == ppc::ld8(base, menu + 0x52) &&
@@ -621,7 +665,10 @@ const Screen* find_screen(uint8_t* base, uint32_t& object) {
     }
     if (g_frame - g_option_frame.load() <= 2)
         for (const Screen& s : screens())
-            if (s.source == Source::OptionPage && s.key == g_option_page.load()) return object = g_option.load(), &s;
+            if (s.source == Source::OptionPage && s.key == g_option_page.load()) {
+                if (s.key == 20 && settings_page::active()) return nullptr;  // our page on Game Settings' layout: its own hover
+                return object = g_option.load(), &s;
+            }
     if (!start_menu) return nullptr;
     const uint32_t state = ppc::ld32(base, w + 0x2A0);
     for (const Screen& s : screens())
@@ -650,7 +697,9 @@ void screen_hover(uint8_t* base) {
                        : s->cursor_size == 1 ? static_cast<int>(ppc::ld8(base, holder + s->cursor))
                        : s->cursor_size == 2 ? static_cast<int16_t>(ppc::ld16(base, holder + s->cursor))
                                              : static_cast<int>(ppc::ld32(base, holder + s->cursor));
-    const int raw = s->page ? cursor % s->page : cursor;
+    int raw = s->page ? cursor % s->page : cursor;
+    if (s->source == Source::OptionPage && s->key == 8)  // Game Options: Cha-Cha's column has a cursor of its own
+        if (const int right = game_options_right_row(); right >= 0) raw = 6 + right;
     int at = raw;  // the item the cursor is on
     if (!s->values.empty()) {
         at = -1;
@@ -721,17 +770,63 @@ void screen_hover(uint8_t* base) {
     if (g_step_from >= 0 && ((g_step_from == raw && at != g_target) || ++g_steps > 2 * count + 2)) g_target = -1, g_confirm = false;
     g_step_from = -1;
     if (g_target < 0) g_steps = 0;
+    // Game Options (the game's column and Cha-Cha's): the box is selected at once through its own step, not walked to
+    if (g_target >= 0 && at != g_target && s->source == Source::OptionPage && s->key == 8) {
+        game_options_hover(g_target);
+        if (!g_confirm) g_target = -1;
+        g_cooldown = 2;  // the step takes it in the next frame
+        return;
+    }
     if (g_target >= 0 && at != g_target && s->cursor) {
         g_step_from = raw;
+        // the hover goes straight to the item (user rule 2026-11-06: "jump to the hovered row"): the cursor is put on
+        // the target's neighbour on the side it comes from and one step taken, so the game's own move (highlight,
+        // sound) lands on the target
+        const auto put_on = [&](int from) {
+            if (!s->jump) return;  // walked there
+            const int value = s->values.empty() ? from : s->values[static_cast<size_t>(from)];
+            const int written = s->page ? cursor - raw + value : value;
+            if (s->cursor_size == 1) ppc::st8(base, holder + s->cursor, static_cast<uint8_t>(written));
+            else if (s->cursor_size == 2) ppc::st16(base, holder + s->cursor, static_cast<uint16_t>(written));
+            else ppc::st32(base, holder + s->cursor, static_cast<uint32_t>(written));
+            if (s->cursor_copy && s->copy_size == 1) ppc::st8(base, holder + s->cursor_copy, static_cast<uint8_t>(written));
+            else if (s->cursor_copy) ppc::st32(base, holder + s->cursor_copy, static_cast<uint32_t>(written));
+            if (s->row_flags) {
+                for (const auto [row, on] : {std::pair{at, false}, std::pair{from, true}}) {
+                    const uint32_t a = holder + s->row_flags + static_cast<uint32_t>(row) * s->row_flag_size;
+                    ppc::st8(base, a + 1, on ? 1 : 0);
+                    if (s->row_colour) ppc::st32(base, a + s->row_colour, on ? s->colour_on : s->colour_off);
+                }
+            }
+            if (s->row_field && !s->grid.empty()) ppc::st32(base, holder + s->row_field, static_cast<uint32_t>(s->grid[static_cast<size_t>(from)].first));
+            if (s->col_field && !s->grid.empty()) ppc::st32(base, holder + s->col_field, static_cast<uint32_t>(s->grid[static_cast<size_t>(from)].second));
+            g_step_from = value;
+        };
         if (!s->grid.empty()) {
             const auto [row, col] = s->grid[at];
             const auto [trow, tcol] = s->grid[g_target];
-            if (row != trow) tap(row < trow ? kVpadDown : kVpadUp);
-            else if (col != tcol) tap(col < tcol ? kVpadRight : kVpadLeft);
-            else g_target = -1;
+            const auto cell = [&](int r, int c) {
+                const auto it = std::find(s->grid.begin(), s->grid.end(), std::pair<int, int>{r, c});
+                return it == s->grid.end() ? -1 : static_cast<int>(it - s->grid.begin());
+            };
+            // a column without the target's row (Game Options' short right column): change column first
+            const bool has_row = cell(trow, col) >= 0;
+            if (col != tcol && !has_row) {
+                if (const int n = cell(trow, col < tcol ? tcol - 1 : tcol + 1); n >= 0 && n != at) put_on(n);
+                tap(col < tcol ? kVpadRight : kVpadLeft);
+            } else if (row != trow) {
+                if (const int n = cell(row < trow ? trow - 1 : trow + 1, tcol); n >= 0 && n != at) put_on(n);
+                tap(row < trow ? kVpadDown : kVpadUp);
+            } else if (col != tcol) {
+                if (const int n = cell(trow, col < tcol ? tcol - 1 : tcol + 1); n >= 0 && n != at) put_on(n);
+                tap(col < tcol ? kVpadRight : kVpadLeft);
+            } else {
+                g_target = -1;
+            }
             return;
         }
         const bool forward = at < g_target;
+        if (std::abs(g_target - at) > 1) put_on(forward ? g_target - 1 : g_target + 1);
         tap(s->horizontal ? (forward ? kVpadRight : kVpadLeft) : (forward ? kVpadDown : kVpadUp));
         return;
     }
@@ -931,9 +1026,11 @@ PPC_FUNC(box_grid) {
 // (list+0x1AC == 0xFF), row list+0x16 of list+0x18; rows at x 1295-1755, centred at y 336 + 54 * row. Also the
 // Arena's list.
 float g_quest_x = -1, g_quest_y = -1;
+uint32_t g_quest_list = 0, g_quest_list_frame = 0;  // quest_list_open
 
 PPC_FUNC(quest_list) {
     const uint32_t list = static_cast<uint32_t>(ctx.r[4]);
+    g_quest_list = list, g_quest_list_frame = g_frame;
     if (list && ppc::ld8(base, list + 1) == 0 && static_cast<int16_t>(ppc::ld16(base, list + 0x1AC)) == 0xFF) {
         const int count = static_cast<int16_t>(ppc::ld16(base, list + 0x18));
         const int cursor = static_cast<int16_t>(ppc::ld16(base, list + 0x16));
@@ -1000,15 +1097,18 @@ PPC_FUNC(quest_plaques) {
     sub_021E55A8__orig(ctx, base);
 }
 
-// House furnishing list (Place / Remove), FUN_021EF1A8(sLobby, buttons, browse only): in state sLobby+0x6EB8 == 0,
+// House furnishing list (Place / Remove), FUN_021EF1A8(sLobby, buttons, paged): in state sLobby+0x6EB8 == 0,
 // row (u8) +0x6EB9 of +0x6EC4; drawn like the item box's Store Items list (x 1416-1824, y 308 + 51.84 * row). Its
-// buttons argument takes "decide" (0x10) for a click.
+// buttons argument takes "decide" (0x10) for a click. The same picker is the Fishery's Tackle list and (paged, r5 != 0:
+// FUN_021EF0DC steps row + page * 8 of +0x6F00, page +0x6EBA) the Argosy's Voyage Aid list (screenshots 2026-11-09).
 float g_furn_x = -1, g_furn_y = -1;
 
 PPC_FUNC(furnishing_list) {
     const uint32_t lobby = static_cast<uint32_t>(ctx.r[3]);
-    if (lobby && ctx.r[5] == 0 && ppc::ld8(base, lobby + 0x6EB8) == 0) {
-        const int count = static_cast<int16_t>(ppc::ld16(base, lobby + 0x6EC4));
+    if (lobby && ppc::ld8(base, lobby + 0x6EB8) == 0) {
+        const int page = static_cast<int16_t>(ppc::ld16(base, lobby + 0x6EBA));
+        const int count = ctx.r[5] == 0 ? static_cast<int16_t>(ppc::ld16(base, lobby + 0x6EC4))
+                                        : std::min(8, static_cast<int16_t>(ppc::ld16(base, lobby + 0x6F00)) - page * 8);
         const int cursor = ppc::ld8(base, lobby + 0x6EB9);
         const Hover h = hover_cells({1620, 308, 0, 51.84f, 204, 25, 1, 8}, count, g_furn_x, g_furn_y);
         if (h.item >= 0 && (h.moved || h.click) && h.item != cursor) {
@@ -1574,6 +1674,160 @@ PPC_FUNC(result_rewards) {
     sub_02180870__orig(ctx, base);
 }
 
+// ---- Argosy and Fishery (Port Tanzia), from screenshots of the example save 2026-11-09 (2000x1125, scaled) ----
+
+// Argosy trade, FUN_022273B8(sLobby, trade): state trade+1. State 0, the panel at the right: Select (Rare) Commodity,
+// Select (Rare) Goods, Complete trade, cursor trade+0x38 of 2 (3 once the trade can complete, FUN_02226DE0); the
+// game's own move refreshes the panel (FUN_02226820 / FUN_0222665c), so hover puts the cursor on the neighbour and taps
+// once (only when the hovered button changes, so a pending tap is never doubled). State 1, Your List / Goods List: row
+// trade+0x3A of trade+0x3C on this page, the last row being OK; written directly (the list draws from it). The offer
+// grid (state 2) keeps the keys.
+float g_trade_x = -1, g_trade_y = -1;
+int g_trade_last = -1;
+
+PPC_FUNC(argosy_trade) {
+    const uint32_t trade = static_cast<uint32_t>(ctx.r[4]);
+    const uint8_t state = trade ? ppc::ld8(base, trade + 1) : 0xFF;
+    // its states read the lobby directions only on a press (the offer grid too): keep the pointer on throughout
+    if (trade) g_lobby_menu = true;
+    if (state == 0 && g_pointer.tap) {
+        g_lobby_menu = true;
+        float x = 0, y = 0;
+        int item = -1;
+        if (menu_pointer(x, y)) {
+            static constexpr float kY[3] = {403, 648, 809};
+            for (int i = 0; i < 3; ++i)
+                if (x >= 1173 && x <= 1636 && std::fabs(y - kY[i]) <= (i == 2 ? 26 : 40)) item = i;
+        }
+        const int cursor = static_cast<int16_t>(ppc::ld16(base, trade + 0x38));
+        const ppc::Context saved = ctx;  // r3 / r4 are the step's own arguments
+        sub_02226DE0(ctx, base);
+        const int count = static_cast<uint32_t>(ctx.r[3]) != 0 ? 3 : 2;
+        ctx = saved;
+        if (item >= count) item = -1;
+        bool click = false;
+        while (menu_click()) click = click || item >= 0;
+        if (click) {
+            if (item != cursor) ppc::st16(base, trade + 0x38, static_cast<uint16_t>(item));
+            menu_confirm();
+        } else if (item >= 0 && item != g_trade_last && item != cursor) {
+            // one tap from the neighbour: the game's move gives the highlight, the panel and the sound
+            const bool down = item > 0;
+            ppc::st16(base, trade + 0x38, static_cast<uint16_t>(down ? item - 1 : item + 1));
+            g_pointer.tap(down ? kVpadDown : kVpadUp);
+        }
+        g_trade_last = item;
+    } else if (state == 1) {
+        g_trade_last = -1;
+        const int count = static_cast<int16_t>(ppc::ld16(base, trade + 0x3C));
+        const int cursor = static_cast<int16_t>(ppc::ld16(base, trade + 0x3A));
+        Hover h;
+        g_lobby_menu = true;
+        float x = 0, y = 0;
+        if (g_pointer.tap && menu_pointer(x, y)) {
+            for (int r = 0; r < std::min(5, count - 1); ++r)
+                if (std::fabs(x - 1483) <= 293 && std::fabs(y - (254 + 113.6f * static_cast<float>(r))) <= 52) h.item = r;
+            if (count > 0 && std::fabs(x - 1483) <= 185 && std::fabs(y - 822) <= 25) h.item = count - 1;  // OK
+            h.moved = x != g_trade_x || y != g_trade_y;
+            g_trade_x = x, g_trade_y = y;
+            while (menu_click()) h.click = h.click || h.item >= 0;
+        }
+        if (h.item >= 0 && (h.moved || h.click) && h.item != cursor) {
+            ppc::st16(base, trade + 0x3A, static_cast<uint16_t>(h.item));
+            ppc::st8(base, trade + 2, 0);
+            cursor_sound(ctx, base);
+        }
+        if (h.click) menu_confirm();
+    } else {
+        g_trade_last = -1;
+    }
+    sub_022273B8__orig(ctx, base);
+}
+
+// Argosy Destinations, FUN_02228210(sLobby, voyage): in state voyage+1 == 0, row voyage+0x3A of voyage+0x3C, each
+// row's kind at voyage+9+row (0-2 a destination, A toggles Visit; 3 Voyage Aid; 4 OK); written directly. Destinations
+// from y 341 (the spacing between several is not seen yet: 55 assumed), Voyage Aid at y 573, OK at y 749.
+float g_voyage_x = -1, g_voyage_y = -1;
+
+PPC_FUNC(argosy_destinations) {
+    const uint32_t voyage = static_cast<uint32_t>(ctx.r[4]);
+    if (voyage) g_lobby_menu = true;  // keep the pointer on in every state (Check Goods, prompts)
+    if (voyage && ppc::ld8(base, voyage + 1) == 0 && g_pointer.tap) {
+        g_lobby_menu = true;
+        const int count = std::min<int>(5, static_cast<int16_t>(ppc::ld16(base, voyage + 0x3C)));
+        float x = 0, y = 0;
+        int item = -1;
+        if (menu_pointer(x, y))
+            for (int r = 0; r < count; ++r) {
+                const uint8_t kind = ppc::ld8(base, voyage + 9 + static_cast<uint32_t>(r));
+                const float ry = kind <= 2 ? 341 + 55.0f * static_cast<float>(r) : kind == 3 ? 573.0f : 749.0f;
+                const float cx = kind == 4 ? 1408.0f : 1424.0f, hw = kind == 4 ? 172.0f : 320.0f;
+                if (kind <= 4 && std::fabs(x - cx) <= hw && std::fabs(y - ry) <= 26) item = r;
+            }
+        const bool moved = x != g_voyage_x || y != g_voyage_y;
+        g_voyage_x = x, g_voyage_y = y;
+        bool click = false;
+        while (menu_click()) click = click || item >= 0;
+        const int cursor = static_cast<int16_t>(ppc::ld16(base, voyage + 0x3A));
+        if (item >= 0 && (moved || click) && item != cursor) {
+            ppc::st16(base, voyage + 0x3A, static_cast<uint16_t>(item));
+            cursor_sound(ctx, base);
+        }
+        if (click) menu_confirm();
+    }
+    sub_02228210__orig(ctx, base);
+}
+
+// Fishery, FUN_021EC78C(sLobby, fleet): state fleet+1. State 1, Quest Settings: Region / Tackle / OK, cursor fleet+4
+// (2 rows while fleet+2 is set, 3 after); rows at y 418 / 608, OK at y 754. State 2, Regions: row fleet+0x10 of
+// fleet+0x12 on the page fleet+0x14 (4 rows, x 1310-1771, y 274 + 54 * row; the spacing past the first row assumed).
+// Both written directly. State 0, the boat screen: Dispatch takes a click, the boat tabs keep the keys; the Tackle
+// list is FUN_021EF1A8.
+float g_fleet_x = -1, g_fleet_y = -1;
+
+PPC_FUNC(fishery_fleet) {
+    const uint32_t fleet = static_cast<uint32_t>(ctx.r[4]);
+    const uint8_t state = fleet ? ppc::ld8(base, fleet + 1) : 0xFF;
+    // the boat screen (state 0) reads the lobby directions only on a press, so without this the pointer was handed
+    // back to the camera there ("the mouse locks", user 2026-11-09)
+    if (fleet) g_lobby_menu = true;
+    if (state == 0 && g_pointer.tap) {
+        // Status / Dispatch: a click on Dispatch (x 1234-1584, y 528) is A; the boat tabs keep the keys
+        float x = 0, y = 0;
+        const bool on = menu_pointer(x, y) && x >= 1234 && x <= 1584 && std::fabs(y - 528) <= 25;
+        bool click = false;
+        while (menu_click()) click = click || on;
+        if (click) menu_confirm();
+    } else if (state == 1 && g_pointer.tap) {
+        g_lobby_menu = true;
+        const int count = ppc::ld8(base, fleet + 2) == 0 ? 3 : 2;
+        float x = 0, y = 0;
+        int item = -1;
+        if (menu_pointer(x, y)) {
+            if (x >= 1114 && x <= 1709 && std::fabs(y - 418) <= 28) item = 0;
+            if (x >= 1114 && x <= 1709 && std::fabs(y - 608) <= 28) item = 1;
+            if (x >= 1234 && x <= 1579 && std::fabs(y - 754) <= 25) item = 2;
+        }
+        if (item >= count) item = -1;
+        const bool moved = x != g_fleet_x || y != g_fleet_y;
+        g_fleet_x = x, g_fleet_y = y;
+        bool click = false;
+        while (menu_click()) click = click || item >= 0;
+        const int cursor = static_cast<int16_t>(ppc::ld16(base, fleet + 4));
+        if (item >= 0 && (moved || click) && item != cursor) {
+            ppc::st16(base, fleet + 4, static_cast<uint16_t>(item));
+            cursor_sound(ctx, base);
+        }
+        if (click) menu_confirm();
+    } else if (state == 2) {
+        const int count = static_cast<int16_t>(ppc::ld16(base, fleet + 0x12));
+        const int cursor = static_cast<int16_t>(ppc::ld16(base, fleet + 0x10));
+        hover_apply(ctx, base, hover_cells({1540, 274, 0, 54, 230, 25, 1, 4}, count, g_fleet_x, g_fleet_y), cursor,
+                    fleet + 0x10);
+    }
+    sub_021EC78C__orig(ctx, base);
+}
+
 // Abandon Quest's "Quit and return to the village?" (field menu sMenu+0x34 1, +0x52 5, +0x35 0): Yes and No side by
 // side, cursor sMenu+0x204 (u32: 0 Yes, 1 No; opens on No - seen with MH3U_MENU_PROBE). Yes centred at 810,666 and No
 // at 1111,666 (window session screenshot, 2026-11-03).
@@ -1640,11 +1894,26 @@ PPC_FUNC(make_character_step) {
 PPC_FUNC(pad_update) {
     sub_020E0CFC__orig(ctx, base);
     ++g_frame;
+    if (!g_frame_hooks.empty()) {
+        const uint32_t r3 = ctx.r[3];
+        for (const auto& hook : g_frame_hooks) hook(ctx, base, g_open);
+        ctx.r[3] = r3;
+    }
     if (g_learn) learn(base);
     if (g_probe) probe(base);
     else g_callers.clear();
     if (g_hunt_live) hunt_live(base);
     if (!g_hunts.empty()) hunt(base);
+    if (g_overlay_active && g_overlay_active()) {  // an overlay of ours over the game: the pointer and clicks are its
+        g_screen = nullptr, g_analog = nullptr;
+        g_open_frames = kCloseFrames;
+        g_open = true;
+        if (g_pointer.set_menu_open) g_pointer.set_menu_open(true);
+        g_clicks += g_pointer.take_clicks ? g_pointer.take_clicks() : 0;
+        g_hover_frames = kHoverFrames;
+        if (g_overlay_step) g_overlay_step(ctx, base);
+        return;
+    }
     snapshot(base);
     g_analog = nullptr;
     g_screen = g_pointer.tap ? find_screen(base, g_object) : nullptr;
@@ -1665,6 +1934,11 @@ PPC_FUNC(pad_update) {
     } else {
         g_clicks = 0;
         if (clicks && g_pointer.tap) g_pointer.tap(kVpadA);
+    }
+    // the field menu's CFG tab (field_gfx.cpp): after this frame's clicks are handed out, before the menus read the pad
+    if (g_field_hook) {
+        g_field_owned = g_field_hook(ctx, base);
+        if (g_field_owned && g_screen && (g_screen->source == Source::FieldMenu || g_screen->source == Source::FieldSub)) g_screen = nullptr;
     }
     screen_hover(base);
     if (g_analog) analog_hover(ctx, base, g_object);
@@ -1691,6 +1965,45 @@ bool menu_click() {
 void menu_confirm() {
     if (g_pointer.tap) g_pointer.tap(0x8000);
 }
+
+int HoverWalk::step(float x, float y, int hit, int cursor) {
+    if ((x != last_x || y != last_y) && hit >= 0) target = hit;  // only a moved pointer picks the item
+    last_x = x, last_y = y;
+    if (target < 0 || target == cursor) {
+        if (!confirm) target = -1;
+        return 0;
+    }
+    const int d = target - cursor;  // straight there
+    if (!confirm) target = -1;
+    return d;
+}
+
+void HoverWalk::click(int hit) {
+    if (hit < 0) return;
+    target = hit, confirm = true;
+}
+
+bool HoverWalk::arrived(int cursor) {
+    if (!confirm || target != cursor) return false;
+    target = -1, confirm = false;
+    return true;
+}
+
+void set_field_menu_hook(std::function<bool(ppc::Context& ctx, uint8_t* base)> hook) { g_field_hook = std::move(hook); }
+
+bool quest_list_open(uint32_t* list) {
+    if (list) *list = g_quest_list;
+    return g_quest_list && g_frame - g_quest_list_frame <= 2;
+}
+
+void add_frame_hook(std::function<void(ppc::Context& ctx, uint8_t* base, bool menu_open)> hook) { g_frame_hooks.push_back(std::move(hook)); }
+
+void set_overlay_hook(std::function<bool()> active, std::function<void(ppc::Context& ctx, uint8_t* base)> step) {
+    g_overlay_active = std::move(active);
+    g_overlay_step = std::move(step);
+}
+
+uint32_t menu_frame() { return g_frame; }
 
 void register_menu_mouse(Pointer pointer) {
     g_pointer = std::move(pointer);
@@ -1793,7 +2106,11 @@ void register_menu_mouse(Pointer pointer) {
     ppc::set_override(0x02043308, &stacked_yes_no);
     ppc::set_override(0x021D4420, &farm_cultivate);
     ppc::set_override(0x021D2724, &stock_forecast);
-    ppc::set_override(0x021D24BC, &stock_resources);    ppc::set_override(0x021EFA70, &crop_box);
+    ppc::set_override(0x021D24BC, &stock_resources);
+    ppc::set_override(0x021EFA70, &crop_box);
+    ppc::set_override(0x022273B8, &argosy_trade);
+    ppc::set_override(0x02228210, &argosy_destinations);
+    ppc::set_override(0x021EC78C, &fishery_fleet);
     ppc::set_override(0x026AD984, &ferry_list);
     ppc::set_override(0x021C3DCC, &furnishing_picker);
     ppc::set_override(0x021C4304, &furnishing_remove);

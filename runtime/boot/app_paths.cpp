@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#ifdef __ANDROID__
+#include <SDL3/SDL_system.h>
+#endif
 
 namespace mh3u::boot {
 namespace {
@@ -58,6 +61,14 @@ AppPaths find_paths(const stdfs::path& exe, const stdfs::path& data_override) {
         p.data = p.exe_dir;
         p.config_file = p.exe_dir / "Cha-Cha.ini";
         p.folder_install = true;
+#ifdef __ANDROID__
+    } else if (const char* ext = SDL_GetAndroidExternalStoragePath()) {
+        // the app's own folder on shared storage (Android/data/<package>/files): reachable over USB from a PC, where
+        // the player copies the game (a "game" folder in it), quests and mods; no storage permission needed
+        p.data = stdfs::path(ext);
+    } else if (const char* internal = SDL_GetAndroidInternalStoragePath()) {
+        p.data = stdfs::path(internal);
+#endif
     } else if (stdfs::exists(p.exe_dir / "portable.txt", ec)) {
         p.data = p.exe_dir / "data";
     } else if (!p.repo.empty()) {
@@ -121,15 +132,17 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "bloom") s.bloom = on;
         else if (k == "depth_of_field") s.depth_of_field = v == "enhanced" || v == "2" ? "enhanced" : on || v == "original" ? "original" : "off";
         else if (k == "ambient_occlusion") s.ambient_occlusion = on;
-        else if (k == "global_illumination") s.global_illumination = on;
+        else if (k == "global_illumination") s.global_illumination = v == "lite" ? "lite" : v == "full" || on ? "full" : "off";  // 1: older "on"
+        else if (k == "reflections") s.reflections = v == "lite" ? "lite" : v == "full" || on ? "full" : "off";
         else if (k == "vignette") s.vignette = on;
         else if (k == "texture_packs") s.texture_packs = on;
         else if (k == "look") s.look = v == "tri" ? "tri" : "original";
         else if (k == "fps_limit") s.fps_limit = v == "unlimited" ? -1 : std::max(0, std::atoi(v.c_str()));
         else if (k == "vsync") s.vsync = on;
-        else if (k == "monster_hp_scaling") s.monster_hp_scaling = on;
         else if (k == "online_lan") s.online_lan = on;
         else if (k == "online_host") s.online_host = v;
+        else if (k == "modern_camera") s.modern_camera = on;
+        else if (k == "camera_distance") s.camera_distance = std::clamp(std::atoi(v.c_str()), 50, 300);
     }
     return s;
 }
@@ -151,15 +164,17 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "bloom=" << (s.bloom ? 1 : 0) << '\n'
       << "depth_of_field=" << s.depth_of_field << '\n'
       << "ambient_occlusion=" << (s.ambient_occlusion ? 1 : 0) << '\n'
-      << "global_illumination=" << (s.global_illumination ? 1 : 0) << '\n'
+      << "global_illumination=" << s.global_illumination << '\n'
+      << "reflections=" << s.reflections << '\n'
       << "vignette=" << (s.vignette ? 1 : 0) << '\n'
       << "texture_packs=" << (s.texture_packs ? 1 : 0) << '\n'
-      << "monster_hp_scaling=" << (s.monster_hp_scaling ? 1 : 0) << '\n'
       << "online_lan=" << (s.online_lan ? 1 : 0) << '\n'
       << "online_host=" << s.online_host << '\n'
       << "look=" << s.look << '\n'
       << "fps_limit=" << (s.fps_limit < 0 ? std::string("unlimited") : std::to_string(s.fps_limit)) << '\n'
-      << "vsync=" << (s.vsync ? 1 : 0) << '\n';
+      << "vsync=" << (s.vsync ? 1 : 0) << '\n'
+      << "modern_camera=" << (s.modern_camera ? 1 : 0) << '\n'
+      << "camera_distance=" << s.camera_distance << '\n';
     return static_cast<bool>(f);
 }
 
@@ -184,6 +199,24 @@ std::vector<stdfs::path> repo_game_sources(const AppPaths& p) {
                 out.push_back(e.path());
                 break;
             }
+    return out;
+}
+
+std::vector<stdfs::path> folder_game_sources(const AppPaths& p) {
+    std::vector<stdfs::path> out;
+    for (const stdfs::path& dir : {p.exe_dir / "game", p.data / "game"}) {
+        std::error_code ec;
+        if (!stdfs::is_directory(dir, ec)) continue;
+        std::vector<stdfs::path> wua;
+        bool folders = false;
+        for (const auto& e : stdfs::directory_iterator(dir, ec)) {
+            if (e.path().extension() == ".wua") wua.push_back(e.path());
+            else if (e.is_directory(ec)) folders = true;
+        }
+        if (!wua.empty()) out.insert(out.end(), wua.begin(), wua.end());
+        else if (folders) out.push_back(dir);
+        if (!out.empty()) break;
+    }
     return out;
 }
 

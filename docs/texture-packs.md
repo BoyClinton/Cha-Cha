@@ -26,6 +26,10 @@ tex_<width>x<height>_<CRC32><anything>.dds   (text after the CRC is ignored: tex
 
 ## Dumping
 
+**The whole game at once:** main menu > DLC > Mods, then **X Texture Dump** (or Y, or a click on it), Yes; Cancel download stops it. Every texture in every
+archive is written to `<data folder>/texture_dump/` under its replacement name while the game's download screen shows
+how far it is; files already there are kept. Or, for only what you see:
+
 Settings → VIDEO → **DUMP TEXTURES**. It starts at once and applies to this session only. Every texture the game uses
 from then on is written to `<data folder>/texture_dump/` under its replacement name, including textures already
 loaded, the next time they are drawn. Toasts show the folder and a running count. For runs, `MH3U_DUMP_TEXTURES=1`

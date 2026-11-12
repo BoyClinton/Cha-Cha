@@ -25,25 +25,28 @@ GamePad screen in 854x480 pixels, on the `MH3U_INPUT_SCRIPT` clock; `MH3U_MOUSE_
 host input left-button events in window units at those seconds.
 
 Code: `runtime/input/host_input.*` (SDL3, host main thread) → `runtime/os/input.cpp` (`VPADRead`, motor).
-Settings: `input.ini` in the data folder (not in git), written by the launcher's **Settings > Controls** page.
+Settings: `input.ini` in the data folder (not in git), written by Game Options' Controller / Keyboard Settings.
 
-## Rebinding in the launcher
-**F1** (or **Select + Options** together on a controller - Back + Start, View + Menu, Share + Options; a lone
-Select or Options reaches the game 80 ms late while it waits for the other - or a controller's **touchpad click** on PlayStation pads, **Home / PS / Xbox** button, or the DualSense mic /
-Xbox Share / Switch capture button) opens the settings over the running game; again, or Esc / B, returns to it. None
-of them is bound to a game button (`input::is_settings_button`; an older `input.ini`'s `touchpad = tv` is ignored).
-Changed settings are applied with the confirm button (A / Enter) on any value row – left / right change the value –
-or with + / Ctrl+Enter / the Apply button. **F2** opens
-MODS (quests, gameplay) the same way; F3 cycles the GamePad view.
-**Settings > Controls** lists every game button and stick direction with its keyboard / mouse and controller
-bindings. Choose a cell and press the key, mouse button, wheel direction, controller button or trigger for it
-(Esc cancels, Delete clears, 6 s timeout); the game uses it at once and `input.ini` is saved. One source per game
-button per device: binding replaces the old one, and the source leaves its previous game button. Stick directions
-stay on the controller's sticks. Also there: controller layout (Xbox / Nintendo; switching resets the controller
-bindings), mouse sensitivity, invert camera Y, reset to defaults.
+## Rebinding
+The controller's Home / guide, touchpad click and misc buttons are never bound to a game button
+(`input::is_settings_button`; an older `input.ini`'s `touchpad = tv` is ignored). F3 cycles the GamePad view.
+Choose a row and press the key, mouse button, wheel direction, controller button or trigger for it (Esc cancels,
+Delete clears, 6 s timeout); the game uses it at once and `input.ini` is saved. One source per game button per
+device: binding replaces the old one, and the source leaves its previous game button. Stick directions stay on the
+controller's sticks.
+In the game (2026-11-06): title Options > Game Options has **Controller Settings** (controller buttons only: Controller
+Layout - Nintendo, the default, or Custom, shown once a button is remapped; Nintendo again resets them -, Invert Camera
+Y, Reset to Defaults for the controller only) and **Keyboard Settings** in place of the game's Game Settings (keys and
+mouse only: Mouse Sensitivity, Invert Camera Y, Reset to Defaults for keys / mouse only). `layout = xbox` in an older
+`input.ini` shows as Custom.
+**Cha-Cha Plus overlay:** **F1** (or **Select + Options** together on a controller - Back + Start, View + Menu, Share +
+Options; a lone Select or Options reaches the game 80 ms late while it waits for the other - or a controller's
+touchpad click, Home / PS / Xbox button, or the DualSense mic / Xbox Share / Switch capture button) opens the fork's
+settings over the running game (camera speed, aspect ratio, online), **F2** its Mods page (mod plugins and their
+settings); again, or Esc / B, returns to the game.
 `input.ini` sections `[bindings]` (keys / mouse) and `[controller]` (SDL gamepad button names, `lefttrigger`,
-`righttrigger`) change the defaults line by line, or replace them when they start with `clear = 1` (as saved by the
-launcher). Test: `bindings_test` (bind, save, reset, reload).
+`righttrigger`) change the defaults line by line, or replace them when they start with `clear = 1` (as saved by
+Cha-Cha). Test: `bindings_test` (bind, save, reset, reload).
 
 ## Controllers
 SDL3's gamepad API maps everything to one layout, so the same code serves:
@@ -58,7 +61,7 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
 - Rumble: `VPADControlMotor` patterns rumble every connected controller (applied on the main thread).
 
 ## Keyboard + mouse
-- **Cursor.** While no game menu, launcher overlay or text entry is up and the window has focus, the system cursor
+- **Cursor.** While no game menu or text entry is up and the window has focus, the system cursor
   is hidden over the window (user 2026-11-03: shown only where it is needed) - except after Esc or **F11** freed the
   mouse, until it is captured again (issue #8: the window's close button must be reachable). F11 also switches
   between the last fullscreen mode (borderless if none) and a window, without changing the saved display mode.
@@ -138,7 +141,16 @@ and its change callback called from `SwkbdCalc` on the game thread). The game on
 `MH3U_INPUT_SCRIPT="frame[+frames]:BUTTON[|BUTTON];..."` presses buttons at given swap counts (6 frames by default; `LSTICK_*` / `RSTICK_*` + `LEFT` / `RIGHT` / `UP` / `DOWN`
 push a stick fully),
 e.g. `700:A;1000:A|R`. With A presses the boot gets past the "Wii U GamePad has been detected" notice to the
-"extended data save settings" Yes/No prompt. Boot timing varies run to run, so scripts need slack.
+"extended data save settings" Yes/No prompt. Boot timing varies run to run (the attract movie starts at a different
+swap each time, and a press before it is lost), so a menu route timed from boot drifts by hundreds of swaps.
+**Anchor menu routes on the main menu instead:** `@N:BUTTON` presses come N swaps after the title's main menu first
+opened (start menu state 7, `runtime/core/dev_anchor.h`), and in a script with `@` entries the plain-numbered presses
+stop once it is open, so a burst of A presses gets through the movie and the title whenever they come.
+`MH3U_DUMP_FRAME` takes `@N` the same way. Routes checked on 2026-11-11 (main menu cursor starts on Continue):
+- Game Options → Graphics Settings: `500..2100 every 50:A;@120:DOWN;@180:A;@380:RIGHT;@440:DOWN;@500:A`, page at `@800`
+- Controller Settings, page 2: `...;@120:DOWN;@180:A;@380:DOWN;@430:DOWN;@480:DOWN;@540:A;@700:R`, at `@950`
+- DLC → Mods: `...;@120:DOWN;@170:DOWN;@220:DOWN;@280:A;@750:DOWN;@800:DOWN;@860:A`, at `@1300`
+- New Game → name keyboard (`MH3U_TEXT_HOLD=1`): `...;@120:UP;@180:A;@400:A;@600:A`, at `@700`
 `MH3U_POINTER_SCRIPT="frame:x,y[,click];..."` puts the menu pointer at TV pixel x, y (1920 x 1080) from that pad
 update on, with a left click there if `,click` is given; `MH3U_MENU_PROBE=1` logs the menu state, `MH3U_MENU_SNAP=<file>`
 appends uIDStartMenu snapshots for finding cursor fields (src/game/menu_mouse.cpp).

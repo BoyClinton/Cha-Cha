@@ -7,6 +7,7 @@ add_library(mh3u_os STATIC
   coreinit_sync.cpp
   coreinit_time.cpp
   nn_act.cpp
+  dlc_server.cpp
   coreinit_fs.cpp
   nn_save.cpp
   coreinit_config.cpp
@@ -22,6 +23,9 @@ target_include_directories(mh3u_os PUBLIC .)
 target_link_libraries(mh3u_os PUBLIC mh3u_core mh3u_fs mh3u_ppc_context mh3u_recomp_support mh3u_input)
 if(WIN32)  # H.264: Media Foundation
   target_link_libraries(mh3u_os PRIVATE mfplat mfuuid wmcodecdspuuid ole32 oleaut32 strmiids)
+elseif(ANDROID)  # FFmpeg's libavcodec, static (scripts/android/build-ffmpeg.sh)
+  target_include_directories(mh3u_os PRIVATE "${MH3U_ANDROID_DEPS}/include")
+  target_link_libraries(mh3u_os PRIVATE "${MH3U_ANDROID_DEPS}/lib/libavcodec.a" "${MH3U_ANDROID_DEPS}/lib/libavutil.a" m)
 else()     # H.264: FFmpeg's libavcodec
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec libavutil)
