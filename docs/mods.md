@@ -69,7 +69,7 @@ Every mod is also in the pause menu's CFG tab > Mods (On / Off), on quests too: 
   tool, a full pouch or the spot running out ends it there. Endless spots give one item a swing, as usual. Carving
   monsters is Instant Carve. Code: `src/game/carving.cpp`.
 - **Instant Carve** (off by default): one carving motion takes all the carves left on a monster, on land and under
-  water. Each carve still rolls its own reward. Code: `src/game/carving.cpp` (gather kinds 1 and 5).
+  water. Each carve still rolls its own reward. Code: `src/game/carving.cpp` (a carve is a spot tied to a monster).
 - **Auto Delivery** (off by default): a quest's item delivery goals are handed in on the spot (the game's own
   "delivered" message) as soon as your pouch holds the whole remaining amount - no trip to the delivery box. Items
   carried in your arms (eggs and the like; the game's own list of carried items) still go to camp. Not while a

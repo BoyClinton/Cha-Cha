@@ -1193,6 +1193,11 @@ Image* VkRenderer::target(const GuestSurface& s, bool depth, bool upload) {
     } else {
         fd = color_format(s.format);
         format = fd.vk;
+        // GX2's RGB565 (0x008, R in the low bits) is B5G6R5, which many GPUs cannot draw into (the 87 draws skipped in
+        // a quest, 2026-11-11); R5G6B5 always can. What the GPU draws it also reads, so the bit order only matters for
+        // an upload of guest pixels (red and blue swap there; these targets are cleared before use).
+        if (format == VK_FORMAT_B5G6R5_UNORM_PACK16 && !(features(format) & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
+            format = fd.vk = VK_FORMAT_R5G6B5_UNORM_PACK16;
         if (format != VK_FORMAT_UNDEFINED && !(features(format) & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) format = VK_FORMAT_UNDEFINED;
     }
     if (format == VK_FORMAT_UNDEFINED) {

@@ -1,6 +1,8 @@
 // Level-0 content hashes (renderer hash_words, the frame trace's h0) of the game's water surface textures, made with
-// scripts/texture_hashes.py --grep umi mizu nami -sea teratera b018 (umi sea, mizu water, nami waves, teratera glitter),
-// leaving out water weed, river beds, wet walls, waterfalls, fountains, the underwater backdrop and m07's b018 (not water).
+// scripts/texture_hashes.py --grep umi mizu nami -sea teratera b018 suimen kawa minamo (umi sea, mizu water, nami waves,
+// teratera glitter, suimen water surface, kawa river), plus generic b0xx names that look the same (found by colour),
+// leaving out water weed, river beds, wet walls, waterfalls, fountains, the underwater backdrop and m07's b018 (not
+// water). Mud surfaces (suimen_doro) are in: wet mud reflects too (user 2026-11-11).
 // Screen-space reflections are drawn only where one of these textures lands (renderer.cpp is_water_draw).
 0xd92d6922b9f88651ull,  // m01a00d-t-nami2_BM
 0x76cd3f72a7abc6c3ull,  // m01a00d-t-mizu01_BM
@@ -87,3 +89,39 @@
 0xf31d2f329c150739ull,  // minato-a00-sea_BM
 0xf8aaf4fa2bb6dfc8ull,  // minato-a01-sea01_BM
 0x522e9f0f968b4156ull,  // minato-a01-mizu01_BM
+0xd298bb39c00400daull,  // m01a02d-t-suimen02_BM
+0xb565f685a35dfbc4ull,  // m01a02d-t-suimen01_BM
+0x59f076aa80881621ull,  // m01a02d-t-suimen01-64_BM
+0xd8e1478bc23aa873ull,  // m01a04d-t-suimenB_BM
+0x521d2b7074299112ull,  // m01a09d-t-suimen_BM
+0x4b61ce48d29e1793ull,  // m02a01d-t-suimen_BM
+0xc223524ae958d721ull,  // m02a02d-t-suimen_BM
+0xdfabec5d133dcb18ull,  // m02a03d-suimen_yogore1_BM
+0x5b1fb0852516c801ull,  // m02a03d-suimen_anim4_BM
+0x40e6c7fb6c0f4ecbull,  // m02a09d-t-suimenA128_BM
+0xaf196889fd51615aull,  // m02a09d-t-suimenB_BM
+0x22a749fa9736adbfull,  // m03a02d-t-suimen2_BM
+0xf0712f8f112440e5ull,  // m03a02d-t-suimen3_BM
+0x88fc13079fc80a1bull,  // m03a05d-t-suimen02_BM
+0x524f125dcc309adfull,  // m03a06d-t-suimen02_BM
+0xa1a7476e8031984bull,  // m03a10d-t-suimen_kira1_BM
+0x6861e5a3a85ce90aull,  // m03a10d-t-suimen3_BM
+0xfb9d02839235dcfaull,  // m03a10d-t-suimen1_BM
+0x1f5b05d62dcec2e5ull,  // m12a04d-t-kawa00_BM
+0x0dc7082d9b9c184dull,  // m12a05d-t-suimen1_BM
+0x3229e78200ad5485ull,  // m12a05d-t-suimen_nagare1_BM
+0x55d39037bb3e2284ull,  // m12a05d-t-suimen_yuragi1_BM
+0x5d570629f366ee6eull,  // m12a07d-suimen_BM
+0x2c7ba0cca7a1f861ull,  // m01a02n-t-suimen01-64_BM
+0x61593559079e09bcull,  // m02a02n-t-suimen_BM
+0xa24fda8effc74eaeull,  // m02a03n-suimen_yogore1_BM
+0xbce4b00a585d03b2ull,  // m02a09n-t-suimenB_BM
+0x9849474c9cb841a3ull,  // m03a02n-t-suimen1_BM
+0x3fe22fd8ce55021aull,  // m05a06d-t-b20_BM
+0xcd456550949bc5afull,  // mura-a02_b16_BM
+0xcef906c5f0de61bdull,  // m08a00n-t-b034_BM
+0xbf4bff061208f7deull,  // m08a00d-t-b034_BM
+0xb93bf07d09bfb302ull,  // m04a00d-t-b21_s_BM
+0x178ee06e2776c979ull,  // m04a00d-t-b21_BM
+0x69b0e6124ffdcc94ull,  // m02a03d-suimen_doro1_BM
+0xc3bc3331efd54f24ull,  // m02a03n-suimen_doro1_BM

@@ -9,7 +9,7 @@ deps="${ANDROID_DEPS:-$HOME/android-deps}"
 prefix="$deps/ffmpeg-arm64-v8a"
 ndk="${ANDROID_NDK_LINUX:-$deps/android-ndk-r30}"
 api=29
-src="$(ls -d "$deps"/ffmpeg-*/ | sort -V | tail -1)"
+src="$(ls -d "$deps"/ffmpeg-[0-9]*/ | sort -V | tail -1)"  # ffmpeg-<version>, not ffmpeg-build-* / ffmpeg-arm64-*
 tc="$ndk/toolchains/llvm/prebuilt/linux-x86_64"
 work="$deps/ffmpeg-build-arm64"
 copy_out() {

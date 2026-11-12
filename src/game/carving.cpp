@@ -9,9 +9,13 @@
 // a few seconds pass without another item.
 //
 // Instant Gathering (user 2026-11-10): one gathering / mining / bug net animation takes everything the spot has left;
-// each item still rolls its reward and the tool's breakage. Instant Carve (user 2026-11-11): the same for carving
-// (the gather action's kinds 1 and 5, carving on land / under water? - the only kinds with a crouch first stage),
-// split out because Instant Gathering also emptied carcasses in one carve.
+// each item still rolls its reward and the tool's breakage. Instant Carve (user 2026-11-11): the same for carving,
+// split out because Instant Gathering also emptied carcasses in one carve. Seen in game 2026-11-11 (MH3U_GATHER_LOG):
+// a carve on land is gather kind 4 on a spot whose sPop slot (index pad+0x9C3, slot sPop + 0x524B0 + i x 0x110) has
+// type +4 = 2; gathering herbs was kind 0 on a type 0 slot. Type 2 is also the one FUN_02162430 reports as "nothing
+// left" when used up, so a carve is kind 4 or a type 2 slot. Under water (seen later the same day) a carve is kind 6 on
+// a type 2 slot, gathering kind 7 on a type 0 one.
+// Kinds 1 and 5 (tried first) are not carving, and the slot's monster id (+0x10C) is no help: the carcass slot read -1.
 // Replaces: FUN_028BC31C gatherReward? (player, kind, roll, item), called only from the gather action state
 // FUN_028BC650 (player, kind) at the animation's reward moment, after
 //   FUN_02162430 sPop::rollSpot? (sPop, area pad+0x56, position pad+0xE0, spot pad+0x9BC): finds the spot's slot
@@ -27,6 +31,8 @@
 #include "carving.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include "functions.h"
@@ -82,15 +88,31 @@ int spot_state(const uint8_t* base, uint32_t pad) {
     return state;
 }
 
+// The spot's slot type (+4): 2 = a carcass (see the header comment), 0 = a gathering spot; 0xFF = no slot.
+unsigned slot_kind(const uint8_t* base, uint32_t pad) {
+    const uint32_t pop = ppc::ld32(base, kSPop), i = base[pad + 0x9C3];
+    return pop && i < 0x80 ? base[pop + 0x524B0 + i * 0x110 + 4] : 0xFFu;
+}
+
 PPC_FUNC(gather_reward) {
     const uint32_t player = ctx.r[3], kind = ctx.r[4], roll = ctx.r[5], item = ctx.r[6];
     const uint32_t pad = ppc::ld32(base, player + kPad);
     Uses before = uses(base, pad);
     g_last_obtain = 0xFFFFFFFF;
     sub_028BC31C__orig(ctx, base);
-    // kinds 1 and 5 are carving (on land / under water; FUN_028d204c's gather states pass 0-9, and only these two
-    // start with the crouch, anims 0x131 / 0x138 and 0x13F / 0x143): Instant Carve, the rest Instant Gathering
-    const bool carve = kind == 1 || kind == 5;
+    // a carcass: Instant Carve; any other spot: Instant Gathering
+    const unsigned type = slot_kind(base, pad);
+    const bool carve = kind == 4 || kind == 6 || type == 2;  // 4 on land, 6 under water (both seen with type 2)
+    static const bool log = [] {
+        char* e = nullptr;
+        size_t n = 0;
+        const bool on = _dupenv_s(&e, &n, "MH3U_GATHER_LOG") == 0 && e && *e && *e != '0';
+        std::free(e);
+        return on;
+    }();
+    if (log)
+        std::fprintf(stderr, "gather: kind %u slot %u type %u -> %s\n", kind, static_cast<unsigned>(base[pad + 0x9C3]), type,
+                     carve ? "carve" : "gather");
     if (!mod_enabled(carve ? Mod::InstantCarve : Mod::InstantGathering)) return;
     if (roll != 1 || (item & 0xFFFF) == 0) return;  // 2: that was the last
     if (ppc::ld16(base, pad + 0x9C0) == 0x10) return;                                     // the game's own special item
