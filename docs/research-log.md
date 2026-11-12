@@ -1098,3 +1098,14 @@ now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto
   the "To House" prompt sit in the middle 16:9, speech bubbles stay over off-centre NPCs; 1920x1080 unchanged; fixed
   16:9 on 2560x1080 gives the old pillarbox; with bloom off the prompt is still squeezed (the colour filter samples
   the scene). Not seen yet: a hunt's HUD (HP / stamina gauges, minimap, item bar), cutscenes, the map screen.
+## 2026-11-12 — Issue #7: 30 FPS outside the hub (stuck cutscene frame pacing)
+- `sMain` (0x103CEA44) +0x76 fixed step is set only by `sEvDemo` code (`FUN_0294C968` called from 0x0210E6B8 and
+  0x0210F7D0, with r4 1 to start and 0 to end). An area change during an event cutscene wipes sEvDemo's state, so its
+  end never runs and the game stays at the cutscene's fixed 30 FPS until restarted (the same thing the online
+  arrival flyover hit, docs/online.md "The arrival flyover").
+- Reproduced headless with `MH3U_TEST_STUCK_PACE=6000 MH3U_NO_PACE_WATCHDOG=1`: 121 FPS → a locked 30 FPS, as in
+  the report (31 FPS, frame time 32 ms, 99th percentile 31).
+- Fix: `pacing_watchdog` (src/game/net_backend.cpp, runs every swap, online or not) ends the fixed step after 90
+  swaps with no cutscene in states 2-4. In the same test the FPS was back to 120 within a second.
+- Not seen here: the +30 °C. On Linux the stuck state uses less CPU. Likely Windows only: the fixed-step loop
+  sleeps in short steps through OSSleepTicks (std::this_thread::sleep_for), which on Windows can spin. Not confirmed.

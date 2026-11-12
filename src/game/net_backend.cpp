@@ -1402,7 +1402,45 @@ void session_tick(ppc::Context& ctx, uint8_t* base) {
     }
 }
 
+// The cutscene frame pacing left on with no cutscene (issue #7: 30 FPS outside the hub until a restart): once the pacer has been in fixed
+// step for kStuckPaceFrames swaps with no event cutscene playing, it is ended as the cutscene's own end would. Online or not.
+// MH3U_TEST_STUCK_PACE=<swap>: at that swap the pacing is put on with no cutscene, as an area change in the middle of one leaves it
+// (tests; MH3U_NO_PACE_WATCHDOG=1 keeps it stuck). Seen headless 2026-11-12: stuck 121 -> 30 FPS, with the watchdog back to 120 within 1 s.
+constexpr uint32_t kStuckPaceFrames = 90;
+
+void pacing_watchdog(ppc::Context& ctx, uint8_t* base) {
+    static const uint32_t test_at = [] {
+        const char* v = std::getenv("MH3U_TEST_STUCK_PACE");
+        return v ? static_cast<uint32_t>(std::strtoul(v, nullptr, 10)) : 0u;
+    }();
+    static uint32_t swaps = 0, stuck = 0;
+    ++swaps;
+    const uint32_t main = ppc::ld32(base, kMain);
+    if (!main) return;
+    if (test_at && swaps == test_at) {
+        const ppc::Context saved = ctx;
+        ctx.r[3] = main;
+        ctx.r[4] = 1;
+        sub_0294C968(ctx, base);
+        ppc::stf32(base, main + 0x4C, 30.0f);
+        ppc::stf32(base, main + 0x88, 2.0f);
+        const uint64_t r1 = ctx.r[1];
+        ctx = saved;
+        ctx.r[1] = r1;
+        std::printf("test: cutscene frame pacing on with no cutscene (MH3U_TEST_STUCK_PACE)\n");
+    }
+    static const bool off = std::getenv("MH3U_NO_PACE_WATCHDOG") != nullptr;  // tests: see the stuck pacing
+    if (off || !ppc::ld8(base, main + 0x76) || cutscene_playing(base)) {
+        stuck = 0;
+        return;
+    }
+    if (++stuck < kStuckPaceFrames) return;
+    stuck = 0;
+    end_stuck_cutscene(ctx, base);
+}
+
 PPC_FUNC(swap_with_session) {
+    pacing_watchdog(ctx, base);
     session_tick(ctx, base);
     g_swap(ctx, base);
 }
