@@ -130,6 +130,10 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "monster_hp_scaling") s.monster_hp_scaling = on;
         else if (k == "online_lan") s.online_lan = on;
         else if (k == "online_host") s.online_host = v;
+        else if (k == "online_server") s.online_server = v;
+        else if (k == "online_pid") s.online_pid = static_cast<uint32_t>(std::strtoul(v.c_str(), nullptr, 10));
+        else if (k == "online_password") s.online_password = v;
+        else if (k == "online_name") s.online_name = v;
     }
     return s;
 }
@@ -159,7 +163,11 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "online_host=" << s.online_host << '\n'
       << "look=" << s.look << '\n'
       << "fps_limit=" << (s.fps_limit < 0 ? std::string("unlimited") : std::to_string(s.fps_limit)) << '\n'
-      << "vsync=" << (s.vsync ? 1 : 0) << '\n';
+      << "vsync=" << (s.vsync ? 1 : 0) << '\n'
+      << "online_server=" << s.online_server << '\n'
+      << "online_pid=" << s.online_pid << '\n'
+      << "online_password=" << s.online_password << '\n'
+      << "online_name=" << s.online_name << '\n';
     return static_cast<bool>(f);
 }
 
