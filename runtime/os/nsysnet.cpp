@@ -74,6 +74,7 @@ std::mutex g_lock;
 VirtualSocket* g_sockets[kSocketLimit] = {};
 bool g_lib_ready = false;
 bool g_log = false;
+std::string g_nat_check_host;  // where the game's NAT check (nncs*.app.nintendowifi.net) goes instead
 thread_local int t_last_error = kErrSuccess;
 
 VirtualSocket* find(int handle) {
@@ -396,10 +397,15 @@ void sock_getsockname(ppc::Context& c, uint8_t* b) {
 // resolves only its server names, a few times).
 void sock_gethostbyname(ppc::Context& c, uint8_t* b) {
     const std::string name = guest_cstr(arg(c, 0));
+    // MH3U finds its public address by asking nncs1/nncs2.app.nintendowifi.net; the online server answers that
+    // instead, so the address is the one other players reach (mh3u-revival's Cemu fork, commit 3163f35:
+    // https://github.com/Matt-Wood-23/Cemu/tree/mh3u-revival, src/Cafe/OS/libs/nsysnet/nsysnet.cpp)
+    const bool nat_check = name.rfind("nncs", 0) == 0 && name.find("nintendo") != std::string::npos;
+    const std::string lookup = nat_check && !g_nat_check_host.empty() ? g_nat_check_host : name;
     addrinfo hints{};
     hints.ai_family = AF_INET;
     addrinfo* res = nullptr;
-    if (getaddrinfo(name.c_str(), nullptr, &hints, &res) != 0 || !res) {
+    if (getaddrinfo(lookup.c_str(), nullptr, &hints, &res) != 0 || !res) {
         if (g_log) std::printf("nsysnet: gethostbyname %s -> not found\n", name.c_str());
         return ret(c, 0);
     }
@@ -444,8 +450,9 @@ void reg(const char* name, ppc::GuestFunction fn) { ppc::register_import((std::s
 
 }  // namespace
 
-void register_nsysnet(Runtime&, bool log) {
+void register_nsysnet(Runtime&, bool log, const std::string& nat_check_host) {
     g_log = log;
+    g_nat_check_host = nat_check_host;
     reg("socket_lib_init", [](ppc::Context& c, uint8_t*) {
 #ifdef _WIN32
         if (!g_lib_ready) {

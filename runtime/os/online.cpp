@@ -4,15 +4,20 @@
 // client then logs in to the server with online_pid and online_password.
 //
 // The token layout (ACTNexAuthenticationResult, 0x25C bytes) is Cemu's nexServiceToken_t
-// (src/Cafe/OS/libs/nn_act/nn_act.cpp, commit d4f7205). The server is PretendoNetwork/monster-hunter-3-ultimate, which
-// takes the password for a PID from its account service.
+// (src/Cafe/OS/libs/nn_act/nn_act.cpp, commit d4f7205). The approach (token straight to the server, friends logged in
+// without a friends server) is mh3u-revival's Cemu fork (https://github.com/Matt-Wood-23/Cemu/tree/mh3u-revival, commit
+// eef403b), made for its server https://github.com/Matt-Wood-23/mh3u-revival: online_server=<host>:1223,
+// online_password=mh3u_revival_pw, any PID. PretendoNetwork/monster-hunter-3-ultimate works the same way, with the
+// password its account service holds for the PID.
 #include "hle.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 
 #ifdef _WIN32
 #include <WinSock2.h>
@@ -63,14 +68,24 @@ bool resolve_server(const std::string& server) {
     return g_port != 0;
 }
 
-// a guest callback void(nn::Result, void* param), called before the async function returns
-void call_result_callback(ppc::Context& c, uint8_t* b, uint32_t fn, uint32_t param) {
+// A guest callback void(nn::Result, void* param), called a little later on a thread of its own, as the friends service
+// answers on the console (Cemu: ServiceCallAsyncRespond). The game marks the request pending only after the async call
+// returns, and its callback ignores an answer that comes before that. nn::Result is a class, so the game's compiler
+// passes it by reference: r3 points to the value.
+void call_result_callback_later(uint32_t fn, uint32_t param) {
     if (!fn) return;
-    const ppc::Context saved = c;
-    c.r[3] = kSuccess;
-    c.r[4] = param;
-    ppc::call_indirect(c, b, fn);
-    c = saved;
+    constexpr uint32_t kStackSize = 0x10000;
+    static const uint32_t result = rt().mem->alloc_hle(4, 4);
+    static const uint32_t stack = rt().mem->alloc_hle(kStackSize, 16);
+    std::thread([fn, param] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ppc::st32(gbase(), result, kSuccess);
+        ppc::Context c{};
+        c.r[1] = (stack + kStackSize - 0x20) & ~0xFu;
+        c.r[3] = result;
+        c.r[4] = param;
+        ppc::call_indirect(c, gbase(), fn);
+    }).detach();
 }
 
 void log_call(const char* what) {
@@ -133,10 +148,10 @@ void register_nn_fp() {
     reg("nn_fp", "IsInitialized__Q2_2nn2fpFv", [](ppc::Context& c, uint8_t*) { ret(c, 1); });
     reg("nn_fp", "HasLoggedIn__Q2_2nn2fpFv", [](ppc::Context& c, uint8_t*) { ret(c, g_fp_logged_in ? 1 : 0); });
     for (const char* n : {"LoginAsync__Q2_2nn2fpFPFQ2_2nn6ResultPv_vPv", "RegisterAccountAsync__Q2_2nn2fpFPFQ2_2nn6ResultPv_vPv"})
-        reg("nn_fp", n, [](ppc::Context& c, uint8_t* b) {
+        reg("nn_fp", n, [](ppc::Context& c, uint8_t*) {
             log_call("nn_fp login");
             g_fp_logged_in = true;
-            call_result_callback(c, b, arg(c, 0), arg(c, 1));
+            call_result_callback_later(arg(c, 0), arg(c, 1));
             ret(c, kSuccess);
         });
     reg("nn_fp", "GetMyPrincipalId__Q2_2nn2fpFv", [](ppc::Context& c, uint8_t*) { ret(c, g_cfg.pid); });
@@ -185,7 +200,7 @@ bool register_online(Runtime& r, const OnlineConfig& cfg) {
         return false;
     }
     if (g_cfg.name.empty()) g_cfg.name = "ChaCha";
-    register_nsysnet(r, g_cfg.log);
+    register_nsysnet(r, g_cfg.log, g_host_ip);
     register_nn_ac();
     register_nn_act();
     register_nn_fp();
