@@ -26,6 +26,30 @@ Talk to Neko: his Destination list has an Online section with Host a Hunt, Join 
 Small monsters are local to each copy by the game's own data (state +0x9C bit 8 unset): their positions differ, as designed.
 Testing trap: copies read any attached controller, in or out of focus. Headless tests need `SDL_GAMECONTROLLER_IGNORE_DEVICES`.
 
+## The game's own Network Mode through a NEX server
+
+Cha-Cha can log in to a self-hosted MH3U NEX server: [mh3u-revival](https://github.com/Matt-Wood-23/mh3u-revival)
+(the server Cemu and Wii U players use) or Pretendo's
+[monster-hunter-3-ultimate](https://github.com/PretendoNetwork/monster-hunter-3-ultimate). Set in `config.ini`:
+
+```
+online_server=<server IPv4 or host>:1223
+online_pid=<a number of your own, unique among the players; mh3u-revival uses 1073741824-1879048191>
+online_password=mh3u_revival_pw
+online_name=<your name>
+```
+
+With `online_server` set, the network backend above (Host a Hunt / Join a Hunt) is off, because both run through the
+game's Snow session; with it empty everything is as before. In the game, talk to Neko (the sailor Felyne at the bottom
+left of Moga Village) and choose **Network Mode**. `MH3U_LOG_NET=1` logs every socket call with the first bytes of each
+packet.
+
+What runs: `runtime/os/nsysnet.cpp` (real sockets, ported from Cemu) and `runtime/os/online.cpp` (nn_ac connected,
+nn_act hands the game the server and password as its NEX token, nn_fp logged in with an empty friend list, the game's
+NAT check `nncs*.app.nintendowifi.net` sent to the server). Tested on Linux against a local mh3u-revival server: Network
+Mode reaches Gathering Hall 1, Lobby 1, with the lobby menu. Not tested yet: two players in one room, hunts, Windows.
+
+
 ## What the game uses
 
 Facts from the imports and from strings in the v32 ELF:
