@@ -97,7 +97,8 @@ struct OnlineConfig {
     bool log = false;      // MH3U_LOG_NET: socket calls and packet bytes
 };
 bool register_online(Runtime& r, const OnlineConfig& cfg);
-void register_nsysnet(Runtime& r, bool log);  // real sockets (nsysnet.cpp), via register_online
+// real sockets (nsysnet.cpp), via register_online; the game's NAT check goes to nat_check_host
+void register_nsysnet(Runtime& r, bool log, const std::string& nat_check_host);
 void register_h264(Runtime& r);  // Media Foundation H.264 decoder
 
 }  // namespace mh3u::os
