@@ -44,6 +44,22 @@ void dmae_copy(ppc::Context& c, uint8_t* b) {
 
 }  // namespace
 
+void register_nn_ac_connected() {
+    reg("nn_ac", "Connect__Q2_2nn2acFv", [](ppc::Context& c, uint8_t*) { ret(c, 0); });
+    reg("nn_ac", "IsApplicationConnected__Q2_2nn2acFPb", [](ppc::Context& c, uint8_t* b) {
+        if (arg(c, 0)) b[arg(c, 0)] = 1;
+        ret(c, 0);
+    });
+    reg("nn_ac", "GetAssignedAddress__Q2_2nn2acFPUl", [](ppc::Context& c, uint8_t* b) {
+        if (arg(c, 0)) ppc::st32(b, arg(c, 0), 0x7F000001);
+        ret(c, 0);
+    });
+    reg("nn_ac", "GetLastErrorCode__Q2_2nn2acFPUi", [](ppc::Context& c, uint8_t* b) {
+        if (arg(c, 0)) ppc::st32(b, arg(c, 0), 0);
+        ret(c, 0);
+    });
+}
+
 void register_offline(Runtime&) {
     g_zero_ip = guest_string("0.0.0.0");
     g_curl_offline = guest_string("network unavailable (offline)");

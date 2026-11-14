@@ -61,6 +61,11 @@ struct Settings {
     // distance from the hunter in percent of the game's own (issue #17)
     bool modern_camera = false;
     int camera_distance = 100;
+    // Online play through a NEX server (runtime/os/online.cpp); empty online_server = offline
+    std::string online_server;
+    uint32_t online_pid = 0;
+    std::string online_password;
+    std::string online_name;
     bool operator==(const Settings&) const = default;
 };
 Settings load_settings(const AppPaths& p);
