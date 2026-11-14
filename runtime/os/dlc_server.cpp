@@ -278,20 +278,7 @@ void register_dlc_server(Runtime&, DlcResponder responder, bool log) {
     });
     for (const char* n : {"NSSLDestroyContext", "NSSLAddServerPKI", "NSSLAddServerPKIGroups"})
         reg("nsysnet", n, [](ppc::Context& c, uint8_t*) { ret(c, 0); });
-    // nn_ac: connected
-    reg("nn_ac", "Connect__Q2_2nn2acFv", [](ppc::Context& c, uint8_t*) { ret(c, 0); });
-    reg("nn_ac", "IsApplicationConnected__Q2_2nn2acFPb", [](ppc::Context& c, uint8_t* b) {
-        if (arg(c, 0)) b[arg(c, 0)] = 1;
-        ret(c, 0);
-    });
-    reg("nn_ac", "GetAssignedAddress__Q2_2nn2acFPUl", [](ppc::Context& c, uint8_t* b) {
-        if (arg(c, 0)) ppc::st32(b, arg(c, 0), 0x7F000001);
-        ret(c, 0);
-    });
-    reg("nn_ac", "GetLastErrorCode__Q2_2nn2acFPUi", [](ppc::Context& c, uint8_t* b) {
-        if (arg(c, 0)) ppc::st32(b, arg(c, 0), 0);
-        ret(c, 0);
-    });
+    register_nn_ac_connected();
     // nn_act: a network account, and a service token for the login
     reg("nn_act", "HasNfsAccount__Q2_2nn3actFv", [](ppc::Context& c, uint8_t*) { ret(c, 1); });
     reg("nn_act", "GetAccountId__Q2_2nn3actFPc", [](ppc::Context& c, uint8_t* b) {

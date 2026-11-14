@@ -1,5 +1,27 @@
 # Online play – findings and options
 
+## Playing online (option A, client side)
+
+Cha-Cha can log in to a self-hosted MH3U NEX server: [mh3u-revival](https://github.com/Matt-Wood-23/mh3u-revival)
+(the server Cemu and Wii U players use) or Pretendo's
+[monster-hunter-3-ultimate](https://github.com/PretendoNetwork/monster-hunter-3-ultimate). Set in `config.ini`:
+
+```
+online_server=<server IPv4 or host>:1223
+online_pid=<a number of your own, unique among the players; mh3u-revival uses 1073741824-1879048191>
+online_password=mh3u_revival_pw
+online_name=<your name>
+```
+
+With `online_server` empty the game stays offline as before. In the game, talk to Neko (the sailor Felyne at the bottom
+left of Moga Village) and choose **Network Mode**. `MH3U_LOG_NET=1` logs every socket call with the first bytes of each
+packet.
+
+What runs: `runtime/os/nsysnet.cpp` (real sockets, ported from Cemu) and `runtime/os/online.cpp` (nn_ac connected,
+nn_act hands the game the server and password as its NEX token, nn_fp logged in with an empty friend list, the game's
+NAT check `nncs*.app.nintendowifi.net` sent to the server). Tested on Linux against a local mh3u-revival server: Network
+Mode reaches Gathering Hall 1, Lobby 1, with the lobby menu. Not tested yet: two players in one room, hunts, Windows.
+
 Status: research (2026-10-28). Decision (user, 2026-10-28): **option B**, in Phase 6 (the last phase) of the
 roadmap. Nothing implemented yet. Our HLE stubs `nn_ac`, `nsysnet` and `nn_act` to
 "offline" (ROADMAP Phase 2), and the game plays fine without a network.
