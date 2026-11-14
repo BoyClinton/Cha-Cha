@@ -533,6 +533,16 @@ int main(int argc, char** argv) {
             }, true);
         }
     }
+    // Online play through a NEX server (config.ini online_*; runtime/os/online.cpp), over the offline stubs.
+    // MH3U_LOG_NET=1 logs socket calls and packet bytes.
+    {
+        os::OnlineConfig online{settings.online_server, settings.online_pid, settings.online_password, settings.online_name};
+        if (char* v = nullptr; _dupenv_s(&v, &frames_len, "MH3U_LOG_NET") == 0 && v) {
+            online.log = std::string(v) == "1";
+            std::free(v);
+        }
+        os::register_online(r, online);
+    }
     // hand-written game code (src/): replacements of recompiled functions listed in config/overrides.txt
     game::register_boot_prompts(settings.skip_boot_notices);
     game::register_filters(settings.bloom, settings.depth_of_field != "off");

@@ -136,6 +136,10 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "vsync") s.vsync = on;
         else if (k == "modern_camera") s.modern_camera = on;
         else if (k == "camera_distance") s.camera_distance = std::clamp(std::atoi(v.c_str()), 50, 300);
+        else if (k == "online_server") s.online_server = v;
+        else if (k == "online_pid") s.online_pid = static_cast<uint32_t>(std::strtoul(v.c_str(), nullptr, 10));
+        else if (k == "online_password") s.online_password = v;
+        else if (k == "online_name") s.online_name = v;
     }
     return s;
 }
@@ -164,7 +168,11 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "fps_limit=" << (s.fps_limit < 0 ? std::string("unlimited") : std::to_string(s.fps_limit)) << '\n'
       << "vsync=" << (s.vsync ? 1 : 0) << '\n'
       << "modern_camera=" << (s.modern_camera ? 1 : 0) << '\n'
-      << "camera_distance=" << s.camera_distance << '\n';
+      << "camera_distance=" << s.camera_distance << '\n'
+      << "online_server=" << s.online_server << '\n'
+      << "online_pid=" << s.online_pid << '\n'
+      << "online_password=" << s.online_password << '\n'
+      << "online_name=" << s.online_name << '\n';
     return static_cast<bool>(f);
 }
 
