@@ -87,6 +87,7 @@ void register_input(Runtime& r);
 void register_coreinit_dynload(Runtime& r);
 void register_applets(Runtime& r);
 void register_offline(Runtime& r);
+void register_nn_ac_connected();  // nn_ac reports a connected console (offline.cpp), for online play
 void register_coreinit_misc(Runtime& r);
 // Online play (online.cpp): config.ini online_* keys. Register last; false (offline) when online_server is empty.
 struct OnlineConfig {

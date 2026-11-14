@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -35,7 +36,6 @@ using socklen_t = int;
 #define WSAEWOULDBLOCK EWOULDBLOCK
 #define WSAEINPROGRESS EINPROGRESS
 #define WSAESHUTDOWN ESHUTDOWN
-#define WSAECONNABORTED ECONNABORTED
 #define WSAENOTCONN ENOTCONN
 #define GETLASTERR errno
 using SOCKET = int;
@@ -62,47 +62,63 @@ constexpr int kErrSuccess = 0x00, kErrWouldBlock = 0x06, kErrNotConn = 0x09, kEr
 // A guest handle is 1..kSocketLimit; select's fd_set is one big-endian u32 with bit n = handle n, so 31 at most.
 constexpr int kSocketLimit = 31;
 constexpr int kWaitSliceMs = 10;
+constexpr uint32_t kGuestSockaddrSize = 16;
+constexpr uint32_t kFailed = ~0u;  // -1
 
+// Host sockets are always non-blocking; a guest socket in blocking mode waits for them with select (wait_ready).
 struct VirtualSocket {
     SOCKET s = INVALID_SOCKET;
     int type = 0;
-    bool non_blocking = false;
+    bool non_blocking = false;  // the guest's mode
     bool shutdown_recv = false;
+    ~VirtualSocket() { closesocket(s); }
 };
 
 std::mutex g_lock;
-VirtualSocket* g_sockets[kSocketLimit] = {};
+// shared_ptr: a call on one guest thread keeps its socket alive while another thread closes the handle
+std::shared_ptr<VirtualSocket> g_sockets[kSocketLimit];
 bool g_lib_ready = false;
 bool g_log = false;
 std::string g_nat_check_host;  // where the game's NAT check (nncs*.app.nintendowifi.net) goes instead
 thread_local int t_last_error = kErrSuccess;
 
-VirtualSocket* find(int handle) {
+std::shared_ptr<VirtualSocket> find(int handle) {
     std::lock_guard lk(g_lock);
     return handle >= 1 && handle <= kSocketLimit ? g_sockets[handle - 1] : nullptr;
 }
 
-void set_nonblocking(SOCKET s, bool on) {
+bool make_nonblocking(SOCKET s) {
 #ifdef _WIN32
-    u_long mode = on ? 1 : 0;
-    ioctlsocket(s, FIONBIO, &mode);
+    u_long mode = 1;
+    return ioctlsocket(s, FIONBIO, &mode) == 0;
 #else
     const int flags = fcntl(s, F_GETFL);
-    fcntl(s, F_SETFL, on ? flags | O_NONBLOCK : flags & ~O_NONBLOCK);
+    return flags != -1 && fcntl(s, F_SETFL, flags | O_NONBLOCK) == 0;
 #endif
 }
 
-// Cemu's _translateError: 0 / >= 0 is success, else the host error becomes the Cafe OS one.
-int fail_from_host(int host_error, bool connecting = false) {
+// a failed call: socketlasterr reports error, the call returns -1
+void fail(ppc::Context& c, int error) {
+    t_last_error = error;
+    ret(c, kFailed);
+}
+
+// Cemu's _translateError: the host's error as the Cafe OS one
+int cafe_error(int host_error, bool connecting = false) {
     switch (host_error) {
-    case 0: t_last_error = kErrSuccess; break;
-    case WSAEWOULDBLOCK: t_last_error = connecting ? kErrInProgress : kErrWouldBlock; break;
-    case WSAEINPROGRESS: t_last_error = kErrInProgress; break;
-    case WSAESHUTDOWN: t_last_error = kErrShutdown; break;
-    case WSAENOTCONN: t_last_error = kErrNotConn; break;
-    default: t_last_error = kErrUnknown;
+    case WSAEWOULDBLOCK: return connecting ? kErrInProgress : kErrWouldBlock;
+    case WSAEINPROGRESS: return kErrInProgress;
+    case WSAESHUTDOWN: return kErrShutdown;
+    case WSAENOTCONN: return kErrNotConn;
+    default: return kErrUnknown;
     }
-    return -1;
+}
+
+void fail_from_host(ppc::Context& c, int host_error, bool connecting = false) { fail(c, cafe_error(host_error, connecting)); }
+
+void succeed(ppc::Context& c, uint32_t value) {
+    t_last_error = kErrSuccess;
+    ret(c, value);
 }
 
 // The guest sockaddr is the BSD one with a big-endian family; the port and address are network order in both.
@@ -117,11 +133,16 @@ void host_to_guest_addr(uint8_t* b, uint32_t a, const sockaddr& h) {
     std::memcpy(b + a + 2, h.sa_data, 14);
 }
 
+std::string ipv4_text(const void* network_order_addr) {
+    const auto* d = static_cast<const uint8_t*>(network_order_addr);
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%u.%u.%u.%u", d[0], d[1], d[2], d[3]);
+    return buf;
+}
+
 std::string addr_text(const sockaddr& h) {
     const auto* d = reinterpret_cast<const uint8_t*>(h.sa_data);
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%u.%u.%u.%u:%u", d[2], d[3], d[4], d[5], (d[0] << 8) | d[1]);
-    return buf;
+    return ipv4_text(d + 2) + ":" + std::to_string((d[0] << 8) | d[1]);
 }
 
 void log_bytes(const char* what, int handle, const uint8_t* p, int n, const sockaddr* peer) {
@@ -135,7 +156,8 @@ void log_bytes(const char* what, int handle, const uint8_t* p, int n, const sock
 // true: ready; false: the socket went away.
 bool wait_ready(int handle, SOCKET s, bool for_write) {
     for (;;) {
-        if (rt().exit_requested.load() || !find(handle) || find(handle)->s != s) return false;
+        const std::shared_ptr<VirtualSocket> current = find(handle);
+        if (rt().exit_requested.load() || !current || current->s != s) return false;
         fd_set set;
         FD_ZERO(&set);
         FD_SET(s, &set);
@@ -149,17 +171,17 @@ bool wait_ready(int handle, SOCKET s, bool for_write) {
 void sock_socket(ppc::Context& c, uint8_t*) {
     const int family = static_cast<int>(arg(c, 0)), type = static_cast<int>(arg(c, 1)),
               protocol = static_cast<int>(arg(c, 2));
-    if (!g_lib_ready) {
-        t_last_error = kErrNotInitialised;
-        return ret(c, ~0u);
-    }
+    if (!g_lib_ready) return fail(c, kErrNotInitialised);
     if (family != kAfInet || (type != kSockStream && type != kSockDgram) ||
-        (protocol != kIpprotoTcp && protocol != kIpprotoUdp && protocol != kIpprotoIp)) {
-        t_last_error = kErrAfNoSupport;
-        return ret(c, ~0u);
-    }
+        (protocol != kIpprotoTcp && protocol != kIpprotoUdp && protocol != kIpprotoIp))
+        return fail(c, kErrAfNoSupport);
     const SOCKET s = ::socket(AF_INET, type == kSockStream ? SOCK_STREAM : SOCK_DGRAM, protocol);
-    if (s == INVALID_SOCKET) return ret(c, static_cast<uint32_t>(fail_from_host(GETLASTERR)));
+    if (s == INVALID_SOCKET) return fail_from_host(c, GETLASTERR);
+    if (!make_nonblocking(s)) {
+        const int err = GETLASTERR;
+        closesocket(s);
+        return fail_from_host(c, err);
+    }
 #ifdef _WIN32
     if (type == kSockDgram) {  // no WSAECONNRESET on UDP after an ICMP port unreachable (Cemu)
         BOOL report = FALSE;
@@ -170,157 +192,139 @@ void sock_socket(ppc::Context& c, uint8_t*) {
     std::lock_guard lk(g_lock);
     for (int i = 0; i < kSocketLimit; ++i) {
         if (g_sockets[i]) continue;
-        g_sockets[i] = new VirtualSocket{s, type};
+        g_sockets[i] = std::make_shared<VirtualSocket>();
+        g_sockets[i]->s = s;
+        g_sockets[i]->type = type;
         if (g_log) std::printf("nsysnet: socket %d (%s)\n", i + 1, type == kSockStream ? "tcp" : "udp");
-        t_last_error = kErrSuccess;
-        return ret(c, static_cast<uint32_t>(i + 1));
+        return succeed(c, static_cast<uint32_t>(i + 1));
     }
     closesocket(s);
-    t_last_error = kErrInval;
-    ret(c, ~0u);
+    fail(c, kErrInval);
 }
 
 // int socketclose(int s)
 void sock_close(ppc::Context& c, uint8_t*) {
     const int handle = static_cast<int>(arg(c, 0));
     std::lock_guard lk(g_lock);
-    if (handle >= 1 && handle <= kSocketLimit && g_sockets[handle - 1]) {
-        closesocket(g_sockets[handle - 1]->s);
-        delete g_sockets[handle - 1];
-        g_sockets[handle - 1] = nullptr;
-    }
+    if (handle >= 1 && handle <= kSocketLimit) g_sockets[handle - 1].reset();  // closed when the last user lets go
     ret(c, 0);
 }
 
 // int shutdown(int s, int how): 0 receive, 1 send, 2 both
 void sock_shutdown(ppc::Context& c, uint8_t*) {
-    VirtualSocket* vs = find(static_cast<int>(arg(c, 0)));
+    const std::shared_ptr<VirtualSocket> vs = find(static_cast<int>(arg(c, 0)));
     const int how = static_cast<int>(arg(c, 1));
-    if (!vs) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
-    const int r = ::shutdown(vs->s, how);
+    if (!vs) return fail(c, kErrInval);
+    if (::shutdown(vs->s, how) != 0) return fail_from_host(c, GETLASTERR);
     if (how == 0 || how == 2) vs->shutdown_recv = true;
-    t_last_error = kErrSuccess;
-    ret(c, static_cast<uint32_t>(r));
+    succeed(c, 0);
 }
 
 // int setsockopt(int s, int level, int optname, const void* optval, int optlen)
 void sock_setsockopt(ppc::Context& c, uint8_t* b) {
-    VirtualSocket* vs = find(static_cast<int>(arg(c, 0)));
+    const std::shared_ptr<VirtualSocket> vs = find(static_cast<int>(arg(c, 0)));
     const int level = static_cast<int>(arg(c, 1)), name = static_cast<int>(arg(c, 2));
     const uint32_t optval = arg(c, 3), optlen = arg(c, 4);
-    if (!vs) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
+    if (!vs) return fail(c, kErrInval);
     const int value = optval && optlen == 4 ? static_cast<int>(ppc::ld32(b, optval)) : 0;
-    if (level == kSolSocket) {
-        if (name == kSoReuseAddr) setsockopt(vs->s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&value), 4);
-        else if (name == kSoBroadcast) setsockopt(vs->s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&value), 4);
-        else if (name == kSoRcvBuf) setsockopt(vs->s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&value), 4);
-        else if (name == kSoSndBuf) setsockopt(vs->s, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&value), 4);
-        else if (name == kSoNbio || name == kSoBio) vs->non_blocking = name == kSoNbio;  // the value is ignored
-        else if (name == kSoNonBlock) vs->non_blocking = value != 0;
-        else if (g_log) std::printf("nsysnet: setsockopt SOL_SOCKET 0x%x not handled\n", name);
-    } else if (level == kIpprotoTcp && name == kTcpNoDelay) {
-        setsockopt(vs->s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&value), 4);
-    } else if (g_log) {
-        std::printf("nsysnet: setsockopt level %d 0x%x not handled\n", level, name);
+    if (level == kSolSocket && (name == kSoNbio || name == kSoBio)) {
+        vs->non_blocking = name == kSoNbio;  // the value is ignored (Cemu)
+        return succeed(c, 0);
     }
-    t_last_error = kErrSuccess;
-    ret(c, 0);
+    if (level == kSolSocket && name == kSoNonBlock) {
+        vs->non_blocking = value != 0;
+        return succeed(c, 0);
+    }
+    // options passed on to the host socket (Cafe level/name -> host level/name)
+    struct HostOption {
+        int cafe_level, cafe_name, host_level, host_name;
+    };
+    static constexpr HostOption kHostOptions[] = {
+        {kSolSocket, kSoReuseAddr, SOL_SOCKET, SO_REUSEADDR}, {kSolSocket, kSoBroadcast, SOL_SOCKET, SO_BROADCAST},
+        {kSolSocket, kSoRcvBuf, SOL_SOCKET, SO_RCVBUF},       {kSolSocket, kSoSndBuf, SOL_SOCKET, SO_SNDBUF},
+        {kIpprotoTcp, kTcpNoDelay, IPPROTO_TCP, TCP_NODELAY},
+    };
+    for (const HostOption& o : kHostOptions) {
+        if (o.cafe_level != level || o.cafe_name != name) continue;
+        if (setsockopt(vs->s, o.host_level, o.host_name, reinterpret_cast<const char*>(&value), sizeof value) != 0)
+            return fail_from_host(c, GETLASTERR);
+        return succeed(c, 0);
+    }
+    // accepted without effect, as Cemu does (keep-alive, window scale, multicast, TTL...)
+    if (g_log) std::printf("nsysnet: setsockopt level %d 0x%x has no effect\n", level, name);
+    succeed(c, 0);
 }
 
 // int bind(int s, const sockaddr* addr, int len)
 void sock_bind(ppc::Context& c, uint8_t* b) {
-    VirtualSocket* vs = find(static_cast<int>(arg(c, 0)));
-    if (!vs || !arg(c, 1)) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
+    const std::shared_ptr<VirtualSocket> vs = find(static_cast<int>(arg(c, 0)));
+    if (!vs || !arg(c, 1)) return fail(c, kErrInval);
     const sockaddr h = guest_to_host_addr(b, arg(c, 1));
     const int r = ::bind(vs->s, &h, sizeof h);
     if (g_log) std::printf("nsysnet: bind %d %s -> %d\n", static_cast<int>(arg(c, 0)), addr_text(h).c_str(), r);
-    ret(c, static_cast<uint32_t>(r == 0 ? (t_last_error = kErrSuccess, 0) : fail_from_host(GETLASTERR)));
+    if (r != 0) return fail_from_host(c, GETLASTERR);
+    succeed(c, 0);
 }
 
 // int connect(int s, const sockaddr* addr, int len)
 void sock_connect(ppc::Context& c, uint8_t* b) {
     const int handle = static_cast<int>(arg(c, 0));
-    VirtualSocket* vs = find(handle);
-    if (!vs || !arg(c, 1)) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
+    const std::shared_ptr<VirtualSocket> vs = find(handle);
+    if (!vs || !arg(c, 1)) return fail(c, kErrInval);
     const sockaddr h = guest_to_host_addr(b, arg(c, 1));
     if (g_log) std::printf("nsysnet: connect %d %s\n", handle, addr_text(h).c_str());
-    set_nonblocking(vs->s, vs->non_blocking);
-    const int r = ::connect(vs->s, &h, sizeof h);
-    set_nonblocking(vs->s, false);
-    ret(c, static_cast<uint32_t>(r == 0 ? (t_last_error = kErrSuccess, 0) : fail_from_host(GETLASTERR, true)));
+    if (::connect(vs->s, &h, sizeof h) == 0) return succeed(c, 0);
+    const int err = GETLASTERR;
+    const bool in_progress = err == WSAEWOULDBLOCK || err == WSAEINPROGRESS;
+    if (vs->non_blocking || !in_progress) return fail_from_host(c, err, true);
+    // a blocking guest connect: wait until the host connect finishes, then take its outcome
+    if (!wait_ready(handle, vs->s, true)) return fail(c, kErrShutdown);
+    int connect_error = 0;
+    socklen_t len = sizeof connect_error;
+    if (getsockopt(vs->s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&connect_error), &len) != 0)
+        return fail_from_host(c, GETLASTERR);
+    if (connect_error != 0) return fail_from_host(c, connect_error, true);
+    succeed(c, 0);
 }
 
 // int send(int s, const void* msg, int len, int flags) / int sendto(..., const sockaddr* to, int tolen)
 void send_common(ppc::Context& c, uint8_t* b, bool to) {
     const int handle = static_cast<int>(arg(c, 0));
-    VirtualSocket* vs = find(handle);
-    if (!vs) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
+    const std::shared_ptr<VirtualSocket> vs = find(handle);
+    if (!vs) return fail(c, kErrInval);
     const auto* msg = reinterpret_cast<const char*>(b + arg(c, 1));
     const int len = static_cast<int>(arg(c, 2));
     const bool dont_wait = vs->non_blocking || (arg(c, 3) & kMsgDontWait);
     sockaddr peer{};
     if (to) peer = guest_to_host_addr(b, arg(c, 4));
-    if (!dont_wait && !wait_ready(handle, vs->s, true)) {
-        t_last_error = kErrShutdown;
-        return ret(c, ~0u);
-    }
-    set_nonblocking(vs->s, true);
+    if (!dont_wait && !wait_ready(handle, vs->s, true)) return fail(c, kErrShutdown);
     const int r = to ? ::sendto(vs->s, msg, len, 0, &peer, sizeof peer) : ::send(vs->s, msg, len, 0);
-    const int err = GETLASTERR;
-    set_nonblocking(vs->s, false);
+    if (r < 0) return fail_from_host(c, GETLASTERR);
     log_bytes(to ? "sendto" : "send", handle, reinterpret_cast<const uint8_t*>(msg), r, to ? &peer : nullptr);
-    ret(c, static_cast<uint32_t>(r >= 0 ? (t_last_error = kErrSuccess, r) : fail_from_host(err)));
+    succeed(c, static_cast<uint32_t>(r));
 }
 
 // int recv(int s, void* buf, int len, int flags) / int recvfrom(..., sockaddr* from, int* fromlen)
 void recv_common(ppc::Context& c, uint8_t* b, bool from) {
     const int handle = static_cast<int>(arg(c, 0));
-    VirtualSocket* vs = find(handle);
-    if (!vs) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
-    if (vs->shutdown_recv) {
-        t_last_error = kErrShutdown;
-        return ret(c, ~0u);
-    }
+    const std::shared_ptr<VirtualSocket> vs = find(handle);
+    if (!vs) return fail(c, kErrInval);
+    if (vs->shutdown_recv) return fail(c, kErrShutdown);
     auto* buf = reinterpret_cast<char*>(b + arg(c, 1));
     const int len = static_cast<int>(arg(c, 2)), flags = static_cast<int>(arg(c, 3));
     const bool dont_wait = vs->non_blocking || (flags & kMsgDontWait);
-    if (!dont_wait && !wait_ready(handle, vs->s, false)) {
-        t_last_error = kErrShutdown;
-        return ret(c, ~0u);
-    }
+    if (!dont_wait && !wait_ready(handle, vs->s, false)) return fail(c, kErrShutdown);
     sockaddr peer{};
     socklen_t peer_len = sizeof peer;
-    set_nonblocking(vs->s, true);
     const int host_flags = (flags & kMsgPeek) ? MSG_PEEK : 0;
     const int r = from ? ::recvfrom(vs->s, buf, len, host_flags, &peer, &peer_len) : ::recv(vs->s, buf, len, host_flags);
-    const int err = GETLASTERR;
-    set_nonblocking(vs->s, false);
-    if (r < 0) return ret(c, static_cast<uint32_t>(fail_from_host(err)));
+    if (r < 0) return fail_from_host(c, GETLASTERR);
     if (from && arg(c, 4) && arg(c, 5)) {
         host_to_guest_addr(b, arg(c, 4), peer);
-        ppc::st32(b, arg(c, 5), sizeof peer);
+        ppc::st32(b, arg(c, 5), kGuestSockaddrSize);
     }
     log_bytes(from ? "recvfrom" : "recv", handle, reinterpret_cast<const uint8_t*>(buf), r, from ? &peer : nullptr);
-    t_last_error = kErrSuccess;
-    ret(c, static_cast<uint32_t>(r));
+    succeed(c, static_cast<uint32_t>(r));
 }
 
 // fd_set masks <-> host fd_set (Cemu's _translateFDSet / _translateFDSetRev)
@@ -335,6 +339,10 @@ uint32_t fdset_to_host(uint8_t* b, uint32_t guest_set, fd_set& host, int& max_fd
         max_fd = std::max(max_fd, static_cast<int>(g_sockets[h - 1]->s));
     }
     return mask;
+}
+void clear_guest_sets(uint8_t* b, const uint32_t (&guest_sets)[3]) {
+    for (uint32_t s : guest_sets)
+        if (s) ppc::st32(b, s, 0);
 }
 void fdset_to_guest(uint8_t* b, uint32_t guest_set, const fd_set& host) {
     if (!guest_set) return;
@@ -361,36 +369,31 @@ void sock_select(ppc::Context& c, uint8_t* b) {
                                      sets[2] ? &host[2] : nullptr, &tv)
                           : (::select(0, nullptr, nullptr, nullptr, &tv), 0);
         if (r < 0) {
-            for (uint32_t s : sets) if (s) ppc::st32(b, s, 0);
-            return ret(c, static_cast<uint32_t>(fail_from_host(GETLASTERR)));
+            const int err = GETLASTERR;
+            clear_guest_sets(b, sets);
+            return fail_from_host(c, err);
         }
         if (r > 0) {
             for (int i = 0; i < 3; ++i) fdset_to_guest(b, sets[i], host[i]);
-            t_last_error = kErrSuccess;
-            return ret(c, static_cast<uint32_t>(r));
+            return succeed(c, static_cast<uint32_t>(r));
         }
         if ((wait_ms >= 0 && waited + slice >= wait_ms) || rt().exit_requested.load()) {
-            for (uint32_t s : sets) if (s) ppc::st32(b, s, 0);
-            t_last_error = kErrSuccess;
-            return ret(c, 0);
+            clear_guest_sets(b, sets);
+            return succeed(c, 0);
         }
     }
 }
 
 // int getsockname(int s, sockaddr* addr, int* len)
 void sock_getsockname(ppc::Context& c, uint8_t* b) {
-    VirtualSocket* vs = find(static_cast<int>(arg(c, 0)));
-    if (!vs || !arg(c, 1)) {
-        t_last_error = kErrInval;
-        return ret(c, ~0u);
-    }
+    const std::shared_ptr<VirtualSocket> vs = find(static_cast<int>(arg(c, 0)));
+    if (!vs || !arg(c, 1)) return fail(c, kErrInval);
     sockaddr h{};
     socklen_t len = sizeof h;
-    if (::getsockname(vs->s, &h, &len) != 0) return ret(c, static_cast<uint32_t>(fail_from_host(GETLASTERR)));
+    if (::getsockname(vs->s, &h, &len) != 0) return fail_from_host(c, GETLASTERR);
     host_to_guest_addr(b, arg(c, 1), h);
-    if (arg(c, 2)) ppc::st32(b, arg(c, 2), sizeof h);
-    t_last_error = kErrSuccess;
-    ret(c, 0);
+    if (arg(c, 2)) ppc::st32(b, arg(c, 2), kGuestSockaddrSize);
+    succeed(c, 0);
 }
 
 // hostent* gethostbyname(const char* name): one IPv4 address, in a new guest block per call as in Cemu (the game
@@ -422,7 +425,7 @@ void sock_gethostbyname(ppc::Context& c, uint8_t* b) {
     ppc::st32(b, block + 16, list);
     ppc::st32(b, list, addr);
     ppc::st32(b, list + 4, 0);
-    if (g_log) std::printf("nsysnet: gethostbyname %s -> %s\n", name.c_str(), inet_ntoa(in->sin_addr));
+    if (g_log) std::printf("nsysnet: gethostbyname %s -> %s\n", name.c_str(), ipv4_text(&in->sin_addr).c_str());
     freeaddrinfo(res);
     ret(c, block);
 }
@@ -432,7 +435,7 @@ void sock_inet_pton(ppc::Context& c, uint8_t* b) {
     in_addr a{};
     if (static_cast<int>(arg(c, 0)) != kAfInet || inet_pton(AF_INET, guest_cstr(arg(c, 1)).c_str(), &a) != 1) {
         t_last_error = kErrAfNoSupport;
-        return ret(c, 0);
+        return ret(c, 0);  // 0: not an address (not -1)
     }
     std::memcpy(b + arg(c, 2), &a, 4);
     ret(c, 1);
@@ -440,9 +443,10 @@ void sock_inet_pton(ppc::Context& c, uint8_t* b) {
 
 // char* inet_ntoa(in_addr): the struct arrives by reference (Cemu); the text is a static buffer, as on the console
 void sock_inet_ntoa(ppc::Context& c, uint8_t* b) {
-    static uint32_t text = rt().mem->alloc_hle(16, 4);
-    const uint8_t* a = b + arg(c, 0);
-    std::snprintf(reinterpret_cast<char*>(b + text), 16, "%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
+    constexpr uint32_t kTextSize = 16;
+    static const uint32_t text = rt().mem->alloc_hle(kTextSize, 4);
+    const std::string dotted = ipv4_text(b + arg(c, 0));
+    std::memcpy(b + text, dotted.c_str(), dotted.size() + 1);
     ret(c, text);
 }
 
@@ -457,7 +461,10 @@ void register_nsysnet(Runtime&, bool log, const std::string& nat_check_host) {
 #ifdef _WIN32
         if (!g_lib_ready) {
             WSADATA wsa;
-            WSAStartup(MAKEWORD(2, 2), &wsa);
+            if (const int err = WSAStartup(MAKEWORD(2, 2), &wsa); err != 0) {
+                std::printf("nsysnet: WSAStartup failed (%d)\n", err);
+                return ret(c, kFailed);
+            }
         }
 #endif
         g_lib_ready = true;
