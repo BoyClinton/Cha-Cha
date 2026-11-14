@@ -89,6 +89,7 @@ void register_input(Runtime& r);
 void register_coreinit_dynload(Runtime& r);
 void register_applets(Runtime& r);
 void register_offline(Runtime& r);
+void register_nn_ac_connected();  // nn_ac reports a connected console (offline.cpp), for the DLC server and online play
 // The DLC server, local (dlc_server.cpp): curl's easy interface answered by responder, nn_ac / nn_act online.
 // Register after register_offline / register_nn_act (it replaces some of their imports).
 struct DlcResponse {
