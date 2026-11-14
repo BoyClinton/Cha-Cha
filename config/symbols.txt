@@ -6929,6 +6929,11 @@
 0x025BEE90 uEnemy::vf81 func # introduces slot 81 gen:vf
 0x025BEECC uEnemy::MyDTI::newInstance func # gen:dti
 0x025BEED4 uEnemy::MyDTI::~MyDTI func # overrides MtDTI slot 0 gen:vf
+0x025C6EE0 uEnemy::addHp? func # HP += r4, clamped to 0..r5 (and max HP * state+0x8C8); research-log 2026-11-02
+0x025C6F74 uEnemy::addHpCapped? func # addHp with cap = max HP (state+0x8BC); damage passes a negative delta
+0x025C7030 uEnemy::setHp? func # state+0x8B8 = r4 clamped to 0..max HP
+0x025C7A38 uEnemy::clearDamage? func # zeroes the per-part damage int16[8] at state+0x8EC and related counters
+0x025CB37C uEnemy::damageCheck? func # per frame: sums per-part damage state+0x8EC[0..7] and takes it off the HP; mod hook point
 0x025D0AE4 vfshared_2_025D0AE4 func # shared by 2 vtable slots gen:vf
 0x025D0AEC vfshared_2_025D0AEC func # shared by 2 vtable slots gen:vf
 0x025D0D50 uModel::Constraint::getDTI func # overrides MtObject slot 4 gen:vf

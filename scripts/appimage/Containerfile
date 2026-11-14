@@ -1,0 +1,14 @@
+# Build environment for the portable AppImage: Ubuntu 22.04 (glibc 2.35), so the AppImage runs on most distributions.
+# Used by scripts/build-appimage-container.sh (podman or docker).
+FROM docker.io/library/ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      clang-15 lld-15 ninja-build git python3 python3-pip ca-certificates curl file pkg-config \
+      libvulkan-dev libavcodec-dev libavutil-dev \
+      libpulse-dev libasound2-dev libpipewire-0.3-dev libjack-jackd2-dev libsndio-dev \
+      libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+      libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
+      libdbus-1-dev libudev-dev libdecor-0-dev libibus-1.0-dev libdrm-dev libgbm-dev \
+      fuse libfuse2 desktop-file-utils \
+ && pip3 install --no-cache-dir cmake==3.31.6 \
+ && rm -rf /var/lib/apt/lists/*

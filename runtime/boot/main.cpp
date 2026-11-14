@@ -15,6 +15,10 @@
 #include "boot_prompts.h"
 #include "filters.h"
 #include "camera_speed.h"
+#include "movie_skip.h"
+#include "charm_probe.h"
+#include "net_backend.h"
+#include "net_probe.h"
 #include "modern_camera.h"
 #include "delivery.h"
 #include "quest_markers.h"
@@ -36,6 +40,8 @@
 #include "mods.h"
 #include "menu_mouse.h"
 #include "text_trace.h"
+#include "widescreen.h"
+#include "setup.h"
 #include "loading_screen.h"
 #include "shader_prep.h"
 #include "game_image.h"
@@ -46,16 +52,21 @@
 #include "ax.h"
 #include "gx2.h"
 #include "overlay_fs.h"
+#include "plugins.h"
 #include "presenter.h"
 #include "profiler.h"
 #include "read_watch.h"
 
 #include <SDL3/SDL.h>
+#ifndef _WIN32
+#include <unistd.h>  // isatty
+#endif
 #ifdef __ANDROID__
 #include <SDL3/SDL_main.h>  // main() becomes SDL_main, called by SDL's Java activity (android/)
 #endif
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -170,7 +181,7 @@ bool map_sections(core::GuestMemory& mem, const recomp::Image& img) {
 }
 
 struct Args {
-    bool headless = false, install = false, console = false, play = false;
+    bool headless = false, install = false, console = false, play = false, menu = false;  // --menu: the title menu first
     stdfs::path data_dir;
     std::vector<stdfs::path> games;  // --game / --install / bare paths
 };
@@ -184,24 +195,40 @@ void setup_output(const boot::AppPaths& paths, bool new_console) {
     const std::string log = (paths.data / "log.txt").string();
     std::freopen(log.c_str(), "w", stdout);
     std::freopen(log.c_str(), "a", stderr);
-#elif !defined(_WIN32)  // started from a terminal or a launcher: stdout / stderr are already where they should go
-    (void)paths;
+#elif !defined(_WIN32)
+    // started from a terminal: stdout / stderr stay there; a folder install started otherwise (a file manager, a
+    // launcher) writes log.txt next to the program
     (void)new_console;
+    if (paths.folder_install && !isatty(1)) {
+        const std::string log = (paths.data / "log.txt").string();
+        if (std::freopen(log.c_str(), "w", stdout)) std::freopen(log.c_str(), "a", stderr);
+    }
 #else
+    // A CRT call with a bad argument (such as a write to a stream that has no file) returns an error instead of ending
+    // the program: losing a log line must never close the game.
+    _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t) {});
     const auto usable = [](DWORD which) {
         const HANDLE h = GetStdHandle(which);
         return h && h != INVALID_HANDLE_VALUE && GetFileType(h) != FILE_TYPE_UNKNOWN;
     };
+    // inherited pipe or file: the CRT already writes there. A launcher may hand over one of the two only.
+    const bool out_ok = usable(STD_OUTPUT_HANDLE), err_ok = usable(STD_ERROR_HANDLE);
     FILE* f = nullptr;
-    if (usable(STD_OUTPUT_HANDLE)) {
-        // inherited pipe or file: the CRT already writes there
-    } else if (new_console ? AllocConsole() : AttachConsole(ATTACH_PARENT_PROCESS)) {
+    if (out_ok && err_ok) {
+    } else if (!out_ok && !err_ok && (new_console ? AllocConsole() : AttachConsole(ATTACH_PARENT_PROCESS))) {
         freopen_s(&f, "CONOUT$", "w", stdout);
         freopen_s(&f, "CONOUT$", "w", stderr);
     } else {
+        // log.txt, opened with sharing by _wfreopen. _wfreopen_s denies others write access, so stderr's open of the
+        // file stdout already held failed and left stderr closed; the first fprintf(stderr) then ended the program
+        // (issue #2: every start without a console or inherited output, as launchers do). NUL if the file can't open.
         const std::wstring log = (paths.data / "log.txt").wstring();
-        _wfreopen_s(&f, log.c_str(), L"w", stdout);
-        _wfreopen_s(&f, log.c_str(), L"a", stderr);
+#pragma warning(push)
+#pragma warning(disable : 4996)  // _wfopen / _wfreopen: the _s forms can't share the file
+        if (FILE* t = _wfopen(log.c_str(), L"w")) std::fclose(t);
+        if (!out_ok && !_wfreopen(log.c_str(), L"a", stdout)) _wfreopen(L"NUL", L"w", stdout);
+        if (!err_ok && !_wfreopen(log.c_str(), L"a", stderr)) _wfreopen(L"NUL", L"w", stderr);
+#pragma warning(pop)
     }
 #endif
     std::setvbuf(stdout, nullptr, _IONBF, 0);
@@ -219,6 +246,7 @@ Args parse_args(int argc, char** argv) {
         if (s == "--headless") a.headless = true;
         else if (s == "--console") a.console = true;
         else if (s == "--play") a.play = true;
+        else if (s == "--menu") a.menu = true;
         else if (s == "--install") a.install = true;
         else if (s == "--data-dir" && i + 1 < argc) a.data_dir = path(argv[++i]);
         else if (s == "--game" && i + 1 < argc) a.games.push_back(path(argv[++i]));
@@ -236,6 +264,7 @@ Args parse_args(int, char**) {
         if (s == L"--headless") a.headless = true;
         else if (s == L"--console") a.console = true;
         else if (s == L"--play") a.play = true;
+        else if (s == L"--menu") a.menu = true;
         else if (s == L"--install") a.install = true;
         else if (s == L"--data-dir" && i + 1 < argc) a.data_dir = argv[++i];
         else if (s == L"--game" && i + 1 < argc) a.games.emplace_back(argv[++i]);
@@ -279,6 +308,8 @@ void settings_env(const boot::Settings& s, bool headless) {
 }
 
 // Window events: host input, and the binding screens while they wait for a key / button.
+// The fork's overlay (F1 / F2), while it exists.
+boot::Launcher* g_launcher = nullptr;
 std::unique_ptr<boot::GraphicsMenu> g_graphics;  // Game Options > Graphics Settings
 boot::TextureDump g_texture_dump;                 // Game Options > Texture Dump
 std::unique_ptr<boot::ControlsMenu> g_controls;   // Game Options > Controller Settings (our controller remapping)
@@ -306,13 +337,54 @@ struct Timed {
     // the time that has come since the last call, or a negative value
     double due(double secs) { return next < at.size() && secs >= at[next] ? at[next++] : -1.0; }
 };
-Timed g_shots("MH3U_SHOT");
+Timed g_shots("MH3U_SHOT"), g_settings_at("MH3U_SETTINGS_AT");  // MH3U_SETTINGS_AT: the fork's overlay opened / closed then
 const auto g_process_start = std::chrono::steady_clock::now();
+// MH3U_MOUSE_AT="s:x,y:down|move|up;..." hands host input left-button presses / moves / releases at x, y (window
+// units) at those seconds after start, as if the mouse did them - for checking the mouse on the GamePad image headless.
+struct MouseAt {
+    double at;
+    float x, y;
+    int kind;  // 0 down, 1 move, 2 up
+};
+std::vector<MouseAt> g_mouse_at = [] {
+    std::vector<MouseAt> v;
+    char* e = nullptr;
+    size_t n = 0;
+    if (_dupenv_s(&e, &n, "MH3U_MOUSE_AT") == 0 && e)
+        for (char* q = e; *q;) {
+            MouseAt m{};
+            char kind[8] = {};
+            if (std::sscanf(q, "%lf:%f,%f:%7[a-z]", &m.at, &m.x, &m.y, kind) == 4) {
+                m.kind = std::string(kind) == "down" ? 0 : std::string(kind) == "move" ? 1 : 2;
+                v.push_back(m);
+            }
+            char* semi = std::strchr(q, ';');
+            q = semi ? semi + 1 : q + std::strlen(q);
+        }
+    std::free(e);
+    return v;
+}();
+size_t g_mouse_next = 0;
 void timed_actions(gfx::Presenter& p, const boot::AppPaths& paths) {
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_process_start).count();
     if (const double s = g_shots.due(secs); s >= 0) {
         const stdfs::path dir = paths.repo.empty() ? paths.data : paths.repo / "build";
         p.capture((dir / ("shot_" + std::to_string(static_cast<int>(s)) + ".bmp")).string());
+    }
+    if (g_settings_at.due(secs) >= 0 && g_launcher) g_launcher->toggle_settings();
+    for (; g_mouse_next < g_mouse_at.size() && secs >= g_mouse_at[g_mouse_next].at; ++g_mouse_next) {
+        const MouseAt& m = g_mouse_at[g_mouse_next];
+        SDL_Event ev{};
+        if (m.kind == 1) {
+            ev.type = SDL_EVENT_MOUSE_MOTION;
+            ev.motion.x = m.x, ev.motion.y = m.y;
+        } else {
+            ev.type = m.kind == 0 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.down = m.kind == 0;
+            ev.button.x = m.x, ev.button.y = m.y;
+        }
+        input::handle_event(&ev);
     }
 }
 // MH3U_DUMP_KEY=1: F9 dumps a burst of 6 frames, 4 apart (build/frame_<n>.bmp and _draws.txt, as MH3U_DUMP_FRAME),
@@ -341,6 +413,21 @@ void on_event(const void* e) {
         const SDL_Event& ev = *static_cast<const SDL_Event*>(e);
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) gfx::dump_frames(g_dump_key.count, g_dump_key.step);
     }
+    if (!g_launcher) return;
+    // the fork's settings over the game: F1, Select + Options on a controller, or its touchpad click (PlayStation),
+    // Home / guide or misc (mic, Share, Capture) button - none of those is bound to a game button
+    const SDL_Event& ev = *static_cast<const SDL_Event*>(e);
+    if ((ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) ||
+        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && input::is_settings_button(ev.gbutton.button)) ||
+        (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && input::take_settings_chord())) {  // or Select + Options
+        g_launcher->toggle_settings();
+        return;
+    }
+    if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F2) {
+        g_launcher->toggle_mods();
+        return;
+    }
+    g_launcher->handle_event(e);
 }
 
 }  // namespace
@@ -392,6 +479,7 @@ int main(int argc, char** argv) {
     const bool headless = args.headless;
     gfx::Presenter presenter;
     std::unique_ptr<boot::LoadingScreen> loading;
+    std::unique_ptr<boot::Launcher> launcher;  // the fork's overlay over the game (runtime/boot/setup.cpp)
     const stdfs::path shader_dir = paths.cache() / "shaders";
     if (headless || args.install) {
         if (!game) {
@@ -420,6 +508,7 @@ int main(int argc, char** argv) {
         input::set_window(presenter.window_handle());
         presenter.set_display_mode(settings.display_mode == "fullscreen" ? 2 : settings.display_mode == "borderless" ? 1 : 0);
         presenter.set_sharp_scaling(settings.sharp_scaling);
+
         presenter.set_event_hook(&on_event);
         loading = std::make_unique<boot::LoadingScreen>(presenter);
         boot::ShaderPrep prep(*game, shader_dir);
@@ -435,6 +524,15 @@ int main(int argc, char** argv) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Cha-Cha", text.c_str(), static_cast<SDL_Window*>(presenter.window_handle()));
             return 1;
         }
+        // the fork's overlay: F1 / Select + Options settings, F2 mods, toasts, the mods' HUD. The game and its shaders
+        // are ready, so it hands the game back at once; it shows itself only when asked (or with --menu).
+        launcher = std::make_unique<boot::Launcher>(paths, presenter, sources, std::move(game), err, settings, args.menu);
+        g_launcher = launcher.get();
+        while (!launcher->ready_to_boot()) {
+            if (!presenter.pump_events() || !launcher->frame({})) return 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        game = launcher->take_game();
     }
     std::printf("game: base %s, update %s (v%u)\n", game->base.where.c_str(),
                 game->update.tree ? game->update.where.c_str() : "merged", game->update.version);
@@ -484,6 +582,13 @@ int main(int argc, char** argv) {
     os::register_nn_act(r);
     // files: /vol/content and /vol/code = update over base from the user's dump, /vol/save = <data>/save
     fs::OverlayFs vfs = game->make_fs(paths.saves());
+    {  // mods: each enabled mod's content/ folder over the game's files (<data>/mods, docs/modding.md)
+        std::vector<std::shared_ptr<fs::Tree>> layers;
+        plugins::ensure_scanned(paths.data);
+        for (const plugins::Mod& m : plugins::mods())
+            if (m.enabled && m.has_content) layers.push_back(fs::host_tree(m.dir / "content"));
+        vfs.prepend("/vol/content", std::move(layers));
+    }
     r.vfs = &vfs;
     os::register_coreinit_fs(r);
     os::register_nn_save(r);
@@ -538,11 +643,15 @@ int main(int argc, char** argv) {
     game::register_filters(settings.bloom, settings.depth_of_field != "off");
     game::register_frame_limit(!headless);  // windowed runs pace frames themselves (FRAME RATE LIMIT)
     game::register_camera_speed();  // camera turns and eases by the frame time, not per frame
+    game::register_widescreen();    // 21:9 / 32:9: the camera's aspect and name tags (the renderer widens the picture)
+    game::set_aspect_mode(game::aspect_mode_from(settings.aspect_ratio.c_str()));
+    game::set_camera_speed(input::control_options().camera_speed);  // Settings -> Input -> Camera speed
     game::set_modern_camera(settings.modern_camera);                                   // CFG > Camera Settings
     game::set_camera_distance(static_cast<float>(settings.camera_distance) / 100.0f);  // (issue #17)
     game::set_modern_camera_mouse({&input::take_look, &input::set_direct_look});  // the Modern Camera mod's mouse
     game::register_windpress();     // the windpress push by the frame time, not per frame
     game::register_grab_escape();   // each wiggle out of a grab counts as on the console
+    game::register_movie_skip([] { return input::take_pressed(input::kPlus); });  // + skips a cutscene movie
     // MH3U_PLAY_LOG: per-frame hunter / marker log (frame-rate bugs); MH3U_PLAY_WATCH=1 adds who writes the position
     std::function<void(uint32_t)> play_watch;
     if (char* w = nullptr; _dupenv_s(&w, &frames_len, "MH3U_PLAY_WATCH") == 0 && w) {
@@ -567,7 +676,9 @@ int main(int argc, char** argv) {
     game::register_carving([] { input::repeat_held(input::kA, 3000); });  // hold to gather: A repeats while held
     game::register_auto_delivery();  // Auto Delivery: item goals handed in from the pouch (after the pad update)
     game::register_quest_markers();  // Key Quest Markers (MH3U_QUEST_PROBE=1: the quest list's GUI, for finding where to draw)
-    game::register_item_sets(paths.data / "save" / "80000001", [](const std::string&) {});
+    game::register_item_sets(paths.data / "save" / "80000001", [](const std::string& msg) {
+        if (g_launcher) g_launcher->post_toast(msg);  // shown over the game
+    });
     game::register_soft_keyboard({[](std::u16string& text, size_t& max) {  // the on-screen keyboard (game GUI)
                                       const input::TextEntry t = input::text_state();
                                       if (!t.active || t.done || t.cancelled) return false;
@@ -576,8 +687,37 @@ int main(int argc, char** argv) {
                                       return true;
                                   },
                                   &input::set_text, &input::finish_text, &input::set_soft_keyboard, &input::last_buttons});
-    game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap});  // menus: mouse = pointer
+    game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap, &input::both_controllers});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
+    // Online play through a NEX server (config.ini online_server, runtime/os/online.cpp) uses the game's own Network
+    // Mode, which runs through the Snow session that the network backend replaces: one or the other.
+    const bool nex_online = !settings.online_server.empty();
+    {  // the network backend, and MH3U_NET_PROBE, which logs its calls (docs/online.md)
+        std::vector<std::string> fp_imports;
+        for (const auto& im : img->imports)
+            if (!im.data && im.rpl.rfind("nn_fp", 0) == 0) fp_imports.push_back(im.name);
+        if (!nex_online) {
+            game::register_net_backend(mem.base(), fp_imports);
+            game::net_configure(settings.online_lan, settings.online_host);
+        }
+        game::register_net_probe(mem.base(), fp_imports);
+    }
+    if (nex_online) {  // MH3U_LOG_NET=1 logs socket calls and packet bytes
+        os::OnlineConfig online{settings.online_server, settings.online_pid, settings.online_password, settings.online_name};
+        if (char* v = nullptr; _dupenv_s(&v, &frames_len, "MH3U_LOG_NET") == 0 && v) {
+            online.log = std::string(v) == "1";
+            std::free(v);
+        }
+        os::register_online(r, online);
+    }
+    // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
+    game::net_set_toast([](const std::string& msg) {
+        if (g_launcher) g_launcher->post_toast(msg);
+    });
+    plugins::set_toast([](const std::string& msg) {
+        if (g_launcher) g_launcher->post_toast(msg);
+    });
+    plugins::load(paths.data, mem.base(), game->rpx_sha1);
     os::register_coreinit_misc(r);
     os::register_h264(r);
     // Static initialisers exported by system libraries (e.g. nn_uds.__sti___11_uds_Api_cpp_...) are called from the
@@ -630,7 +770,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Vulkan init failed (%s): running without a GPU\n", presenter.error().c_str());
         input::init(paths.data, false);
     }
+    if (headless) game::set_camera_speed(input::control_options().camera_speed);
     gfx::register_gx2(r);
+    if (!nex_online) game::register_net_backend_tick();
+    game::register_net_probe_jump();
+    game::register_charm_probe();  // MH3U_CHARM_PROBE: talismans per charm table (research)
     audio::register_ax(r, !headless);
 
     std::atomic<bool> guest_done{false}, pipelines_ready{false};
@@ -668,8 +812,20 @@ int main(int argc, char** argv) {
     auto fps_since = start;
     uint32_t fps_frames = 0;
     const bool profiling = profiler::running();  // also log the FPS every 5 s
+    float widescreen = 1.0f;
     while (!guest_done) {
         bool closed = !headless && !presenter.pump_events();
+        {  // Aspect ratio: fixed, or the window's shape (auto); applied from the next frame
+            int ww = 0, wh = 0;
+            if (presenter.window_handle()) SDL_GetWindowSizeInPixels(static_cast<SDL_Window*>(presenter.window_handle()), &ww, &wh);
+            const float k = game::aspect_factor(game::aspect_mode(), ww, wh);
+            if (std::fabs(k - widescreen) > 0.002f) {
+                widescreen = k;
+                std::printf("widescreen: %s, window %dx%d -> %.3f x 16:9\n", game::aspect_mode_name(game::aspect_mode()), ww, wh, k);
+                game::set_widescreen(k);
+                gfx::set_widescreen(k);
+            }
+        }
         if (loading) {  // until the pipelines are built: the loading screen (then the game's own frames)
             if (!pipelines_ready) {
                 const size_t total = pipelines_total;
@@ -678,10 +834,23 @@ int main(int argc, char** argv) {
                 loading.reset();
             }
         }
+        if (launcher && !loading) {
+            // the fork's overlay (F1 settings, F2 mods, toasts, mods' HUD), once the loading screen is gone. Every
+            // iteration, also while hidden: it notices the game asking for text (on-screen keyboard) itself.
+            const bool game_frames = presenter.showing_image(250);
+            boot::LaunchState st;
+            st.game_running = true;
+            st.game_frames = game_frames;
+            st.pipelines_done = pipelines_done;
+            st.pipelines_total = pipelines_total;
+            st.pipelines_ready = pipelines_ready;
+            if (!launcher->frame(st)) closed = true;
+        }
         if (g_controls) g_controls->update();
         if (g_keys) g_keys->update();
         // the game reads no input while a binding is being waited for
-        if (g_controls) input::set_suspended(g_controls->capturing() || (g_keys && g_keys->capturing()));
+        // (or while the fork's overlay is up)
+        input::set_suspended((g_controls && g_controls->capturing()) || (g_keys && g_keys->capturing()) || (launcher && launcher->visible()));
         if (g_graphics) g_graphics->apply_pending();
         if (!headless) timed_actions(presenter, paths);
         const auto now = std::chrono::steady_clock::now();
@@ -706,6 +875,7 @@ int main(int argc, char** argv) {
             mh3u::gfx::save_gx2_caches();
             if (os::rt().trace_imports) os::dump_threads();
             peek_objects(mem);
+            plugins::shutdown();
             std::fflush(stdout);
             std::_Exit(0);  // guest threads are not cancellable
         }
@@ -714,6 +884,7 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     guest.join();
+    plugins::shutdown();
     mh3u::gfx::save_gx2_caches();
     print_import_summary();
     return code;

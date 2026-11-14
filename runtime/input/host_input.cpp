@@ -92,6 +92,7 @@ struct Config {
     float deadzone = 0.15f;
     float mouse_sensitivity = 0.05f;  // stick deflection per pixel moved between two game reads
     bool invert_y = false;
+    float camera_speed = 1.0f;  // [camera] speed: applied to the game's camera steps (src/game/camera_speed.cpp)
     int wheel_frames = 3;  // reads a wheel notch holds its button
 };
 
@@ -101,7 +102,15 @@ struct Pad {
     float lx = 0, ly = 0, rx = 0, ry = 0, zl = 0, zr = 0;
     bool touch = false;
     float tx = 0, ty = 0;
+    // Select + Options (Back + Start) together open the settings: when each went down, and the chord already fired
+    // for this hold (both masked from the game until released)
+    std::chrono::steady_clock::time_point back_at{}, start_at{};
+    bool back = false, start = false, chord = false;
 };
+uint32_t g_prev_buttons = 0, g_edges = 0;  // note_buttons: the last buttons the game got, presses not yet taken
+std::chrono::steady_clock::time_point g_edges_at{};  // the last new press: older ones are not handed out
+bool g_chord = false;  // Select + Options pressed: take_settings_chord() hands it to the host once
+constexpr auto kChordWait = std::chrono::milliseconds(80);  // a lone Select / Options waits this long for the other
 
 std::mutex g_m;
 Config g_cfg;
@@ -148,6 +157,12 @@ int g_clicks = 0;                    // left clicks queued for take_clicks
 std::map<uint32_t, int> g_taps;      // tap: buttons -> reads left
 SDL_Cursor* g_cursor = nullptr;  // the pointer's cursor (make_cursor), for this window height
 int g_cursor_h = 0;
+// The GamePad touch screen from the mouse (set_touch_view): while the GamePad image is shown, the left button held on
+// it (with the mouse not captured for mouse look) touches the screen there, and dragging moves the touch.
+int g_touch_view = 0;        // 0 not shown, 1 inset in the TV image's bottom-right corner, 2 instead of the TV image
+bool g_mouse_touch = false;  // the left button went down on the GamePad image and is still held
+float g_touch_u = 0, g_touch_v = 0;  // where, 0..1 across and down the GamePad screen
+bool g_both = false;         // set_both_controllers
 
 std::string utf8(const std::u16string& s) {
     std::string out;
@@ -301,6 +316,7 @@ void load_ini(const std::filesystem::path& path, Config& c) {
         else if (section == "gamepad" && key == "deadzone") c.deadzone = std::stof(value);
         else if (section == "mouse" && key == "sensitivity") c.mouse_sensitivity = std::stof(value);
         else if (section == "mouse" && key == "invert_y") c.invert_y = value == "1" || value == "true";
+        else if (section == "camera" && key == "speed") c.camera_speed = std::clamp(std::stof(value), 0.1f, 1.0f);
         else if (section == "mouse" && key == "wheel_frames") c.wheel_frames = std::stoi(value);
         else if ((section == "bindings" || section == "controller") && key == "clear") {
             if (section == "bindings") c.bindings.clear();
@@ -350,6 +366,22 @@ void refresh(Pad& p) {
                                                     : SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(src));
         if (down) p.buttons |= mask;
     }
+    const auto now = std::chrono::steady_clock::now();
+    const bool back = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_BACK), start = SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_START);
+    if (back && !p.back) p.back_at = now;
+    if (start && !p.start) p.start_at = now;
+    p.back = back;
+    p.start = start;
+    if (back && start && !p.chord) {  // the chord: settings, and neither button reaches the game until let go
+        p.chord = true;
+        g_chord = true;
+        const auto mask_of = [](int src) {
+            const auto it = g_cfg.pad.find(src);
+            return it == g_cfg.pad.end() ? 0u : it->second;
+        };
+        g_masked |= mask_of(SDL_GAMEPAD_BUTTON_BACK) | mask_of(SDL_GAMEPAD_BUTTON_START);
+    }
+    if (!back && !start) p.chord = false;
     p.lx = axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX));
     p.ly = -axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY));
     p.rx = axis(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTX));
@@ -429,6 +461,29 @@ SDL_Cursor* make_cursor(int window_h) {
     SDL_Cursor* c = SDL_CreateColorCursor(surf, static_cast<int>(px[0]), static_cast<int>(py[0]));
     SDL_DestroySurface(surf);
     return c;
+}
+
+// Called with g_m held. Window point -> place on the GamePad screen (0..1, not clamped); false when the GamePad image is
+// not shown or the point is outside it. Placed as the renderer and presenter do: GamePad only = the 854x480 image
+// fitted into the window, centred; inset = 30 % of the TV image's width, its aspect kept, 1/64 of the TV width from
+// the TV image's right and bottom edges (VkRenderer::end_frame), the TV image being 16:9 fitted and centred.
+bool touch_at(float x, float y, float& u, float& v) {
+    if (!g_touch_view || g_win_w <= 0 || g_win_h <= 0) return false;
+    float ix, iy, iw, ih;
+    if (g_touch_view == 2) {
+        const float scale = std::min(g_win_w / 854.0f, g_win_h / 480.0f);
+        iw = 854.0f * scale, ih = 480.0f * scale;
+        ix = (g_win_w - iw) * 0.5f, iy = (g_win_h - ih) * 0.5f;
+    } else {
+        const float scale = std::min(g_win_w / 16.0f, g_win_h / 9.0f);
+        const float tw = 16.0f * scale, th = 9.0f * scale, tx = (g_win_w - tw) * 0.5f, ty = (g_win_h - th) * 0.5f;
+        const float margin = tw / 64.0f;
+        iw = tw * 0.3f, ih = iw * 480.0f / 854.0f;
+        ix = tx + tw - margin - iw, iy = ty + th - margin - ih;
+    }
+    u = (x - ix) / iw;
+    v = (y - iy) / ih;
+    return u >= 0 && u <= 1 && v >= 0 && v <= 1;
 }
 
 void capture(bool on) {
@@ -566,6 +621,21 @@ void handle_event(const void* ev) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP: {
             const bool down = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            // the GamePad touch screen: a left press on the shown GamePad image (mouse not captured), held to drag
+            if (e.button.button == SDL_BUTTON_LEFT && !g_captured) {
+                float u = 0, v = 0;
+                g_ptr_x = e.button.x, g_ptr_y = e.button.y;
+                if (down && touch_at(e.button.x, e.button.y, u, v)) {
+                    g_mouse_touch = true;
+                    g_touch_u = u, g_touch_v = v;
+                    break;
+                }
+                if (!down && g_mouse_touch) {
+                    g_mouse_touch = false;
+                    break;
+                }
+                if (g_touch_view == 2) break;  // only the GamePad is shown: clicks never capture the mouse
+            }
             if (g_pointer) {
                 const int src = e.button.button == SDL_BUTTON_LEFT ? kMouseLeft : e.button.button == SDL_BUTTON_RIGHT ? kMouseRight : -1;
                 if (src < 0) break;
@@ -591,6 +661,11 @@ void handle_event(const void* ev) {
         }
         case SDL_EVENT_MOUSE_MOTION:
             g_ptr_x = e.motion.x, g_ptr_y = e.motion.y;
+            if (g_mouse_touch) {
+                float u = 0, v = 0;
+                touch_at(e.motion.x, e.motion.y, u, v);
+                g_touch_u = std::clamp(u, 0.0f, 1.0f), g_touch_v = std::clamp(v, 0.0f, 1.0f);
+            }
             if (g_captured) {
                 g_mouse_dx += e.motion.xrel;
                 g_mouse_dy += e.motion.yrel;
@@ -601,6 +676,7 @@ void handle_event(const void* ev) {
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             g_down.clear();
+            g_mouse_touch = false;
             capture(false);
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
@@ -635,6 +711,7 @@ void handle_event(const void* ev) {
 void update() {
     std::lock_guard g(g_m);
     if (g_window) SDL_GetWindowSize(g_window, &g_win_w, &g_win_h);
+    if (g_touch_view == 2 && g_captured) capture(false);  // only the GamePad is shown: the mouse is its touch pen
     if (g_window && g_menu_open != g_pointer && !g_suspended && !g_text.active) {
         g_pointer = g_menu_open;
         drop_mouse_buttons();
@@ -661,7 +738,8 @@ void update() {
     }
     // no menu, no overlay, no text entry: the mouse is not a pointer, so no cursor over the game (user 2026-11-03) -
     // unless it was released with Esc / F11 (issue #8: to reach the window's close button)
-    const bool hide = g_window && !g_pointer && !g_suspended && !g_text.active && !g_freed &&
+    // (shown too while the GamePad image is up and the mouse is free: it is the touch pen)
+    const bool hide = g_window && !g_pointer && !g_suspended && !g_text.active && !g_freed && !(g_touch_view && !g_captured) &&
                       (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS);
     if (hide != g_cursor_hidden) {
         if (hide) SDL_HideCursor();
@@ -769,8 +847,21 @@ PadState read() {
     const auto merge = [](float& x, float& y, float px, float py) {
         if (px * px + py * py > x * x + y * y) x = px, y = py;
     };
+    if (g_mouse_touch) {
+        s.touch = true;
+        s.touch_x = static_cast<uint16_t>(g_touch_u * 853.0f);
+        s.touch_y = static_cast<uint16_t>(g_touch_v * 479.0f);
+    }
     for (const auto& [id, p] : g_pads) {
-        s.buttons |= p.buttons;
+        uint32_t held_back = 0;  // a lone Select / Options just pressed: wait a moment for the other half of the chord
+        const auto now = std::chrono::steady_clock::now();
+        const auto mask_of = [](int src) {
+            const auto it = g_cfg.pad.find(src);
+            return it == g_cfg.pad.end() ? 0u : it->second;
+        };
+        if (p.back && !p.start && now - p.back_at < kChordWait) held_back |= mask_of(SDL_GAMEPAD_BUTTON_BACK);
+        if (p.start && !p.back && now - p.start_at < kChordWait) held_back |= mask_of(SDL_GAMEPAD_BUTTON_START);
+        s.buttons |= p.buttons & ~held_back;
         merge(s.lx, s.ly, p.lx, p.ly);
         merge(s.rx, s.ry, p.rx, p.ry);
         if (p.touch) {
@@ -802,6 +893,39 @@ void repeat_held(uint32_t button, uint32_t ms) {
     std::lock_guard g(g_m);
     g_repeat_button = button;
     g_repeat_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+}
+
+PadState touch_state() {
+    std::lock_guard g(g_m);
+    PadState s;
+    if (g_suspended) return s;
+    if (g_mouse_touch) {
+        s.touch = true;
+        s.touch_x = static_cast<uint16_t>(g_touch_u * 853.0f);
+        s.touch_y = static_cast<uint16_t>(g_touch_v * 479.0f);
+    }
+    for (const auto& [id, p] : g_pads)
+        if (p.touch) {
+            s.touch = true;
+            s.touch_x = static_cast<uint16_t>(std::clamp(p.tx, 0.0f, 1.0f) * 853.0f);
+            s.touch_y = static_cast<uint16_t>(std::clamp(p.ty, 0.0f, 1.0f) * 479.0f);
+        }
+    return s;
+}
+
+void set_touch_view(int mode) {
+    std::lock_guard g(g_m);
+    g_touch_view = mode;
+    if (!mode) g_mouse_touch = false;
+}
+
+void set_both_controllers(bool on) {
+    std::lock_guard g(g_m);
+    g_both = on;
+}
+bool both_controllers() {
+    std::lock_guard g(g_m);
+    return g_both;
 }
 
 void set_menu_open(bool open) {
@@ -1090,6 +1214,30 @@ uint32_t pad_buttons_for(int sdl_gamepad_button) {
     return it == g_cfg.pad.end() ? 0 : it->second;
 }
 
+void note_buttons(uint32_t buttons) {
+    std::lock_guard g(g_m);
+    if (const uint32_t fresh = buttons & ~g_prev_buttons) {  // pressed since the last read: take_pressed
+        g_edges |= fresh;
+        g_edges_at = std::chrono::steady_clock::now();
+    }
+    g_prev_buttons = buttons;
+}
+
+bool take_pressed(uint32_t buttons) {
+    std::lock_guard g(g_m);
+    // only a press of the last moment: one made long before (+ for the pause menu) must not skip a later cutscene
+    const bool hit = (g_edges & buttons) != 0 && std::chrono::steady_clock::now() - g_edges_at < std::chrono::milliseconds(300);
+    g_edges &= ~buttons;
+    return hit;
+}
+
+bool take_settings_chord() {
+    std::lock_guard g(g_m);
+    const bool c = g_chord;
+    g_chord = false;
+    return c;
+}
+
 bool is_settings_button(int b) {
     return b == SDL_GAMEPAD_BUTTON_TOUCHPAD || b == SDL_GAMEPAD_BUTTON_GUIDE || b == SDL_GAMEPAD_BUTTON_MISC1;
 }
@@ -1101,9 +1249,18 @@ std::string pad_prompt(const std::string& target) {
     if (g_pads.empty()) return {};
     const SDL_GamepadType type = SDL_GetGamepadType(g_pads.begin()->second.pad);
     const bool ps = type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5;
-    const bool nintendo = type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
+    // the Nintendo layout names the buttons as printed on a Nintendo pad (right A, bottom B, top X, left Y; + -
+    // L R ZL ZR), also on pads that report Xbox labels (third-party Nintendo-style pads)
+    const bool nintendo = !ps && (g_cfg.nintendo_layout || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO ||
+                                  type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR);
     for (const auto& [src, mask] : g_cfg.pad) {
         if (mask != t.mask) continue;
+        if (nintendo) {
+            if (src == SDL_GAMEPAD_BUTTON_SOUTH) return "B";
+            if (src == SDL_GAMEPAD_BUTTON_EAST) return "A";
+            if (src == SDL_GAMEPAD_BUTTON_WEST) return "Y";
+            if (src == SDL_GAMEPAD_BUTTON_NORTH) return "X";
+        }
         if (src == kPadLeftTrigger) return ps ? "L2" : nintendo ? "ZL" : "LT";
         if (src == kPadRightTrigger) return ps ? "R2" : nintendo ? "ZR" : "RT";
         switch (SDL_GetGamepadButtonLabelForType(type, static_cast<SDL_GamepadButton>(src))) {
@@ -1132,7 +1289,7 @@ std::string pad_prompt(const std::string& target) {
 
 ControlOptions control_options() {
     std::lock_guard g(g_m);
-    return {g_cfg.nintendo_layout, g_cfg.mouse_sensitivity, g_cfg.invert_y};
+    return {g_cfg.nintendo_layout, g_cfg.mouse_sensitivity, g_cfg.invert_y, g_cfg.camera_speed};
 }
 
 void set_control_options(const ControlOptions& o) {
@@ -1141,6 +1298,7 @@ void set_control_options(const ControlOptions& o) {
     g_cfg.nintendo_layout = o.nintendo_layout;
     g_cfg.mouse_sensitivity = o.mouse_sensitivity;
     g_cfg.invert_y = o.invert_y;
+    g_cfg.camera_speed = std::clamp(o.camera_speed, 0.1f, 1.0f);
     if (relayout) default_pad(g_cfg);  // the controller defaults follow the layout
 }
 
@@ -1178,7 +1336,8 @@ bool save_bindings() {
     f << "# Cha-Cha controls, written by the launcher (Settings > Controls). See docs/input.md.\n"
       << "[gamepad]\nlayout = " << (g_cfg.nintendo_layout ? "nintendo" : "xbox") << "\ndeadzone = " << g_cfg.deadzone << "\n\n"
       << "[mouse]\nsensitivity = " << g_cfg.mouse_sensitivity << "\ninvert_y = " << (g_cfg.invert_y ? 1 : 0)
-      << "\nwheel_frames = " << g_cfg.wheel_frames << "\n\n[bindings]\nclear = 1\n";
+      << "\nwheel_frames = " << g_cfg.wheel_frames << "\n\n[camera]\nspeed = " << g_cfg.camera_speed
+      << "\n\n[bindings]\nclear = 1\n";
     for (const auto& [src, t] : g_cfg.bindings) f << key_source_name(src) << " = " << target_name(t) << '\n';
     f << "\n[controller]\nclear = 1\n";
     for (const auto& [src, mask] : g_cfg.pad) {

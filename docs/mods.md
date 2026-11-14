@@ -4,6 +4,9 @@ The main menu's **DLC** screen is Cha-Cha's add-on menu. It still looks and soun
 (Capcom's download server is gone, so Cha-Cha answers the game's downloads itself; nothing goes online). Its three
 buttons:
 
+In the Cha-Cha Plus fork, **F2** also opens the overlay's Mods page over the game: the plugin mods in
+`<data folder>/mods` (content mods and plugins, [modding.md](modding.md)) with their settings.
+
 | Button | What it opens | Folder |
 |---|---|---|
 | **Official** | the game's own DLC menus (Content Previews, Quests, Extras) with Capcom's event and challenge quests | `<data>/bonus` |
@@ -129,5 +132,6 @@ item (the spot is used up). It works for every gatherable. Code: `src/game/carvi
 
 ### In development
 
-- **Monster HP scaling**: monster health follows the number of hunters on the quest (1-4).
+- **Monster HP scaling**: monster health follows the number of hunters on the quest (1-4). Optional: Settings →
+  General → Monster HP scaling (`monster_hp_scaling=0` in config.ini switches it off).
 

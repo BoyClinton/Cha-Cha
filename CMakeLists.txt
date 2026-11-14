@@ -19,8 +19,14 @@ endif()
 
 # SDL3: on Windows the Vulkan SDK's copy (SDL3.dll next to the exe); elsewhere built from source (pinned tag, the
 # same version), shared so the AppImage carries it as libSDL3.so
+# MH3U_SYSTEM_SDL3=ON (Linux): the distribution's SDL3 instead (its audio / video backends as packaged; a build from
+# source only gets the backends whose development headers are installed - without them, no sound)
+option(MH3U_SYSTEM_SDL3 "Use the system's SDL3 (Linux)" OFF)
 if(WIN32)
   find_package(SDL3 REQUIRED CONFIG PATHS "$ENV{VULKAN_SDK}/cmake" NO_DEFAULT_PATH GLOBAL)
+elseif(MH3U_SYSTEM_SDL3)
+  find_package(SDL3 REQUIRED CONFIG GLOBAL)
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-include>" "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/runtime/core/win_compat.h>")
 else()
   include(FetchContent)
   set(SDL_SHARED ON CACHE BOOL "" FORCE)
@@ -53,3 +59,4 @@ add_subdirectory(runtime)
 add_subdirectory(recomp)
 add_subdirectory(src)
 add_subdirectory(tools/shaderc-latte)
+add_subdirectory(mods)

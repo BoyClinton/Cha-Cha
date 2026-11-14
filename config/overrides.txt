@@ -21,6 +21,8 @@
 0x02687D38 uIDLobbyMaki::drawBoxMenu? # src/game/item_sets.cpp: Item Sets' sub-list pop-up placed at row 3
 0x02AE1E40 cGUIInstAnimation::updateTransforms? # src/game/item_sets.cpp: box menu with Item Sets - the separator and the scroll's lower part one row down (object PosY before the transforms are redone)
 0x020ECA2C sCockpit::obtainItem? # src/game/carving.cpp: hold to gather - after an item is obtained the held button keeps repeating
+0x025CB37C uEnemy::damageCheck? # mod hook point (runtime/boot/plugins.cpp): per-frame damage check; per-part damage int16[8] at state+0x8EC, HP at state+0x8B8 (state = *(uEnemy+0x1BE0)); damage-numbers mod
+0x0227EDE8 uGameCamera::move? # mod hook point (runtime/boot/plugins.cpp): uGameCamera vtable slot 8 per frame; uCamera fields +0x30..+0x6C give the live camera for world_to_screen
 0x028BC31C gatherReward? # src/game/carving.cpp: one gathering / mining / net reward (item, gathering skills, tool breakage); Instant Gathering repeats it until the spot is used up
 0x020E0CFC sAppPad::vf6 # src/game/menu_mouse.cpp: pad per-frame update; afterwards the menu state decides whether the mouse is a pointer
 0x0221A430 sLobby::menuDirections? # src/game/menu_mouse.cpp: lobby menus key-repeat directions (1 up 2 down 4 left 8 right); wrapped: a call means a lobby menu is open
@@ -66,6 +68,9 @@
 0x021C4304 sLobby::furnishingRemoveStep? # src/game/menu_mouse.cpp: house furnishing Remove (r4 = pick: state +2; state 1 the occupied-spot picker like Place, removable bit 2 of +0xBB[]); hover as the Place picker
 0x020E8DD4 questResultStep? # src/game/menu_mouse.cpp: quest results (r4 = res: state +0 / +1, hunter +0x20 of +0x21, view +0x2F, detail cursors +0x29 / +0x2A / +0x2C / +0x2D / +0x44); pointer kept on, learn screenshots per view
 0x02180870 sResult::rewardStep? # src/game/menu_mouse.cpp: solo quest results / rewards (r4 = res: state +0x2FF4, sub +2, cursor +0x3066 of +0x3067, grid +0x3073 / +0x3075, Yes / No +0x3084); pointer kept on, learn screenshots per state
+0x02045108 itemDisplayAttack? # mod hook point (runtime/boot/plugins.cpp): (item, raw attack) -> raw x the weapon class multiplier (u32 x100 table 0x1017C13C) / 100, for menus only; true-attack mod
+0x0217F63C makeTalisman? # mod hook point (runtime/boot/plugins.cpp): talisman generator (r4 = talisman out: +0 type 6, +1 slots, +2 rarity u16, +4/+5 skill 1 id / points, +6/+7 skill 2; r5 = charm 0x25-0x28); every draw from RNG slot 1 (sGame+0x42, x -> (x || 1) * 176 mod 65363, 0x0211971C); charm-table-fix mod
+0x021571D0 sMH3GMovie::isPlaying? # src/game/movie_skip.cpp: "a cutscene movie is still playing" (sMH3GMovie+0x34 set, uMovie+0x32C != 6); a new press of + stops the movie (FUN_02156C28) and answers no
 0x02763A88 uIDStartMenu::gameOptionsStep? # src/game/game_options.cpp: Game Options list with Cha-Cha's right column (cursor, A, help)
 0x02AE1A50 cGUIInstAnimation::draw? # src/game/gui_util.cpp: vf11, draws the instance's object tree (FUN_02AF4BA8); Game Options plates drawn again as the right column
 0x0275B3DC uIDOption::gameSettingsStep? # src/game/settings_page.cpp: Game Settings page step; Cha-Cha's settings pages (Graphics Settings) on its layout

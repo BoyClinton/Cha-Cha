@@ -103,6 +103,17 @@ SPIR-V 1.5 (Vulkan 1.2 target). `MH3U_VK_LEGACY=1` takes the emulated path on a 
   `MH3U_EFFECT_STEP=frame`: particles stepped once a frame again (before issue #15: too fast above 30 FPS).
   `MH3U_EFFECT_LOG=1` prints frames, particle steps and the mean frame time once a second.
   `MH3U_VK_VALIDATION=1` enables the validation layer (clean over 600 frames, headless and windowed).
+- **Widescreen** (Settings -> Display -> Aspect ratio, config.ini `aspect_ratio` = `16:9` (default), `21:9`, `32:9` or
+  `auto` = the window's shape, 16:9 to 48:9; issue #5). The renderer makes the TV-sized render targets (1920x1080 and
+  their 1/2 .. 1/16 copies, GX2-aligned sizes included) `factor` times wider; viewports and scissors scale x and y
+  separately per target. The game's camera aspect is widened in `src/game/widescreen.cpp` (hooks in sCamera::vf6 and the
+  name tag placement), so more is seen to the sides at the same vertical field of view. The HUD is squeezed back into the
+  middle 16:9 by the translated shaders (`hud_pos` in tools/shaderc-latte/glsl.cpp, push constants `hud_scale` /
+  `hud_mode`) for the shaders listed in `kHudShaders` (renderer.cpp): geometry shader `1e2db7fd…` (text, icons, menus;
+  squeezed where w == 1 and |x| != 1) and vertex shaders `0b23f382…` / `39081fe3…` (panels, prompts; squeezed where
+  w != 1, only after the frame's 3D scene has been sampled, because they also draw world billboards).
+  `MH3U_HUD_SHADERS="vs:<key>:<mode>,gs:<key>:<mode>"` adds shaders (mode 0 removes one) for finding more. Only draws
+  onto the widened targets are squeezed, so the GamePad's screen keeps its shape.
 
 At boot the game shows its first screen correctly: the "Wii U GamePad has been detected" notice (clear, a
 full-screen pass, a translucent panel, 8 gold frame sprites and 2 text runs – all point sprites expanded by the

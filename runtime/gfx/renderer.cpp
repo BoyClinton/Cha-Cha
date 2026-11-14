@@ -400,6 +400,17 @@ struct KeyReader {
 // Guest shader struct layouts: register block size = offset of the program size; program pointer follows.
 constexpr uint32_t kRegsBytes[3] = {0xD0, 0xA4, 0x4C};
 const char* kStageExt[3] = {"vert", "frag", "geom"};
+// The game's HUD shaders (translated keys), squeezed back to 16:9 on widescreen targets (VkRenderer::init_post).
+struct HudShader {
+    int stage;
+    uint64_t key;
+    uint32_t mode;  // VertexPushConstants::hud_mode
+};
+constexpr HudShader kHudShaders[] = {
+    {kStageVertex, 0x0b23f38235fb8aa3ull, 1},    // sprites: panels, frames, gauges, prompts (and world billboards)
+    {kStageVertex, 0x39081fe338e695daull, 1},    // its sibling (same inputs and uniforms)
+    {kStageGeometry, 0x1e2db7fd12a1ef03ull, 2},  // text, icons, menus (and 3D particles, which keep w != 1)
+};
 
 // ---- device resources -----------------------------------------------------------------------------------------
 struct Image {
@@ -409,6 +420,7 @@ struct Image {
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     VkImageType type = VK_IMAGE_TYPE_2D;
     uint32_t width = 0, height = 0, layers = 1, levels = 1;
+    float sx = 1.0f, sy = 1.0f;  // render targets: image pixels per guest pixel (internal resolution, widescreen)
     bool cube = false;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::map<uint64_t, VkImageView> views;
@@ -644,6 +656,24 @@ private:
     // scissors and point sizes follow. Shaders sample with normalised coordinates, so they need no change.
     float scale_ = 1.0f;
     uint32_t scaled(uint32_t v) const { return std::max(1u, static_cast<uint32_t>(std::lround(v * scale_))); }
+    // widescreen (set_widescreen): the TV-sized render targets and their 1/2 .. 1/16 copies are this much wider than
+    // the guest's (the game's camera is widened to match, src/game/widescreen.cpp); HUD shaders squeeze back to 16:9
+    std::atomic<float> want_wide_{1.0f};
+    float wide_ = 1.0f;            // this frame's
+    uint32_t tv_w_ = 0, tv_h_ = 0;  // the guest TV buffer size (GX2SetTVBuffer)
+    std::map<std::pair<int, uint64_t>, uint32_t> hud_shaders_;  // (stage, key) -> VertexPushConstants::hud_mode
+    // The HUD vertex shaders (mode 1) also draw billboards in the world (markers over doors and people, perspective
+    // w != 1 like the HUD's): they are squeezed only once this frame's 3D scene is done - from the first draw that
+    // samples the scene (the TV-sized target drawn with depth writes: bloom, the colour filter); frames without a 3D
+    // scene (title, menus) are all HUD.
+    uint32_t frame_scene_ = 0;
+    bool hud_phase_ = false;
+    bool wide_target(const GuestSurface& s) const;
+    void apply_widescreen();
+    void set_widescreen(float factor, uint32_t tv_w, uint32_t tv_h) override {
+        want_wide_ = std::clamp(std::isfinite(factor) ? factor : 1.0f, 1.0f, 3.0f);
+        if (tv_w && tv_h) tv_w_ = tv_w, tv_h_ = tv_h;
+    }
     VkPipeline post_pipe_ = VK_NULL_HANDLE;
     std::unique_ptr<Image> post_;
     bool init_post(std::string* error);
@@ -1236,12 +1266,16 @@ Image* VkRenderer::target(const GuestSurface& s, bool depth, bool upload) {
     usage |= depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     if (depth) aspect = VK_IMAGE_ASPECT_DEPTH_BIT | (has_stencil(format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
-    auto img = create_image(format, VK_IMAGE_TYPE_2D, scaled(s.width), scaled(s.height), 1, false, usage, aspect);
+    const bool wide = wide_ != 1.0f && wide_target(s);
+    const uint32_t iw = wide ? std::max(1u, static_cast<uint32_t>(std::lround(s.width * scale_ * wide_))) : scaled(s.width);
+    auto img = create_image(format, VK_IMAGE_TYPE_2D, iw, scaled(s.height), 1, false, usage, aspect);
     if (!img) return nullptr;
     img->surf = s;
+    img->sx = static_cast<float>(img->width) / static_cast<float>(s.width);
+    img->sy = static_cast<float>(img->height) / static_cast<float>(s.height);
     img->base_swizzle = fd.swizzle;
     if (upload && !depth && !fd.block) {
-        if (scale_ == 1.0f) {
+        if (img->width == s.width && img->height == s.height) {
             upload_surface(*img, s, fd, 1);
         } else {  // guest pixels at guest size, then scaled into the target
             auto staging = create_image(format, VK_IMAGE_TYPE_2D, s.width, s.height, 1, false,
@@ -1668,7 +1702,8 @@ VkPipelineLayout VkRenderer::pipeline_layout(const ShaderInfo* vs, const ShaderI
     if (!layout) {
         const VkDescriptorSetLayout set_layouts[3] = {vs->layout, ps->layout, gs ? gs->layout : empty_layout_};
         const VkPushConstantRange ranges[2] = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(abi::PixelPushConstants)},
-                                               {VK_SHADER_STAGE_VERTEX_BIT, abi::kVertexPushOffset, sizeof(abi::VertexPushConstants)}};
+                                               {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_GEOMETRY_BIT, abi::kVertexPushOffset,
+                                                sizeof(abi::VertexPushConstants)}};
         VkPipelineLayoutCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         ci.setLayoutCount = 3;
         ci.pSetLayouts = set_layouts;
@@ -2332,6 +2367,15 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
         std::memcpy(idx.ptr, indices.data(), indices.size() * 4);
     }
 
+    // widescreen: where this frame's 3D scene ends (hud_phase_)
+    if (wide_ != 1.0f && !hud_phase_) {
+        if (st.color_bound[0] && st.depth_bound && st.depth_write && st.color[0].width == tv_w_ && st.color[0].height == tv_h_)
+            frame_scene_ = st.color[0].image;
+        else if (frame_scene_)
+            for (const TextureBinding& t : st.stage[kStagePixel].tex)
+                if (t.bound && t.surf.image == frame_scene_) hud_phase_ = true;
+    }
+
     // ---- render targets
     Image* colors[8] = {};
     uint32_t ps_mask = be32(base_ + st.ps + 0x94);  // cb_shader_mask: 4 bits per written target
@@ -2533,17 +2577,25 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     // VK_EXT_depth_range_unrestricted is there) the range is taken as it is; in 0..1 clip space (half-z draws, older
     // GPUs) the clamped 0..1 range already gives window z = ndc z.
     const bool clamp_range = !pipe_desc_.neg_one;
-    VkViewport v{st.viewport[0] * scale_, (st.viewport[1] + st.viewport[3]) * scale_, st.viewport[2] * scale_, -st.viewport[3] * scale_,
+    const Image* ref = depth;
+    for (uint32_t t = 0; t < ncolor; ++t)
+        if (colors[t]) {
+            ref = colors[t];
+            break;
+        }
+    const float sx = ref ? ref->sx : scale_, sy = ref ? ref->sy : scale_;
+    VkViewport v{st.viewport[0] * sx, (st.viewport[1] + st.viewport[3]) * sy, st.viewport[2] * sx, -st.viewport[3] * sy,
                  clamp_range ? std::clamp(st.viewport[4], 0.0f, 1.0f) : st.viewport[4],
                  clamp_range ? std::clamp(st.viewport[5], 0.0f, 1.0f) : st.viewport[5]};
     if (v.width <= 0.0f) v = {0.0f, static_cast<float>(rh), static_cast<float>(rw), -static_cast<float>(rh), 0.0f, 1.0f};
     vkCmdSetViewport(c, 0, 1, &v);
     VkRect2D sc{{0, 0}, {rw, rh}};
     if (st.scissor_set) {
-        const uint32_t x = std::min(static_cast<uint32_t>(st.scissor[0] * scale_), rw),
-                       y = std::min(static_cast<uint32_t>(st.scissor[1] * scale_), rh);
+        const uint32_t x = std::min(static_cast<uint32_t>(st.scissor[0] * sx), rw),
+                       y = std::min(static_cast<uint32_t>(st.scissor[1] * sy), rh);
+        const auto len = [](uint32_t n, float k) { return std::max(1u, static_cast<uint32_t>(std::lround(n * k))); };
         sc = {{static_cast<int32_t>(x), static_cast<int32_t>(y)},
-              {std::min(scaled(st.scissor[2]), rw - x), std::min(scaled(st.scissor[3]), rh - y)}};
+              {std::min(len(st.scissor[2], sx), rw - x), std::min(len(st.scissor[3], sy), rh - y)}};
     }
     vkCmdSetScissor(c, 0, 1, &sc);
     vkCmdSetBlendConstants(c, st.blend_constant);
@@ -2568,8 +2620,16 @@ void VkRenderer::draw(const DrawState& st, const DrawCall& call) {
     }
     const abi::PixelPushConstants ppc{st.alpha_test && !(debug_ & 1) ? st.alpha_func : 7u, st.alpha_ref};
     vkCmdPushConstants(c, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof ppc, &ppc);
-    const abi::VertexPushConstants vpc{st.point_size * scale_};
-    vkCmdPushConstants(c, layout, VK_SHADER_STAGE_VERTEX_BIT, abi::kVertexPushOffset, sizeof vpc, &vpc);
+    // widescreen: the game's HUD shaders squeeze their screen-space x back into the middle 16:9 of a widened target
+    uint32_t hud_mode = 0;
+    if (ref && ref->sx > ref->sy * 1.001f && !hud_shaders_.empty()) {
+        if (auto h = hud_shaders_.find({kStageVertex, vs->key}); h != hud_shaders_.end() && (hud_phase_ || !frame_scene_ || h->second != 1))
+            hud_mode = h->second;
+        if (gs)
+            if (auto h = hud_shaders_.find({kStageGeometry, gs->key}); h != hud_shaders_.end()) hud_mode = h->second;
+    }
+    const abi::VertexPushConstants vpc{st.point_size * scale_, ref ? ref->sy / ref->sx : 1.0f, hud_mode};
+    vkCmdPushConstants(c, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_GEOMETRY_BIT, abi::kVertexPushOffset, sizeof vpc, &vpc);
     if (!loc_v.empty()) vkCmdBindVertexBuffers(c, 0, 1, &vb.buffer, &vb.offset);
     if (!loc_i.empty()) vkCmdBindVertexBuffers(c, 1, 1, &ib.buffer, &ib.offset);
     if (index_count) {
@@ -3265,6 +3325,23 @@ bool VkRenderer::init_post(std::string* error) {
     if (_dupenv_s(&env, &len, "MH3U_RENDER_SCALE") == 0 && env) scale_ = std::clamp(static_cast<float>(std::atof(env)), 0.25f, 4.0f);
     std::free(env);
     if (scale_ != 1.0f) std::printf("renderer: internal resolution %.2fx\n", scale_);
+    // the game's HUD shaders for widescreen (glsl.cpp hud_pos): textured panels / gauges and untextured gauges / lines
+    // (vertex, squeezed where w != 1), text / icons / minimap / item bar (geometry, squeezed where w == 1 and |x| != 1).
+    // MH3U_HUD_SHADERS="vs:<key>:<mode>,gs:<key>:<mode>,..." adds to (mode 0 removes from) the list.
+    for (const HudShader& h : kHudShaders) hud_shaders_[{h.stage, h.key}] = h.mode;
+    if (_dupenv_s(&env, &len, "MH3U_HUD_SHADERS") == 0 && env) {
+        std::stringstream ss(env);
+        for (std::string item; std::getline(ss, item, ',');) {
+            char st[4] = {};
+            unsigned long long key = 0;
+            unsigned mode = 0;
+            if (std::sscanf(item.c_str(), "%2[a-z]:%llx:%u", st, &key, &mode) != 3) continue;
+            const int stage = std::string(st) == "gs" ? kStageGeometry : kStageVertex;
+            if (mode) hud_shaders_[{stage, key}] = mode;
+            else hud_shaders_.erase({stage, key});
+        }
+    }
+    std::free(env);
     want_look_ = look_ != 0;
     want_vignette_ = env_float("MH3U_VIGNETTE", 0) != 0;
     want_ao_ = env_float("MH3U_AO", 0) != 0;
@@ -3476,10 +3553,41 @@ Image* VkRenderer::post_process(Image& src) {
     return post_.get();
 }
 
+// The TV-sized targets and their 1/2 .. 1/16 copies (MH3U: 1280x720, 640x368, 320x192 ... and the GX2 aligned sizes
+// of each - width to 32, height to 16), as the widescreen render target list of the ultrawide pack for the console
+// emulator. Shadow maps, the GamePad's targets and other off-screen targets keep their size.
+bool VkRenderer::wide_target(const GuestSurface& s) const {
+    if (!tv_w_ || !tv_h_) return false;
+    for (uint32_t n = 0; n <= 4; ++n) {
+        const uint32_t w = tv_w_ >> n, h = tv_h_ >> n;
+        if ((s.width == w || s.width == ((w + 31) & ~31u)) && (s.height == h || s.height == ((h + 15) & ~15u))) return true;
+    }
+    return false;
+}
+
+// A new widescreen factor (any thread: set_widescreen) is taken at the end of a frame: the cached render targets are
+// dropped (the game clears them before use) and made again at the new width.
+void VkRenderer::apply_widescreen() {
+    const float want = want_wide_;
+    if (want == wide_) return;
+    wide_ = want;
+    std::printf("renderer: widescreen %.3f (%s)\n", wide_, wide_ == 1.0f ? "16:9" : "wider TV targets, HUD kept 16:9");
+    for (auto& [k, t] : targets_)
+        if (wide_target(t->surf)) fc().garbage.push_back(std::move(t));
+    std::erase_if(targets_, [](const auto& kv) { return !kv.second; });
+    for (auto& [k, v] : spare_targets_)
+        std::erase_if(v, [&](std::unique_ptr<Image>& t) {
+            if (!wide_target(t->surf)) return false;
+            fc().garbage.push_back(std::move(t));
+            return true;
+        });
+}
+
 Renderer::Frame VkRenderer::end_frame() {
     Frame out;
     if (!recording_) begin();
     end_rendering();
+    apply_widescreen();
     // GamePad inset: the last GamePad image, scaled to 30% of the TV width, in the bottom-right corner
     if (gamepad_view_ == 1 && tv_written_ && drc_written_ && tv_ && drc_) {
         const int32_t w = static_cast<int32_t>(tv_->width) * 3 / 10;
@@ -3520,6 +3628,8 @@ Renderer::Frame VkRenderer::end_frame() {
     }
     scene_color_ = scene_depth_ = 0;
     scene_done_ = false;
+    frame_scene_ = 0;
+    hud_phase_ = false;
     latch_effects();
     Image* shown = graded ? graded : gamepad_view_ == 2 && drc_written_ ? drc_.get() : tv_written_ ? tv_.get() : nullptr;
     if (shown) {

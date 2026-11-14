@@ -66,6 +66,10 @@ uint32_t pad_buttons_for(int sdl_gamepad_button);
 // The controller buttons that open / close the settings over the game: the touchpad click (PlayStation), Home / guide
 // and misc (mic, Share, Capture). The game uses none of them, so they are never bound to a game button.
 bool is_settings_button(int sdl_gamepad_button);
+// Select + Options (Back + Start, View + Menu, Share + Options) pressed together since the last call: opens / closes the
+// settings over the game. Neither button reaches the game during the chord; a lone press waits 80 ms for the other.
+// Main thread, after handle_event.
+bool take_settings_chord();
 // Short name of the controller button bound to a game button, as printed on the connected controller ("Cross",
 // "Circle", "A", "Options", "LB", ...); "" if none is bound or no controller is connected. For on-screen prompts.
 std::string pad_prompt(const std::string& target);
@@ -73,6 +77,7 @@ struct ControlOptions {
     bool nintendo_layout = true;  // face buttons by position (the default; changing it resets the controller bindings)
     float mouse_sensitivity = 0.05f;
     bool invert_y = false;
+    float camera_speed = 1.0f;  // 0.3 .. 1.0: the game's camera turn / tilt steps scaled by it (game::set_camera_speed)
 };
 ControlOptions control_options();
 void set_control_options(const ControlOptions& options);
@@ -90,6 +95,17 @@ bool save_bindings();   // input.ini in the data folder
 void set_suspended(bool on);
 // Guest thread: the merged state for this read; consumes accumulated mouse movement and wheel pulses.
 PadState read();
+// Guest thread: only the GamePad touch screen of this read (mouse on the shown GamePad image, PlayStation touchpad);
+// consumes nothing.
+PadState touch_state();
+// How the GamePad image is shown (gx2 cycle_gamepad_view: 0 not, 1 inset, 2 instead of the TV image): while it is,
+// the left mouse button held on it touches the GamePad screen there (when the mouse is not captured for mouse look;
+// with the GamePad image alone, clicks never capture it). Any thread.
+void set_touch_view(int mode);
+// Whether the game sees both a Pro Controller and a GamePad driven by host input (MH3U_CONTROLLER=both, the default),
+// so either choice in the game's Controller Settings works. Set by runtime/os/input.cpp. Any thread.
+void set_both_controllers(bool on);
+bool both_controllers();
 // Hold to gather (src/game/carving.cpp, after each item obtained): while `button` (VPAD bits) stays held, the game
 // sees it released for 2 reads out of every 8 - pressed again and again, as when mashing it - until `ms` after this
 // call. Any thread.
@@ -111,6 +127,11 @@ int take_clicks();
 // Presses buttons (VPAD bits) for the next 3 reads, as a click does; d-pad directions alone for the next read only
 // (one step: held longer, some menus step twice).
 void tap(uint32_t buttons);
+// The buttons (VPAD bits) the game was handed this read, scripted presses included (runtime/os/input.cpp).
+void note_buttons(uint32_t buttons);
+// True when one of `buttons` (VPAD bits) was newly pressed in the game's input within the last 300 ms and not taken
+// yet (a press, not a hold). Any thread.
+bool take_pressed(uint32_t buttons);
 // VPADControlMotor: rumble on every connected gamepad.
 void rumble(float strength, uint32_t ms);
 

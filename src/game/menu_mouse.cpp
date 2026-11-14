@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -259,11 +260,12 @@ PPC_FUNC(option_page) {
     g_option = static_cast<uint32_t>(ctx.r[3]);
     g_option_page = static_cast<uint32_t>(ctx.r[4]);
     g_option_frame = g_frame;
-    // Controller Settings (page 23) is disabled for now (user 2026-10-29: it will become a page of our own): it stores
-    // the controller choice as it moves, and choosing the GamePad there leaves no working input. Its step sees no
+    // Controller Settings (page 23) stores the controller choice as it moves. With MH3U_CONTROLLER=both (the default
+    // since issue #6) host input drives the Pro Controller and the GamePad alike, so either choice works and the page is
+    // left alone. In the other modes choosing the missing controller leaves no working input: its step then sees no
     // left / right (menu bits 4 / 8 of sAppPad +0x6C and +0x80, what FUN_0275A4A8 reads), so the choice cannot change;
     // B still leaves the page.
-    const uint32_t pad = ctx.r[4] == 23 ? ppc::ld32(base, kSAppPad) : 0;
+    const uint32_t pad = ctx.r[4] == 23 && !(g_pointer.both_controllers && g_pointer.both_controllers()) ? ppc::ld32(base, kSAppPad) : 0;
     const uint32_t trig = pad ? ppc::ld32(base, pad + 0x6C) : 0, rep = pad ? ppc::ld32(base, pad + 0x80) : 0;
     if (pad) {
         ppc::st32(base, pad + 0x6C, trig & ~0xCu);
@@ -1360,8 +1362,70 @@ PPC_FUNC(crop_box) {
 // centred at y 269 (Moga Village), 429, 489, 612, 671, 758 (window session screenshot, 2026-11-03).
 float g_ferry_x = -1, g_ferry_y = -1;
 
+// Neko's list with a decide press (A, sAppPad +0x11C bit 0x20): the online rows (net_backend.cpp) answer first. To close the menu the press becomes the
+// game's own cancel (bit 0x40) for this one call, so it closes as it always does; to refuse, the press is dropped and the buzzer plays.
+FerryChoice (*g_ferry_choice)(uint32_t row) = nullptr;
+constexpr uint32_t kDecide = 0x20, kCancel = 0x40;
+
+bool ferry_choice_taken(ppc::Context& ctx, uint8_t* base, uint32_t w) {
+    if (!g_ferry_choice) return false;
+    const uint32_t pad = ppc::ld32(base, kSAppPad);
+    if (!pad) return false;
+    const uint32_t pressed = ppc::ld32(base, pad + 0x11C);
+    if (!(pressed & kDecide)) return false;
+    const FerryChoice choice = g_ferry_choice(ppc::ld32(base, w + 0x408));
+    if (choice == FerryChoice::Game) return false;
+    const ppc::Context saved = ctx;
+    if (choice == FerryChoice::Refuse) {
+        ppc::st32(base, pad + 0x11C, pressed & ~kDecide);
+        const uint32_t frame = static_cast<uint32_t>(ctx.r[1]) - 0x40;
+        ppc::st32(base, frame, static_cast<uint32_t>(ctx.r[1]));
+        ctx.r[1] = frame;
+        ctx.r[3] = frame + 0x10;
+        ctx.r[4] = 2;  // the buzzer
+        sub_020BFC74(ctx, base);
+        ctx = saved;
+        sub_026AD984__orig(ctx, base);
+    } else {
+        ppc::st32(base, pad + 0x11C, (pressed & ~kDecide) | kCancel);
+        sub_026AD984__orig(ctx, base);
+    }
+    ppc::st32(base, pad + 0x11C, pressed);
+    return true;
+}
+
+// Whether the online rows are usable decides how they look, not the game's rules for what they used to be. FUN_026ACBB8(widget, entry +0x2E4[i], state):
+// 0 plain, 1 selected, 3 greyed, 0x24 selected and greyed. Painted when the list opens and when a row's look changes.
+bool (*g_ferry_usable)(uint32_t row) = nullptr;
+constexpr uint32_t kFirstOnlineRow = 3, kOnlineRows = 3;
+
+void paint_online_rows(ppc::Context& ctx, uint8_t* base, uint32_t w) {
+    if (!g_ferry_usable) return;
+    static uint32_t painted[kOnlineRows] = {};
+    static auto last_call = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    const bool opened = now - last_call > std::chrono::milliseconds(250);
+    last_call = now;
+    const uint32_t cursor = ppc::ld32(base, w + 0x408);
+    for (uint32_t i = 0; i < kOnlineRows; ++i) {
+        const uint32_t row = kFirstOnlineRow + i;
+        const bool usable = g_ferry_usable(row), on = cursor == row;
+        const uint32_t look = usable ? (on ? 1 : 0) : (on ? 0x24 : 3);
+        if (!opened && painted[i] == look) continue;
+        painted[i] = look;
+        const ppc::Context keep = ctx;
+        ctx.r[3] = w;
+        ctx.r[4] = ppc::ld32(base, w + 0x2E4 + 4 * row);
+        ctx.r[5] = look;
+        sub_026ACBB8(ctx, base);
+        ctx = keep;
+    }
+}
+
 PPC_FUNC(ferry_list) {
     const uint32_t w = static_cast<uint32_t>(ctx.r[3]);
+    if (w && ferry_choice_taken(ctx, base, w)) return;
+    if (w) paint_online_rows(ctx, base, w);
     const uint32_t user = ppc::ld32(base, kSUserData);
     float x = 0, y = 0;
     g_lobby_menu = true;
@@ -2057,6 +2121,11 @@ void register_menu_mouse(Pointer pointer) {
         ppc::set_override(0x020432BC, &learn_cursor_b);
         ppc::set_override(0x020432C8, &learn_cursor_c);
     }
+}
+
+void set_ferry_choice(FerryChoice (*choice)(uint32_t row), bool (*usable)(uint32_t row)) {
+    g_ferry_choice = choice;
+    g_ferry_usable = usable;
 }
 
 }  // namespace mh3u::game

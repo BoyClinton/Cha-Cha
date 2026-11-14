@@ -20,15 +20,29 @@ Command line: Cha-Cha --install <dump>  records a dump kept elsewhere;
 In game: Cha-Cha's settings are in Options > Game Options (Display, Graphics,
 Controller and Keyboard Settings) and in the pause menu's CFG tab (also Camera
 Settings and Mods); the main menu's DLC screen holds the official DLC, custom
-quests and mods. F3 cycles the GamePad screen view, F11 switches fullscreen.
+quests and mods (Quest Scaling switches the Port Tanzia monster HP scaling).
+F3 cycles the GamePad screen view, F11 switches fullscreen.
+Cha-Cha Plus adds an overlay: F1 (or Select + Options on a controller) opens its
+settings (Input > Camera speed, aspect ratio, online), F2 its Mods page.
+
+Online (very experimental): talk to Neko in Port Tanzia, then Host a Hunt or Join a
+Hunt. To play across your network, first turn on Settings > Gameplay > Online > Play
+over the network (F1), only with people you trust. Steps are in the README on GitHub.
+Please report problems: https://github.com/SilversRayGA/Cha-Cha-Plus/issues
+
+Mods: one folder each in the mods folder of the data folder (data\mods here).
+Damage Numbers comes with Cha-Cha Plus (the damage of every hit over the monster);
+switch plugin mods on or off and change their settings on the Mods page (F2).
 
 Controls: keyboard + mouse or any controller SDL supports (played as a Wii U Pro
 Controller). Key bindings: input.ini in the data folder (see input.example.ini).
 
-Requirements: Windows 10/11 x64 and a Vulkan 1.2 graphics driver. SDL3 and the
-Microsoft Visual C++ runtime DLLs are included.
+Requirements: Windows 10/11 x64 and a Vulkan 1.2 graphics driver. SDL3 is
+included; nothing else needs installing.
 
 This archive contains no game assets, disc image, game executable or saves.
+The menus are drawn with the game's own GUI textures, read from your dump
+when Cha-Cha starts; none are included here.
 Only the US release with update v32 works: the recompiled code is specific to
 that executable, and Cha-Cha checks it at start.
 

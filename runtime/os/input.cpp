@@ -1,9 +1,12 @@
-// Input: host input (runtime/input: keyboard + mouse and SDL gamepads, docs/input.md) drives, by default, a Wii U
-// Pro Controller on WPAD/KPAD channel 0 with no GamePad connected (MH3U_CONTROLLER=pro-only, the default): new saves
-// are set to the Pro Controller by the game itself, and a save set to the GamePad switches after one "The set
-// controller could not be detected" notice. MH3U_CONTROLLER=pro keeps the GamePad connected (touch screen only; the
-// game follows its saved controller option); MH3U_CONTROLLER=gamepad drives the GamePad (vpad channel 0) instead.
-// No Wii Remotes.
+// Input: host input (runtime/input: keyboard + mouse and SDL gamepads, docs/input.md) drives, by default, both a Wii U
+// Pro Controller on WPAD/KPAD channel 0 and the Wii U GamePad (vpad channel 0) with the same buttons and sticks
+// (MH3U_CONTROLLER=both, the default since issue #6): the game listens to the one its Controller Settings option
+// names, so both choices work, and the GamePad's touch screen gets the mouse on the shown GamePad image (F3) and the
+// PlayStation touchpad. One host read serves a VPADRead and a KPADReadEx in a row (shared_read), so taps, wheel
+// pulses and mouse look are not split between them.
+// MH3U_CONTROLLER=pro-only: the Pro Controller and no GamePad (the default up to 0.3.2: a save set to the GamePad
+// switches after one "The set controller could not be detected" notice); pro: the Pro Controller plus a GamePad whose
+// only input is the touch screen; gamepad: only the GamePad. No Wii Remotes.
 //
 // KPADStatus (0xF0, layout as in Cemu padscore.h): hold/trig/release +0/+4/+8 (Wii Remote core buttons), devType
 // +0x5C (31 = Pro Controller "URCC"), wpadErr +0x5D, data_format +0x5F (22 = URCC), Pro Controller extension at
@@ -28,6 +31,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <mutex>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -62,7 +67,8 @@ uint32_t script_now() {
 uint32_t g_menu_anchor = 0;  // script clock when the main menu was first seen open (0: not yet)
 uint32_t g_prev_hold = 0;
 bool g_pro = true;                 // host input is a Pro Controller (default; MH3U_CONTROLLER=gamepad turns it off)
-bool g_no_gamepad = true;          // VPADRead reports no GamePad (default pro-only; MH3U_CONTROLLER=pro keeps it)
+bool g_no_gamepad = false;         // VPADRead reports no GamePad (MH3U_CONTROLLER=pro-only)
+bool g_vpad_buttons = true;        // with g_pro: the GamePad gets the host buttons and sticks too (MH3U_CONTROLLER=both)
 uint32_t g_pro_prev = 0;           // previous Pro Controller hold
 uint32_t g_connect_cb = 0;         // KPADSetConnectCallback(0, cb)
 uint32_t g_extension_cb = 0;       // WPADSetExtensionCallback(0, cb)
@@ -141,6 +147,49 @@ void load_script() {
     std::printf("input: script with %zu presses%s\n", g_script.size(), g_script_time ? " (1/60 s clock)" : "");
 }
 
+// MH3U_TOUCH_SCRIPT="frame[+frames]:x,y[>x2,y2];..." touches the GamePad screen (854x480 pixels) at x, y for those
+// reads (default 6), or drags from x, y to x2, y2 over them - for headless tests of the touch screen.
+struct TouchPress {
+    uint32_t frame, frames;
+    float x, y, x2, y2;
+};
+std::vector<TouchPress> g_touch_script;
+void load_touch_script() {
+    char* env = nullptr;
+    size_t len = 0;
+    if (_dupenv_s(&env, &len, "MH3U_TOUCH_SCRIPT") != 0 || !env) return;
+    const std::string spec = env;
+    std::free(env);
+    size_t pos = 0;
+    while (pos < spec.size()) {
+        const size_t end = std::min(spec.find(';', pos), spec.size());
+        const std::string item = spec.substr(pos, end - pos);
+        pos = end + 1;
+        TouchPress t{};
+        unsigned f = 0, n = 6;
+        if (std::sscanf(item.c_str(), "%u+%u:%f,%f>%f,%f", &f, &n, &t.x, &t.y, &t.x2, &t.y2) == 6 ||
+            std::sscanf(item.c_str(), "%u:%f,%f>%f,%f", &f, &t.x, &t.y, &t.x2, &t.y2) == 5) {
+        } else if (std::sscanf(item.c_str(), "%u+%u:%f,%f", &f, &n, &t.x, &t.y) == 4 ||
+                   (n = 6, std::sscanf(item.c_str(), "%u:%f,%f", &f, &t.x, &t.y) == 3)) {
+            t.x2 = t.x, t.y2 = t.y;
+        } else {
+            continue;
+        }
+        t.frame = f, t.frames = std::max(1u, n);
+        g_touch_script.push_back(t);
+    }
+    std::printf("input: touch script with %zu touches\n", g_touch_script.size());
+}
+void apply_touch_script(input::PadState& s, uint32_t frame) {
+    for (const TouchPress& t : g_touch_script) {
+        if (frame < t.frame || frame >= t.frame + t.frames) continue;
+        const float k = t.frames > 1 ? static_cast<float>(frame - t.frame) / static_cast<float>(t.frames - 1) : 0.0f;
+        s.touch = true;
+        s.touch_x = static_cast<uint16_t>(std::clamp(t.x + (t.x2 - t.x) * k, 0.0f, 853.0f));
+        s.touch_y = static_cast<uint16_t>(std::clamp(t.y + (t.y2 - t.y) * k, 0.0f, 479.0f));
+    }
+}
+
 void apply_script(input::PadState& s, uint32_t frame) {
     if (!g_menu_anchor && core::g_main_menu_opened.load()) {
         g_menu_anchor = frame ? frame : 1;
@@ -172,14 +221,36 @@ void put_float(uint8_t* base, uint32_t a, float f) {
     std::memcpy(&u, &f, 4);
     ppc::st32(base, a, u);
 }
+// Touch samples hold raw panel values, 12 bits across and down (ours: linear, top-left 0, 4095 at the far edges);
+// VPADGetTPCalibratedPoint turns them into 1280x720 screen coordinates as the real one does - the game scales those
+// to its 854x480 screen (issue #6: handing it 854x480 pixels put every touch at two thirds of the way).
 void put_touch(uint8_t* base, uint32_t a, const input::PadState& s) {
-    ppc::st16(base, a, s.touch ? s.touch_x : 0);
-    ppc::st16(base, a + 2, s.touch ? s.touch_y : 0);
+    ppc::st16(base, a, s.touch ? static_cast<uint16_t>(s.touch_x * 4095u / 853u) : 0);
+    ppc::st16(base, a + 2, s.touch ? static_cast<uint16_t>(s.touch_y * 4095u / 479u) : 0);
     ppc::st16(base, a + 4, s.touch ? 1 : 0);  // touched
     ppc::st16(base, a + 6, 0);                // validity: both axes valid
 }
 
 bool pro_on(uint32_t chan) { return g_pro && chan == 0; }
+
+// One host read for a VPADRead and a KPADReadEx in a row: a reader that already had the current state reads anew
+// (who: 0 VPAD, 1 KPAD). A reader alone (the other pad off or not polled) reads anew every time.
+std::mutex g_read_m;
+input::PadState g_shared;
+bool g_had[2] = {true, true};
+input::PadState shared_read(int who) {
+    std::lock_guard g(g_read_m);
+    if (g_had[who]) {
+        g_shared = input::read();
+        apply_script(g_shared, script_now());
+        apply_touch_script(g_shared, script_now());
+        input::note_buttons(g_shared.buttons);  // presses for game code (input::take_pressed: cutscene skip)
+        input::pass_read(g_shared);  // the on-screen keyboard: its buttons, and an idle pad for the game while it is on
+        g_had[0] = g_had[1] = false;
+    }
+    g_had[who] = true;
+    return g_shared;
+}
 
 // Pending callbacks run from the game's next VPADRead/KPADReadEx, on its thread. The game polls KPAD only after the
 // connect callback reported channel 0 (sPad::WiiPad, connect callback 0x02BC9DCC), and reads Pro Controller
@@ -206,10 +277,11 @@ HLE_FUNC(vpad, VPADRead) {
         return;
     }
     input::PadState s;
-    if (!g_pro) {
-        s = input::read();
-        apply_script(s, script_now());
-        input::pass_read(s);
+    if (!g_pro || g_vpad_buttons) {
+        s = shared_read(0);
+    } else {  // MH3U_CONTROLLER=pro: the touch screen only
+        s = input::touch_state();
+        apply_touch_script(s, script_now());
     }
     const uint32_t st = arg(ctx, 1);
     std::memset(base + st, 0, kVpadStatusSize);
@@ -231,9 +303,16 @@ HLE_FUNC(vpad, VPADRead) {
 }
 HLE_FUNC(vpad, VPADInit) {}
 HLE_FUNC(vpad, VPADShutdown) {}
-// VPADGetTPCalibratedPoint(chan, VPADTouchData* out, const VPADTouchData* in): pass through
+// VPADGetTPCalibratedPoint(chan, VPADTouchData* out, const VPADTouchData* in): raw panel values (put_touch) -> 1280x720
 HLE_FUNC(vpad, VPADGetTPCalibratedPoint) {
-    if (arg(ctx, 1) && arg(ctx, 2)) std::memmove(base + arg(ctx, 1), base + arg(ctx, 2), 8);
+    const uint32_t out = arg(ctx, 1), in = arg(ctx, 2);
+    if (!out || !in) return;
+    uint8_t t[8];
+    std::memcpy(t, base + in, 8);  // out may be in
+    const uint32_t x = (static_cast<uint32_t>(t[0]) << 8 | t[1]) & 0xFFF, y = (static_cast<uint32_t>(t[2]) << 8 | t[3]) & 0xFFF;
+    std::memcpy(base + out, t, 8);
+    ppc::st16(base, out, static_cast<uint16_t>(x * 1279u / 4095u));
+    ppc::st16(base, out + 2, static_cast<uint16_t>(y * 719u / 4095u));
 }
 HLE_FUNC(vpad, VPADGetLcdMode) {
     if (arg(ctx, 1)) ppc::st32(base, arg(ctx, 1), 1);  // VPAD_LCD_ON
@@ -269,9 +348,7 @@ HLE_FUNC(padscore, KPADReadEx) {
         ret(ctx, 0);
         return;
     }
-    input::PadState s = input::read();
-    apply_script(s, script_now());
-    input::pass_read(s);
+    const input::PadState s = shared_read(1);
     const uint32_t hold = pro_buttons(s.buttons);
     std::memset(base + st, 0, 0xF0);
     base[st + 0x5C] = 31;  // devType: URCC
@@ -342,16 +419,21 @@ PAD_NOP(KPADSetMplsMagnification) PAD_NOP(KPADSetMplsZeroDriftMode) PAD_NOP(KPAD
 
 void register_input(Runtime&) {
     load_script();
+    load_touch_script();
     char* env = nullptr;
     size_t len = 0;
     if (_dupenv_s(&env, &len, "MH3U_CONTROLLER") == 0 && env) {
         const std::string mode = env;
         g_pro = mode != "gamepad";
-        g_no_gamepad = g_pro && mode != "pro";
+        g_no_gamepad = mode == "pro-only";
+        g_vpad_buttons = g_pro && mode != "pro" && mode != "pro-only";
     }
     std::free(env);
-    std::printf("input: host controller is %s\n", !g_pro ? "the GamePad" : g_no_gamepad ? "a Pro Controller (WPAD channel 0), no GamePad"
-                                                                           : "a Pro Controller (WPAD channel 0) + GamePad touch screen");
+    input::set_both_controllers(g_pro && g_vpad_buttons);
+    std::printf("input: host controller is %s\n", !g_pro            ? "the GamePad"
+                                                 : g_no_gamepad    ? "a Pro Controller (WPAD channel 0), no GamePad"
+                                                 : g_vpad_buttons  ? "a Pro Controller (WPAD channel 0) and the GamePad (both)"
+                                                                   : "a Pro Controller (WPAD channel 0) + GamePad touch screen");
 #define RV(name) HLE_REGISTER(vpad, name);
 #define RP(name) HLE_REGISTER(padscore, name);
     RV(VPADRead) RV(VPADInit) RV(VPADShutdown) RV(VPADGetTPCalibratedPoint) RV(VPADGetLcdMode) RV(VPADControlMotor)

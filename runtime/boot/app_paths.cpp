@@ -57,6 +57,10 @@ AppPaths find_paths(const stdfs::path& exe, const stdfs::path& data_override) {
         }
     if (!data_override.empty()) {
         p.data = stdfs::absolute(data_override, ec);
+    } else if (stdfs::exists(p.exe_dir / "Cha-Cha.ini", ec)) {
+        p.data = p.exe_dir;
+        p.config_file = p.exe_dir / "Cha-Cha.ini";
+        p.folder_install = true;
 #ifdef __ANDROID__
     } else if (const char* ext = SDL_GetAndroidExternalStoragePath()) {
         // the app's own folder on shared storage (Android/data/<package>/files): reachable over USB from a PC, where
@@ -124,6 +128,7 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "display_mode") s.display_mode = v == "borderless" || v == "fullscreen" ? v : "windowed";
         else if (k == "window_size") s.window_size = v;
         else if (k == "scaling") s.sharp_scaling = v == "sharp";
+        else if (k == "aspect_ratio") s.aspect_ratio = v == "auto" || v == "21:9" || v == "32:9" ? v : "16:9";
         else if (k == "bloom") s.bloom = on;
         else if (k == "depth_of_field") s.depth_of_field = v == "enhanced" || v == "2" ? "enhanced" : on || v == "original" ? "original" : "off";
         else if (k == "ambient_occlusion") s.ambient_occlusion = on;
@@ -134,8 +139,14 @@ Settings load_settings(const AppPaths& p) {
         else if (k == "look") s.look = v == "tri" ? "tri" : "original";
         else if (k == "fps_limit") s.fps_limit = v == "unlimited" ? -1 : std::max(0, std::atoi(v.c_str()));
         else if (k == "vsync") s.vsync = on;
+        else if (k == "online_lan") s.online_lan = on;
+        else if (k == "online_host") s.online_host = v;
         else if (k == "modern_camera") s.modern_camera = on;
         else if (k == "camera_distance") s.camera_distance = std::clamp(std::atoi(v.c_str()), 50, 300);
+        else if (k == "online_server") s.online_server = v;
+        else if (k == "online_pid") s.online_pid = static_cast<uint32_t>(std::strtoul(v.c_str(), nullptr, 10));
+        else if (k == "online_password") s.online_password = v;
+        else if (k == "online_name") s.online_name = v;
     }
     return s;
 }
@@ -153,6 +164,7 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "display_mode=" << s.display_mode << '\n'
       << "window_size=" << s.window_size << '\n'
       << "scaling=" << (s.sharp_scaling ? "sharp" : "smooth") << '\n'
+      << "aspect_ratio=" << s.aspect_ratio << '\n'
       << "bloom=" << (s.bloom ? 1 : 0) << '\n'
       << "depth_of_field=" << s.depth_of_field << '\n'
       << "ambient_occlusion=" << (s.ambient_occlusion ? 1 : 0) << '\n'
@@ -160,18 +172,34 @@ bool save_settings(const AppPaths& p, const Settings& s) {
       << "reflections=" << s.reflections << '\n'
       << "vignette=" << (s.vignette ? 1 : 0) << '\n'
       << "texture_packs=" << (s.texture_packs ? 1 : 0) << '\n'
+      << "online_lan=" << (s.online_lan ? 1 : 0) << '\n'
+      << "online_host=" << s.online_host << '\n'
       << "look=" << s.look << '\n'
       << "fps_limit=" << (s.fps_limit < 0 ? std::string("unlimited") : std::to_string(s.fps_limit)) << '\n'
       << "vsync=" << (s.vsync ? 1 : 0) << '\n'
       << "modern_camera=" << (s.modern_camera ? 1 : 0) << '\n'
-      << "camera_distance=" << s.camera_distance << '\n';
+      << "camera_distance=" << s.camera_distance << '\n'
+      << "online_server=" << s.online_server << '\n'
+      << "online_pid=" << s.online_pid << '\n'
+      << "online_password=" << s.online_password << '\n'
+      << "online_name=" << s.online_name << '\n';
     return static_cast<bool>(f);
 }
 
 std::vector<stdfs::path> repo_game_sources(const AppPaths& p) {
     std::vector<stdfs::path> out;
-    if (p.repo.empty()) return out;
     std::error_code ec;
+    if (p.folder_install) {  // game/: whatever was put there (folders with code / content / meta, or a .wua)
+        const stdfs::path g = p.data / "game";
+        bool any = false;
+        for (const auto& e : stdfs::directory_iterator(g, ec)) {
+            if (e.path().extension() == ".wua") out.push_back(e.path());
+            else if (e.is_directory(ec)) any = true;
+        }
+        if (out.empty() && any) out.push_back(g);
+        return out;
+    }
+    if (p.repo.empty()) return out;
     if (stdfs::exists(p.repo / "extracted" / "0005000e10118300_v32", ec)) out.push_back(p.repo / "extracted");
     else
         for (const auto& e : stdfs::directory_iterator(p.repo / "game", ec))

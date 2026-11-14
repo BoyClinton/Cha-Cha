@@ -20,9 +20,19 @@
 // None of these steps uses the frame time. The camera's own frame time, uGameCamera+0x8E4 (= cUnit+0x1C x 0.5:
 // 1.0 at the console's 30 FPS, 0.25 at 120), is what the rest of its update scales by; here it scales these steps
 // too: turns are multiplied by it, the ease becomes 1 - (1 - 2^-shift)^t, so 30 FPS stays bit for bit the original.
+//
+// Camera speed (Settings -> Input -> Camera speed, input.ini [camera] speed, 0.3 .. 1.0; set_camera_speed): the game
+// turns the camera from digital pad bits, not from how far the stick is pushed, so the setting scales the turn steps
+// themselves (another factor next to the frame time): the yaw step of cameraTurnInput, the under-water pitch step of
+// cameraPitchInput and, on land, the ease of the camera's tilt. On land up / down only step a tilt level (block
+// +0xA8, 0..5, in cameraPitchInput), FUN_0228984C sets the tilt target +0xA0 from it and eases +0xA4 toward it with
+// shift 5 (call sites lr 0x02289EE4 / 0x02289F64 / 0x02289FE4); that ease is the vertical movement seen on land.
+// (0.2.0 scaled the right stick instead: below the game's stick-to-button threshold the camera stopped - vertical
+// at 50%, horizontal at 30% - and above it the turn speed did not change.)
 #include "camera_speed.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -39,6 +49,10 @@ constexpr uint32_t kFrameTime = 0x8E4;  // uGameCamera: float, 1.0 = one console
 constexpr uint32_t kBlock = 0x8E0;      // uGameCamera: the camera work block
 constexpr uint32_t kPad = 0xE30;        // player: its pad / state block (+0x1C8 input bits, +0x3D state)
 bool g_log = false;                     // MH3U_CAMERA_LOG=1
+std::atomic<float> g_speed{1.0f};       // camera speed setting, 1.0 = the game's own
+
+float speed() { return g_speed.load(std::memory_order_relaxed); }
+bool is_tilt_ease(uint32_t lr) { return lr == 0x02289EE4 || lr == 0x02289F64 || lr == 0x02289FE4; }
 
 float frame_time(const uint8_t* base, uint32_t cam) {
     const float t = ppc::ldf32(base, cam + kFrameTime);
@@ -68,7 +82,8 @@ void log_update(const uint8_t* base, uint32_t cam) {
 PPC_FUNC(camera_ease) {
     const int diff = static_cast<int16_t>(ctx.r[4] - ctx.r[5]);
     const int shift = static_cast<int>(ctx.r[6] & 0x3F);
-    const float t = frame_time(base, ctx.r[3]);
+    float t = frame_time(base, ctx.r[3]);
+    if (shift == 5 && is_tilt_ease(static_cast<uint32_t>(ctx.lr))) t *= speed();  // land tilt: slower with the setting
     ++g_eases;
     if (g_log) log_update(base, ctx.r[3]);
     if (same(t) || shift > 15) {
@@ -97,7 +112,7 @@ PPC_FUNC(camera_turn_input) {
         if (input(base, player, 9) && (input(base, player, 6) || input(base, player, 8))) ppc::st32(base, block + 0x94, before);
         return;
     }
-    const float t = frame_time(base, cam);
+    const float t = frame_time(base, cam) * speed();
     ++g_turns;
     if (same(t) || !input(base, player, 9) || !(input(base, player, 6) || input(base, player, 8))) return;
     const uint32_t pad = ppc::ld32(base, player + kPad);
@@ -119,7 +134,7 @@ void camera_pitch_step(ppc::Context& ctx, uint8_t* base) {
     const uint32_t cam = ctx.r[3], block = ctx.r[4], player = ctx.r[5];
     const uint32_t before = ppc::ld32(base, block + 0x90);
     sub_02286890__orig(ctx, base);
-    const float t = frame_time(base, cam);
+    const float t = frame_time(base, cam) * speed();
     const uint32_t pad = ppc::ld32(base, player + kPad);
     if (same(t) || base[pad + 0x3D] != 3 || base[block + 0x110] != 1 || ppc::ldf32(base, block + 0x114) != 30.0f)
         return;
@@ -150,6 +165,8 @@ PPC_FUNC(camera_pitch_input) {
 }
 
 }  // namespace
+
+void set_camera_speed(float s) { g_speed.store(std::clamp(std::isfinite(s) ? s : 1.0f, 0.1f, 1.0f)); }
 
 void register_camera_speed() {
     char* e = nullptr;

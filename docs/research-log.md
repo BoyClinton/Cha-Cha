@@ -1,0 +1,1111 @@
+# Research log
+
+Dated, append-only notes of discoveries. Newest at the bottom. Each entry: what was found, where
+(address / file), how it was confirmed, and what it unblocks.
+
+## 2026-10-22
+- Project skeleton created. No dump analysed yet.
+- Extracted `game/mh3u.wua` (5.8 GB) → `extracted/` (6.2 GB). Contains two titles, no DLC:
+  - `0005000010118300_v0` – base game, US (`MH3G_Cafe_US.rpx`, 9.5 MB → 25.2 MB ELF)
+  - `0005000e10118300_v32` – update v32 (`MH3G_Cafe_US.rpx`, 11.2 MB → 28.0 MB ELF)
+  - Internal name `MH3G` (Japanese title MH3G). Assets under `content/nativeCafe/arc/**.arc`.
+  - Both ELFs have the Cafe header (OSABI `0xCA`, e_type `0xFE01` = RPX); hashes in `config/target.txt`.
+- **Canonical target decided: update v32 RPX** (`extracted/0005000e10118300_v32/code/MH3G_Cafe_US.rpx`,
+  SHA1 `d97aabfc5a45362f88dfacb09f23c6dcae6faac2`). All addresses in `config/` refer to this build.
+- Ghidra 12.0 headless import + full auto-analysis of v32 RPX into `ghidra/MH3U` (≈12 min, 6 GB heap).
+  Loader: Maschell GhidraRPXLoader 0.9.2; language `PowerPC:BE:32:Gekko_Broadway` (GameCubeLoader).
+  Summary via `ghidra/scripts/ProgramSummary.java`:
+  - `.text` 0x02000020–0x031963A3 (~19.6 MB code), `.rodata` 0x10000000, `.data` 0x10164640,
+    `.bss` 0x1030A740–0x10470F23. Import stubs live in `.fimport_*` blocks at 0xC0006040+.
+  - 60,690 functions; 13,630 paired-single (`ps_*`/`psq_*`) instructions decoded correctly.
+  - 578 imports from 22 RPLs: coreinit 156, gx2 101, snd_user 37, snd_core 37, nn_fp 32, nsysnet 29,
+    padscore 29, nn_uds 28, nlibcurl 24, vpad 20, nn_act 17, nn_ac 13, h264 12, nsyshid 9, nn_save 9,
+    usb_mic 9, mic 8, proc_ui 7, nn_ndm 5, dmae 2, sysapp 2, nn_acp 2.
+  - Analysis warnings: "Unable to resolve constructor" decompiler errors only inside `.fimport_*`
+    stubs (0xC0007xxx–0xC0009xxx) – harmless. "Demangle CodeWarrior" analyzer crashed (NPE, from
+    GameCubeLoader); irrelevant, the binary is GHS-built.
+  - Notable: `nn_uds` (local wireless) and `h264` (video decode) imports; `nlibcurl`/`nsysnet` = online.
+- Import inventory → `config/imports.csv` (via `ghidra/scripts/ExportImports.java`): 588 entries =
+  578 function stubs + 10 data imports (all coreinit: default-heap function pointers
+  `MEMAllocFromDefaultHeap[Ex]`/`MEMFreeToDefaultHeap`, GHS libc `_iob`, `environ`, `__gh_FOPEN_MAX`,
+  C++ exception/atexit hooks). Every import has ≥1 reference.
+  - References by library: coreinit 6205, gx2 309, snd_core 192, nlibcurl 130, snd_user 110, nsysnet 70,
+    nn_fp 59, nn_uds 40, padscore 37, others < 35.
+  - Hottest: memcpy 2252, OSUnlockMutex 872, OSLockMutex 782, memset 575, OSReport 190,
+    OSGetSystemInfo 178, MEMAllocFromAllocator 159, MEMFreeToAllocator 135, OSSleepTicks 92.
+    → memcpy/memset and mutexes must be fast native implementations.
+  - **`OSDynLoad_FindExport` has 31 call sites**: the game resolves extra functions at runtime, so
+    `imports.csv` is not the complete HLE surface. Next: find the export-name strings passed to it.
+  - Libc is GHS's (`__gh_*`, `__ghs_flock_*`), supplied by coreinit – confirms GHS toolchain.
+- Resolved all 31 `OSDynLoad_FindExport` call sites (`ghidra/scripts/ResolveDynLoad.java`) → **53 runtime
+  imports, 0 unresolved**, appended to `config/imports.csv` as `kind=dynfunc`:
+  - Only two modules are loaded at runtime: **`swkbd.rpl`** (software keyboard, 33 exports) and
+    **`erreula.rpl`** (error/EULA viewer, 20 exports). Both are system applets – on PC they become a simple
+    text-input overlay and a message box.
+  - Mechanism: loaders `0x0307DC18` (swkbd) / `0x0308FC00` (erreula) call `OSDynLoad_Acquire(name, &handle)`
+    (handles at `0x1040E0F4` / `0x1043341C`), then call 31 six-instruction wrappers
+    `wrapper(void **out, const char *name)` → `FindExport(*handle, 0, name, out)`. Wrappers are shared by
+    exports with identical signatures, hence 31 wrappers for 53 exports. Function pointers land in
+    contiguous slot tables `0x1040E06C–0x1040E0EC` and `0x104333C8–0x10433414` (added to `symbols.txt`).
+  - Export names are GHS/Cfront-mangled C++ (`SwkbdCreate__3RplFPUcQ3_2nn5swkbd10RegionTypeUiP8FSClient`
+    = `Rpl::SwkbdCreate(unsigned char*, nn::swkbd::RegionType, unsigned, FSClient*)`), matching the wut
+    `nn::swkbd` / `nn::erreula` headers.
+  - Gotcha: the Ghidra decompiler fails on these wrappers ("Could not follow disassembly flow into
+    non-existing memory at 0x04007180"): the RPX branch to an import stub encodes 0x04xxxxxx while the loader
+    maps stubs at 0xC0xxxxxx. Use `SymbolicPropogator` (instruction-level) instead for such call sites.
+    This will matter for the recompiler too: import calls must be matched by relocation, not branch target.
+- Asset inventory (`scripts/asset_inventory.py` → `docs/formats/inventory.md`, `config/resource_types.csv`):
+  - Effective content = base v0 overlaid with update v32: 7,807 files. The update only adds/replaces 35
+    (item/text ARCs in `arc/ID`, 4 SE ARCs, and Japanese IME dictionaries `mw_iwnn/dic` for swkbd).
+    → The PC filesystem layer must overlay update over base, like Cemu does.
+  - ARC format v16 fully parsed on 4,609 archives / 58,609 entries; documented in `docs/formats/arc.md`.
+    Decompressed size = `size_flags >> 3` (BE bitfield), verified 9,824/9,824 samples.
+  - **Type hash = `~crc32(class) & 0x7FFFFFFF`**: all 45 resource types named from identifiers in the
+    executable, one consistent hash variant → names are solid. Largest: `rTexture` 17,244 entries (3.35 GB
+    uncompressed), `rSoundSourceDSPADPCM` 10,983, `rModel`/`rMaterial` 6,170 each.
+  - `memory.ini` is a shared MT config with allocator budgets for **Win32**, CTR (3DS) and CAFE (Wii U):
+    the engine ran natively on Windows during development. Useful as the heap layout for our runtime.
+  - `shaderPack.spkg` is `rEmulationShaderPackage` (12.7 MB); `nativeCafe/es` holds 969 `ESX` shaders.
+    Worth checking before writing a Latte shader translator: if these hold source/IR, GX2 shader translation
+    could be partly avoided.
+  - Many types are `XFS` (MT reflection serialisation) – decodable generically once MtDTI is mapped.
+  - Movies are plain MP4 (2.3 GB), audio is DSP-ADPCM (`.dspw`, 1.8 GB).
+- Shader investigation (`docs/formats/shaders.md`, `scripts/shader_inventory.py`):
+  - **"Emulation shaders" emulate the 3DS GPU, not the PC.** The Wii U renderer is MT Framework *Lite* (3DS
+    branch) with a DMPGL layer: 3DS fixed-function state (`dmp_TexEnv[0..5]`, PICA200 fragment-lighting LUTs
+    `LutD0/D1/FR/RR/RG/RB`, gas fog, shadow texture) selects a precompiled GX2 pixel shader by 32-bit state
+    hash (`es/<hash>.es`). Strings in RPX: `DMPGL`, `dmp_TexEnv[n].combineRgb`…, `rEmulationShader`,
+    `rEmulationShaderPackage`, `rLtShader`, `sLtShader`.
+  - All shaders are compiled GX2 (`Gfx2` v7.1 GFD) – no source/IR. RPX embeds none. Closed set of
+    **667 unique shaders**: 582 pixel, 78 vertex, 7 vertex+geometry.
+  - `shaderPack.spkg` = the 967 `.es` shaders bundled with ids (965 identical, 580 unique contents).
+  - `LtUserShaderPackage.lfx` (MFX) names the whole effect system (techniques, VS/PS, IA layouts, CBs, states,
+    `DMP_*`); its vertex constants are `c[0..95]` = PICA200 uniform registers.
+  - Strategy impact: offline Latte→SPIR-V translation of a fixed, verifiable set becomes viable; or skip the
+    582 pixel shaders entirely by generating PICA200 fragment shaders from DMPGL state (3DS-emulator style).
+- **Decision (user): offline Latte → SPIR-V translation of all 667 shaders.** One uniform pipeline for every
+  stage; no dependence on reversing the DMPGL state hash. Plan: `docs/formats/shaders.md` § Translation plan.
+- rTexture (`docs/formats/tex.md`, `scripts/mt_tex.py`):
+  - Header = magic + 3 MSB-first bitfields: version `0xA5` (as on 3DS) | flags; mips:6 width:13 height:13;
+    faces:8 format:8 unk:16 (=8). Consistent on all 17,244 textures.
+  - Only 3 formats: `0x0C` (8,905, 1 B/texel → BC3?), `0x0B` (7,941, 0.5 B/texel → BC1?), `0x03`
+    (398, 4 B/texel → RGBA8). Names by byte rate; block decode still to confirm.
+  - Data is the raw GX2 tiled surface + mip chain. Fitted size model – macro tile 32×16 elements, micro
+    8×8, level 0 2D unless texel w<32 *and* h<16, later levels degrade to 1D when elements w<32 *or* h<16 –
+    matches **17,052/17,052** single-face textures exactly. Cube maps (192) not yet: +0x6C bytes (SH
+    coefficients?) and per-level 6-slice layout.
+  - Next for textures: implement addrlib thin1 deswizzle (Cemu LatteAddrLib as reference), decode one BC
+    texture to confirm formats, then fit cube maps.
+- Texture deswizzle done (`scripts/mt_tex.py export`): addrlib R6xx thin1 micro/macro addressing, 2 pipes /
+  4 banks / 256 B interleave, **pipe/bank swizzle 0**. Formats **confirmed**: `0x0B` = BC1, `0x0C` = BC3,
+  `0x03` = RGBA8 (R,G,B,A byte order); BC blocks little-endian. Checked visually (BC1 lobby background,
+  BC3 icon atlas with alpha, RGBA8 mip 1) and numerically: 1D-tiled L1 vs downscaled L0 = 2.7/255 mean over
+  40 textures vs 34.2 for wrong addressing. Mip offsets and the 2D→1D degrade rule are thereby confirmed too.
+- Cube maps solved: header + 0x6C bytes (27 floats, SH?) + per level the faces as slices – 6 slices at level 0,
+  **padded to 8 at later levels** – with addrlib per-slice bank/pipe rotation (`^= slice*2`) in 2D tiles.
+  Sizes 192/192; each face's 1D level 1 matches downscaled level 0 within 0.7–2.3/255; without rotation
+  faces 1,2,3,5 break. All 17,244 textures in the game are now fully decodable.
+- **MtDTI + RTTI recovered** (`docs/engine.md`, `ghidra/scripts/RecoverDTI.java`, `config/dti.csv`,
+  `config/vtables.csv`, `scripts/merge_symbols.py`):
+  - `MtDTI::MtDTI` = `0x02D63178`, args (this, name, parent, size, id, r8, r9); layout 0x20 bytes with the
+    vptr at +0x1C (GHS puts vptr after the first polymorphic class's members); size = `w14 >> 9`;
+    id = `crc32(name, ~0) & 0x7FFFFFFF` when 0 is passed (`0x02D63150`).
+  - Static initialisers are mostly not Ghidra functions (only reached via the ctor table) – propagate
+    constants over the range from the previous `blr`/`b`/gap to the next `blr`.
+  - 1,251/1,251 registrations decoded; all 45 ARC resource types match DTI ids exactly.
+  - GHS emits RTTI: vtables start `{0, typeinfo*}`, typeinfo `{0x1014E0B8, name, …}` → 3,946 named
+    vtables (45,289 slots), 2,420 classes beyond the DTI set.
+  - `symbols.txt` grew from 57 to 10,455 entries (DTI objects, MyDTI vtables, newInstance factories,
+    vtables, typeinfos).
+- **Virtual functions named** (`ghidra/scripts/NameVirtuals.java`, `config/virtuals.csv`, `docs/engine.md`):
+  - GHS typeinfo base list at typeinfo+0x0C = `{base typeinfo*, flags}`; typeinfos are duplicated per TU, so
+    bases must be matched by name (by address only 2,232 of 3,946 resolved; by name 3,490 + 125 roots).
+  - Slot 0 = deleting destructor `(this, flags)` for 3,866/3,942 classes, verified by the `flags & 1` test
+    shape (`rlwinm. rX,r4|copy,0,31,31`); named `X::~X`.
+  - 26,236 distinct virtual functions: 23,635 override slots, 2,601 introduce new ones; 777 shared stubs;
+    `0x03122C18` = pure-virtual handler (689 slots).
+  - **15,535 virtual targets had never been disassembled by Ghidra** – auto-analysis misses everything only
+    reachable through vtables. Must be fixed before the function list for the recompiler is trusted.
+  - `symbols.txt`: 35,440 entries, 26,241 named functions.
+- **Ghidra project repaired** (first writable run; backup in `build/ghidra-backup`):
+  - Static ctor table = `0x101632C4`–`0x1016455C` (.rodata), 1,191 initialiser pointers.
+  - `CreateFunctions.java` created 18,501 functions (ctor table + all vtable slot targets; 8,926 already
+    existed, 0 failures); re-analysis 431 s → **79,851 functions** (was 60,690).
+  - `ApplySymbols.java`: all 26,241 function names + 9,199 labels applied in 3,739 namespaces, 0 failures.
+  - `CheckCoverage.java`: 26,241/26,241 named functions present, 45,289/45,289 vtable slots are functions.
+- First runtime code: `runtime/fs` `OverlayFs` (C++20, CMake, MSVC /W4 clean). `/vol/content` and `/vol/code`
+  layered update-over-base, `/vol/save` writable; guest paths normalised (`\`, `//`, `.`, `..`; climbing above
+  `/` rejected). Test `fs_overlay` runs against the real dump: replaced/added/untouched files resolve to the
+  right layer; merged `arc/ID` = 79 entries (69 base + 10 update-only). Phase 0.5 complete.
+- **Function boundary list + switch tables + indirect calls** (Phase 1; backup `build/ghidra-backup-phase1`):
+  - `.text` (`0x02000020`–`0x031963A4`) had 1.7 MB outside any function: small functions reached only via data
+    (`blr` stubs, `li r3,0; blr`, vtable tail-call thunks). No zero padding exists in `.text`.
+  - GHS switches are inline: `bctr` followed by N `b case` instructions (base = `bctr+4`, e.g. `0x02006EAC`).
+    Guard is `cmplwi idx,N` + `bgt` (N+1 cases) **or `bge`** (N cases); index can be rebased (`subi idx,x,0x47F`
+    at `0x0288266C`, 13 cases) or guarded by a binary search (`0x024069E8`, 8 cases – Ghidra had 225).
+    1,102 switches / 26,096 cases; Ghidra had found 997 and missed case 0 on 17 of them. All 1,102 now agree.
+  - Some switch tables `b` straight into other functions (tail-call cases, e.g. table at `0x022BACD0`); Ghidra
+    glued ~100 KB of functions onto 0x78-byte `FUN_022ae750`. Split 122 entries out of 13 functions.
+  - `0x02080120` was typed as data, cutting a deleting destructor's tail; fixed by hand.
+  - Result: 88,225 functions, 0 overlaps, 24 bytes uncovered (data words), 0 mid-function branch targets;
+    symbols/vtables still 26,241/26,241 and 45,289/45,289 (`CheckCoverage.java`).
+  - Indirect calls: 31,901 virtual (28,593 calls + 3,308 tail), 789 pointer-to-member, 1,635 plain pointer.
+- **MT Framework core** (`docs/engine.md` § Core):
+  - `e_entry` = `0x02E84370` → `main` `0x02000020`: `sApp` on the stack (0x2D38 frame ≥ `sApp` 0x2D30), create
+    main from `sLtMH3GMain::DTI` (`0x02B9AF24` calls MyDTI slot 1 through the DTI vptr at +0x1C), `run`
+    `0x02B9AF98` = main loop `while(!main->+0x74) main->vf6()`.
+  - `sLtMH3GMain::vf6` `0x02003954` drives 67 systems stored at `+0x1770..+0x1878`; mapped by following each
+    `new` → ctor → `stw` and identifying ctors by the vtable they write (`CtorClass` scratch script).
+  - Singletons: ctor stores `this` to `mpInstance`; 70 found (`FindSingletons.java`), 64 with ≥3 reads.
+  - Allocator slots from `MtCafeHeapAllocator` imports: 6 alloc (`MEMAllocFromExpHeapEx`), 12 free
+    (`MEMFreeToExpHeap`), 13 getSize (`MEMGetSizeForMBlockExpHeap`). Per-class allocator =
+    `0x103D6100[(dti->w14>>3)&0x3F]` (`0x02D63E50`).
+  - `MtObject` slot 4 = `getDTI` (`MtThread::vf4` returns `0x103F3370`); slot 3 likely `createProperty`.
+  - No job system; threads are `MtThread` subclasses over a thin `OSCreateThread` wrapper `0x02D7C9DC`.
+  - symbols.txt: 35,587 entries; Ghidra re-applied, `CheckCoverage` 26,317/26,317 and 45,289/45,289.
+
+## 2026-10-23
+- **Render submission** (`docs/engine.md` § Render submission): `GX2DrawEx` has 3 call sites, all in
+  `0x02BBED98` (`buildDisplayList?`), which diffs consecutive draw records and emits only changed state into a
+  GX2 display list; runs on `sLtRender::ExecuteThread` (event handshake `0x02BC2278`). Present =
+  `0x02BBF9D0` (DirectCallDisplayList → copy to TV/DRC → swap → flush → vsync), reached from `sLtRender` slot 10.
+- **File loading** (`docs/engine.md` § File loading): sResource loader thread `0x02BD75E0` (created with
+  `0x02D7D0B4`, 0x40000 stack, prio 15). Path = `sprintf("%s\%s.%s")` at `0x02BD73A0` with cResource slot 6
+  (verified: `rArchive::vf6` → "arc", `rTexture::vf6` → "tex"); `MtFile`/`MtFileStream` open → cResource slot 9
+  `load(stream)` (`0x02BD7554`). sResource slots 11/12/13 = async request / sync create / find (names `?`).
+- symbols.txt 35,602; Ghidra re-applied, CheckCoverage 26,331/26,331 + 45,289/45,289.
+- **createProperty + XFS**: MtObject slot 3 = `createProperty(MtPropertyList*)` – `rPopData::vf3`
+  `0x02071904` registers `mPopDataType` (helper writes type 6), `DataList` (0x19, not serialised),
+  `PopEditData` after the base `cResource` props; `PopEditData::vf3` `0x02071F64` registers `flag`/`area` at
+  +0x10/+0x12 with type 5. MtProperty: +0 name, +4 type<<16|attr, +8 owner. XFS files embed exactly this list;
+  object size field counts itself; type 0x80 = resource ref (`u8 2`, class name, path). `scripts/mt_xfs.py
+  scan`: 848/848 files exact, 23 classes all named via dti.csv. Format: `docs/formats/xfs.md`.
+- **Secondary vtables** (Phase 1 done): GHS vtable words are `{s16 << 16, ptr}` – secondary header
+  `{offset << 16, typeinfo}` (e.g. `0x101610F4` `{0x00680000, JobDataStoreCheckNotification ti}`), slots
+  `{-offset << 16, thunk}` with thunks `subi r3,r3,offset; b target` (`0x022492B8`). Typeinfo base-list word:
+  offset `w >> 16`, `0x200` = last (earlier "651 multi-base classes" was a mis-parse; real: 47). 40 secondary
+  vtables, 406 slots, 382 thunks; all 23 expected (class, base) pairs found. Names `Class::__vtbl@Base`,
+  `Class::__thunk_<off>_<target>`; symbols 35,957; Ghidra re-applied, CheckCoverage 26,646/26,646.
+- **Phase 2 started – own recompiler** (decision in CLAUDE.md). Espresso decoder `recomp/src/espresso.*`:
+  4,610,267 words in all function bodies decode (0 invalid); vs Ghidra 640,600 distinct words, 0 op / 0 register
+  mismatches (`scripts/check_decoder.py`).
+  - **Paired singles are unused by game code**: opcode 4 only as `ps_merge10 fN,fN,fN` (17,209, prologue/epilogue
+    ps1 save), opcodes 56/57/60/61 count 0 in raw `.text`.
+  - The decompressed ELF is unrelocated at import sites: ~6.9k distinct words (`bl` to `0x0319xxxx`, import-data
+    `lis/addi`) differ from Ghidra's relocated memory; `.rela.text` (0x46AB74 bytes) etc. must be applied by the loader.
+- **Recompiler loader** (`recomp/src/loader.*`): 524,610 RPL relocations (ADDR32/ADDR16_LO/ADDR16_HA/REL24); all
+  internal ones are no-ops (file already linked), 7,298 import relocations change bytes; 588 imports = imports.csv;
+  7,189 import call sites. `$UNDEF` (undefined weak, 28 sites in the crt, e.g. `0x02E843BC`, `0x102FFFBC`) → 0,
+  where Ghidra uses placeholder 0xC001D000. With that, `.text/.rodata/.data` equal Ghidra's relocated memory exactly.
+- **Emitter, first cut** (`recomp/src/emitter.*`, `recomp/include/ppc_context.h`): leaf functions only. 29,319 of the
+  game's functions (245,885 instructions) emit and compile warning-free; self-test executes 10 hand-encoded
+  functions correctly. Largest rejection classes: calls 44,795, tail branches 7,391, `bcctr` 3,826, LR writes 2,510,
+  atomics (`lwarx`) 194.
+- **Emitter: calls, tail calls, LR, imports.** Host-stack calls (`bclr` = return), tail calls to entries, imports via
+  the loader's call-site map. 66,913/88,225 functions (61.6% of instructions) emitted; with stubs for the rest, the
+  import stubs and an 88,225-entry function table the whole program compiles (0 warnings, ~3.5 min) and links.
+  Remaining blockers: `bctrl` 16,745 functions, `bcctr` 4,159. 5 crt functions call `$UNDEF` weak symbols
+  (`0x031270E4`, `0x03127DCC`, `0x0312C514`, `0x0312C568`, `0x0312C830`).
+- **Emitter: switches + indirect calls.** Switch `bctr`s (config/switches.csv) → `switch (ctx.ctr)` over inline slots;
+  `bctrl`/`bclrl`/plain `bctr` → `ppc::call_indirect` (function + import tables). Coverage 61.6% → **99.7%** of
+  instructions: 87,833/88,225 functions; program compiles (0 warnings, ~4.5 min) and links. Left: 194 atomics,
+  135 multi-range, 47 falls-off-end, 9 `lswi`, 5 `$UNDEF` calls, 2 `tw`.
+- **Emitter: 100%.** Atomics (reservation + host CAS), multi-range bodies, fall-through into the next function (all
+  47 "falls off end" cases end where another function starts), `lswi`/`stswi`, `tw`/`twi`, `$UNDEF` calls (→ address 0
+  via call_indirect), and `.syscall` (0x02000000 = `nop; blr`, called by crt `0x0312C830` after `creqv eq`) as a
+  function. Result: 88,226/88,226 functions, 4,610,269 instructions, 0 stubs; compiles (0 warnings) and links.
+- **Phase 3: first boot of recompiled code** (`runtime/`, `docs/runtime.md`). `mh3u` maps the image, sets up
+  memory/heaps/stack and calls `__rpx_start`; the guest crt runs the 1,191-entry ctor table (`0x02E842EC`) and
+  `main`. HLE written as reached: coreinit base/memory/sync/time/threads/FS/UC/MCP, nn_act, nn_save, proc_ui.
+  Findings: no code uses r2/r13 small-data bases; `OSIsDebuggerInitialized` must be 0 (else `tw 31` in
+  `__rpx_start`); MEM1/foreground base heaps are frame heaps; the game takes the whole MEM2 base heap and carves 11
+  `MtHeapAllocator`s; threads created: `sMain` 0x0294B204, sResource loader 0x02BD75E0 (stack 0x40000, prio 15 –
+  as predicted in Phase 1), MtThread 0x02D7CA84. Boot reaches `gx2.GX2Init` with 53 imports exercised, no faults.
+- **GX2 setup + window.** SDL3 (from the Vulkan SDK) window, Vulkan 1.3 device (RTX 3060) and swapchain on the host
+  main thread; guest on its own thread. Game's GX2 setup: TV mode 5 (1080p), format 0x1A, buffering 3, buffer in the
+  foreground-bucket heap at 0xE0001000. Found: `MEMGetBaseHeapHandle(8)` is the foreground bucket (not 2) – the game
+  takes all of MEM1 (frame heap) and all of FG (then MEMCreateExpHeapEx on it). Boot continued through input,
+  OSDynLoad (erreula/swkbd), peripherals/network (offline), alarms, and loaded `shaderArc.arc` + iWnn dictionaries
+  via FS; registers on interface 6 are probed (32-bit, regs 3..0xE). Stops at `snd_user.AXFXSetHooks` (audio).
+- **Silent AX → main loop.** With AX/AXFX HLE (voices advanced by pitch at 32 kHz per 3 ms frame, frame callback
+  thread) the game boots into its main loop: display lists, `GX2DrawEx`, `GX2CopyColorBufferToScanBuffer`,
+  `GX2SwapScanBuffers`. Start-up files loaded via FS include `LtUserShaderPackage.lfx`, `shaderArc.arc`, system
+  textures, IME dictionaries, `initial.scsr`/`initial_d.sdsr`, `ID_resi_eng.arc`, `shell.arc`, `quest.stqr`.
+  Unpaced it ran ~230 fps (headless) – the game paces on the swap, so swaps now complete on a simulated 60 Hz vsync.
+  900 frames: no faults, 228 imports exercised, ~400k GX2 calls. Registers touched: interface 6 regs 0..0xE,
+  interface 3 regs 0/2/3, 16-bit interface 0 regs 0x2/0x6C (all read as 0).
+- **GX2 rendering, stage 1.** `GX2EndDisplayList` returning 0 was why `GX2DirectCallDisplayList` was never called:
+  with a nonzero size the game replays its lists (~420 commands/frame). Per boot frame: ClearColor on the 1080p RGBA8
+  (fmt 0x1A, 2D-tiled, pitch 1920) target `0x1668D454` to (0.2,0.2,0.2,1), ClearColor on a 1024x1024 R32F (0x80E)
+  target to 1.0, ClearDepthStencil on `0x1668D774`, ~11 `GX2DrawEx` (VS `0x1676A880`/`0x167C49C0`, PS programs 0x310
+  bytes), clear to black, one 854x480 draw (GamePad), `GX2CopySurface` ×2, `GX2CopyColorBufferToScanBuffer` from
+  `0x145FA4B4` (1920x1080, tile 4, swizzle 0). TV image black – consistent with draws not being rasterised. Tiling
+  (addrlib thin1) matches `mt_tex.py`. 600 frames, no faults.
+- **Latte shader translator** (`tools/shaderc-latte/`, [shaders.md § Translator](formats/shaders.md)). Shader
+  microcode in the GFDs is **little-endian** (headers big-endian). All 668 unique shaders by runtime key (82 VS,
+  581 PS, 5 GS – a VS+GS GFD yields one of each) decode with no unknown opcodes, confirming the R700 encodings
+  (OP2 opcode at ALU_WORD1[17:7]). Feature use is narrow: no relative GPR/constant addressing, no PRED_SEL, no
+  uniform-register mode (all mode 1 or 2), only SAMPLE/SAMPLE_C, 10 DX10 loops (with ALU_BREAK), CUBE in 7 shaders.
+  Every pixel shader declares the same 12 samplers (types: Texture0-3 2D=1, TextureCube0=4, TextureShadow=6,
+  Lut* 1D=0; resource id = sampler id = location). Uniform blocks are read via KCACHE banks and dynamically via
+  VTX fetch from buffer 0x80+block (0x81 joint matrices in VS, 0x85 in PS). POSITION_ENA pixel shaders put the
+  window position in GPR0 with a semantic-0 placeholder input. Only 10 varying semantics exist game-wide (0x80-0x89).
+  One pixel shader (`a5732af121663dd9`) has 7,661 CF instructions; the median is 22. GS pairs: VS writes the ES->GS
+  ring with MEM_RING (dword array_base, elem_size 3), GS reads it relative to R0.x (vertex 0 only → points in),
+  writes 11-vec4 vertices (sq_gs_vert_itemsize 44 dwords) to the GS->VS ring at absolute offsets, and the copy
+  shader exports position + 10 params per vertex; outputs are 4- or 16-vertex triangle strips. Result: 668/668
+  translated to GLSL, compiled with glslc and clean under spirv-val (Vulkan 1.3).
+- **Draws on Vulkan; first screen renders** (`runtime/gfx/renderer.*`, docs/runtime.md § Rendering, stage 2).
+  Findings: **uniform blocks are little-endian in guest memory** (values read LE: -1.0, 100.0, -1/1024; read BE they
+  were garbage) while vertex attributes are big-endian (float positions decode correctly with GX2's default swap).
+  The boot frame's clears all come before its draws. The "points" draws at boot are 2D sprites: VS `418dfbf3…`
+  writes the ES→GS ring, GS `1e2db7fd…` expands each point to a quad (attribute semantics: 0 rect x0,y0,x1,y1 in
+  pixels, 1-4 corner colours UINT 8888, 5 UV rect in texels, 6 flags). Its branches write their 4 output vertices
+  at the same GS→VS ring offsets, so the copy-shader vertex index must be the run-time emit count (translator fix).
+  Two full-screen passes sample the render target they write (`d45d1834…` on the TV target, `e86db455…` copies
+  TV → GamePad 854x480). Fonts: 1024x1024 BC2 (fmt 0x032) and 1024x512 RGBA8 atlases. The first screen is the
+  "Wii U GamePad has been detected" notice (translucent panel, gold frame colour (103,80,27), white text with black
+  shadow); the game waits there for a button. 600 frames headless and 400 windowed: 0 validation errors, ~44 fps
+  (Debug).
+- **Input (VPAD from host input)** (`runtime/input/`, docs/input.md). The game reads `VPADRead(0, buf, 16, &err)`
+  once per frame from `sub_02BCBC44` and copies sample 0 (0xAC bytes) to +0x2D0 of its pad object; on error -2 it
+  re-checks, on -5 it calls `VPADInit`. Scripted A presses (`MH3U_INPUT_SCRIPT`) get past the "Wii U GamePad has
+  been detected" notice to "Set extended data save settings for Monster Hunter 3 Ultimate?" (Yes/No; the game's
+  dialog buttons are indexed triangle strips with 0xFFFF primitive restart). After answering, the boot sits on a black screen
+  (only the two full-screen passes drawn) through frame 3000 – next blocker, likely save data. A DualSense on the
+  dev machine is picked up by SDL3's HIDAPI driver.
+- **Intro movie → title screen.** After the save-settings prompt the boot plays `nativeCafe/movie/09_EU.mp4`
+  (1920x1080 H.264 High@4.1, IPB with non-reference B frames, no audio track - music is `sound/bgm/movie/movie_01`).
+  `uMovie::Player` (vtable 0x1009CD48; Parsing / VideoDecode / AudioDecode worker threads polling every 1 ms) set its
+  stop flag +0x30a because setup `FUN_02a4370c` failed: work memory (`H264DECMemoryRequirement`) + 28 frame buffers
+  of `align(w,256)*h*1.5` (+0xdd0) are allocated from one heap, and the HLE's 0xB400000 work size exhausted it after
+  12 buffers (13 `H264DECCheckMemSegmentation` calls, then free-all). `FUN_02a4415c` creates 3 Y (R8) + 3 UV
+  (R8G8, half size) movie textures; +0xd11 = video ready. The decode step `FUN_02a44ed4` converts the MP4's
+  length-prefixed NALs to Annex B itself and treats `H264DECExecute` results with bits above 0xFF as errors; with
+  OUTPUT_PER_FRAME it needs each unit's picture before feeding the next. With a Media Foundation decoder made to
+  output in decode order (see docs/runtime.md § Movies) the movie plays and the title screen renders ("PRESS A",
+  Ver. 1.02, frame ~1000 with scripted presses). 0 Vulkan validation errors through 1200 frames.
+- **No setjmp/longjmp or C++ exceptions** (Phase 2 item). ELF sections: .syscall .text .rodata .data .module_id
+  .bss .ipc_smem + relocations/imports/symbols - no .eh_frame or GHS exception tables. No setjmp/longjmp/__throw/__cxa
+  strings. In the recompiled code no instruction loads r1 from anything but the stack (9,077 `or r1,r11,r11` + 2
+  `ori r1,r11,0` epilogues), so nothing longjmps. Imports have no fiber/stack-switch calls. `std::exception`,
+  `std::bad_alloc`, `std::logic_error` appear only as RTTI/vtables (0x0298B548..) from the standard library.
+- **clang-cl build** (Phase 2 done). With the VS 2026 "C++ Clang tools" component, `cmake -B build/clang -T ClangCL`
+  builds everything including the 64 generated `recomp/out` files with no warnings from generated code. Hand-written
+  fixes: `&&`/`||` parentheses in espresso.cpp, an unused emitter helper, `getenv` → `_dupenv_s`;
+  `-Wmissing-field-initializers` is off for clang (Vulkan `Vk...Info x{sType}` idiom). 9/9 tests pass; the clang
+  Debug build runs ~25% faster than MSVC Debug (1200 frames: 23.4 s vs 30.9 s) and reached the **main menu** (New
+  Game / Continue / Options / Data Transfer / DLC) with scripted A presses at frames 700 and 1000.
+- **Audio output.** The game drives AX with `AXSetVoiceDeviceMix` (44k calls per 1300 frames) routing every
+  voice to exactly one TV channel (c0..c5, bus 0) and GamePad voices to DRC 0 L/R; `AXGetDeviceMode` returning 0
+  does not stop it using all 6 TV channels. HLE pitfall: writing the return value (r3) before reading the voice
+  argument (also r3) silently dropped every device mix. Mixer per Cemu `ax_mix.cpp` → SDL3; recorded boot audio has
+  music during the intro and on the title screen.
+- **Mip offsets (addrlib).** The renderer's first mipmapped textures (character creation, e.g. a BC 128x128 x7 at
+  image 1D14A000) showed `mipLevelOffset` steps of 0x800 from our approximate `GX2CalcSurfaceSizeAndAlignment`,
+  while the `.tex` data is back to back (1D levels aligned to 256 B): every level from 2 on was read at the wrong
+  offset. Replaced sizing and detiling with Cemu's LatteAddrLib (vendored, MPL-2.0, `runtime/gfx/addrlib/`): the
+  player model's clothing went from noise to correct. Scripted A presses now reach **Character Creation**.
+- **Stencil / RECTS / GamePad screen.** `GX2SetDepthStencilControl` has 13 arguments: 9-13 are read from the
+  caller's parameter area (r1+8); display-list recording now saves 8 stack words per command and replays them in a
+  parameter area below the replaying thread's stack pointer. The GamePad scan buffer (854x480 RGBA8, e.g. "Look at
+  the Main screen" during character creation) is now shown as an inset.
+- **Pro Controller (padscore).** `sPad` keeps 5 pads; `sPad::WiiPad` (vtable 0x100AFFCC) per WPAD channel at
+  `sPad::mpInstance (0x102CEA34) + 0x70 + chan*0x4A0`. Connect callback 0x02BC9DCC (flags +0x498 = 1, registers
+  extension callback 0x02BC9CD4, `WPADGetInfoAsync` with 0x02BC9CEC); extension type 31 → flags 0x11; vf7 0x02BCB068
+  reads `KPADReadEx(chan, buf, 16)` and copies sample 0 to +0x2D0; vf8 0x02BCB108 maps status +0x60 Pro bits (A 0x10
+  → internal 0x2000, same as Wii Remote A). With a connected Pro Controller the boot skips the GamePad notice, but
+  Pro presses do not skip the intro movie (GamePad presses do): the active-pad selection is still to find.
+- **Render comparison vs Cemu.** Cemu 2.6 (portable, keyboard GamePad profile, F12 = native 1920x1080 TV
+  screenshot) and the port show the same boot flow without a save (GamePad notice → "In-game language has been
+  changed" → save-data prompt → extended-data prompt → movie → title → menu → character creation). Pixel comparison:
+  GamePad notice bit-exact; Yes/No prompts PSNR 59-62 dB; title/menu 41-43 dB with differences only in animated
+  elements; character creation 30 dB from the model's idle pose (UI identical, textures and shading equal at 3x).
+- **Comparison follow-ups.** The remaining differences against Cemu are animation phase: the selected Yes button
+  pulses (port frames 1220-1292: mean brightness 46.7-53.2, period ~36 frames; Cemu's capture 51.6 lies inside);
+  title logo shimmer, menu highlight and the model's idle pose likewise. The GamePad image (854x480 target
+  0x15919800) matches Cemu's layout (4:3 panel between dark side panels; the Shakalaka shown varies). The
+  "dark strip" on the inset was the right side panel.
+- **Controller option.** With no GamePad (`MH3U_CONTROLLER=pro-only`) the game says "The set controller could not
+  be detected… change your controller settings from the Options menu": the active controller is a game option in
+  the save, so with a GamePad-made save Pro Controller input is ignored until that option changes – as on hardware.
+  Pro A then dismisses the notice, skips the movie and reaches the main menu.
+- **No CPU readback of render targets needed so far.** `MH3U_WATCH_TARGETS=1` marks the whole pages inside every
+  cached render target no-access each frame: 0 accesses from boot to character creation (positive control: an
+  `MH3U_PEEK` of the TV buffer at exit is caught). Partial first pages must be excluded – they hold the GX2 surface
+  structs the HLE reads every frame.
+- **Phase 3 closed (2026-10-24).** Audio confirmed by ear in a windowed run (intro, title music, effects). All Phase 3
+  items ticked; open notes carried into Phase 4: gameplay button mapping, re-run MH3U_WATCH_TARGETS in gameplay,
+  AUX reverb (AXFX) if wanted, GamePad screen and gameplay scenes not yet compared with Cemu.
+- **Pro Controller as the default.** The controller option lives in the `system` save file: a save made with no
+  GamePad starts "set to the Wii U Pro Controller/Classic Controller", and a GamePad-set save is switched to Pro the
+  first time the game finds no GamePad (afterwards GamePad-only mode reports "The set controller could not be
+  detected", and Options → Controller Settings shows Pro selected). The port now defaults to `MH3U_CONTROLLER=pro-only`
+  and hides the GamePad screen; audio confirmed by ear in a windowed run of the port.
+- **swkbd → PC keyboard.** The character-creation name notice stayed up forever because the game waits for the
+  software keyboard to be usable: `SwkbdInitLearnDic` must succeed (Cemu fills an empty 0xA460-byte "NJDC"
+  dictionary) and `SwkbdIsNeedCalcSubThreadFont/Predict` report some work after `SwkbdCreate`. With those, the game
+  calls `SwkbdAppearInputForm` (max 10 characters for the hunter name), polls `SwkbdIsDecideOkButton`, reads
+  `SwkbdGetInputFormString`, and the Name field shows the typed text ("R y o").
+- **Saves and first in-game scene (2026-10-24).** Scripted keyboard/Pro input through New Game: name via the PC
+  keyboard (swkbd HLE), Character Creation OK, Touch Panel Settings (Standard), Character Select slot 1 → loading →
+  Moga Village with the Village Chief's opening dialogue (3D scene, NPCs, player in starting gear, dialogue boxes)
+  rendering. The save HLE wrote `user1` (35,364 B) and updated `system`. A fresh boot → Continue shows the
+  character in Character Select ("Ryo", Male, 0:00, 0z, HR 0) and loads it into the village ("Mornin', hunter!
+  Ya sleep well?"). In Character Creation the first d-pad press after closing the name keyboard is swallowed (6
+  presses reach OK from Name).
+- **Cemu addrlib replaced by our own code (2026-10-24).** The vendored Cemu files (`LatteAddrLib*`, `LatteReg.h`,
+  ~2,200 lines, MPL-2.0) and the Cemu-adapted `gx2_surface.cpp` are gone; `runtime/gfx/addrlib/latte_surface.*`
+  (sizing, mip offsets, element addresses for all 16 tile modes) and a rewritten `gx2_surface.cpp` replace them.
+  Equivalence: a seeded sweep (`addrlib_sweep.h`: 400k per-level sizings, 100k `GX2CalcSurfaceSizeAndAlignment`
+  runs, every level/slice of 6k surfaces with per-element offset hashes – 597,700 cases, 5.93M values) gave
+  identical results from the old and new code (hash `0x0F359C48B73370F2`, now pinned in the `gfx_addrlib` test).
+  Notes from the rewrite: with 2 pipes the 3D tile modes rotate by 1 per slice, so they never fall back to 2D;
+  GX2's unpadded-linear (mode 16) size is computed in 32 bits; a 0x0 surface gets 0 levels and keeps its old
+  size fields; the old code divides by zero for an invalid format with a mip chain (ours pads nothing).
+- **Live name entry � where the game takes the swkbd string (2026-10-24).** Each swkbd import goes through a tiny
+  wrapper at 0x0307E250..0x0307E290 (one per `p_Swkbd*` slot). `sSoftwareKeyboard::vf6` (0x0293C0B0, per frame) polls
+  `SwkbdIsDecideOkButton` and on OK/cancel calls the listener at this+0x28D0, vtable +0x34, with (0 = OK / 1 = cancel,
+  `getInputFormString?` 0x0293C098); its return lands in this+0x28A8 (reset to -1 every frame). The string is only
+  copied into the game's own text by 0x0211D774 (via thunk 0x0211DB48, 14 UI callers) once this+0x28A8 == 0, i.e.
+  after OK � so the game's Name field cannot show letters while typing on its own: the real Wii U draws them in the
+  swkbd applet's own input form. Options for live text: draw our own input box (as the applet did), or find the
+  character-creation caller of 0x0211DB48 and refresh its field each change. 0x0211D774 also has a USB-keyboard
+  path (`sKeyboard`, this+0x6F5; string from 0x0211B3FC(&0x103D3018)) used for chat.
+- **Performance: village 12-16 FPS -> 30 FPS (2026-10-24).** New `MH3U_PROFILE=1` (runtime/boot/profiler.cpp): samples
+  every thread's stack at ~1 kHz, prints per-thread top functions and blocking sites at exit, plus the FPS every 5 s;
+  guest threads carry Windows thread descriptions. Renderer stats now include GPU ms/frame (timestamp queries) and MB
+  streamed per frame. Headless benchmark: Continue route `1000:A;1200:A;1450:A;1650:A;1850:A;2100:A;2350:A;2600:A;2850:A`
+  on a save with a character -> Moga Village by frame ~2400. Findings, in order of cost:
+  1. Two pacers stacked: GX2SwapScanBuffers slept to its 60 Hz grid, then present() blocked on FIFO vsync and on the
+     previous present's fence. Now: MAILBOX/IMMEDIATE (`MH3U_VSYNC=1` forces FIFO), 2 presents in flight, and the
+     pacing sleep runs after submit+present. Frames in 90 s: 2327 -> 4592 (title/menus).
+  2. Shadow map: the game renders depth into a 1024x1024 R32F colour target and samples it with depth compare in ~100
+     draws a frame; `depth_alias` copied it (4 MB, image -> buffer -> D32F) on every one of those draws: 424 MB/frame
+     streamed, GPU 75-95 ms/frame. Now copied only when the target was written since (Image::writes, bumped by
+     transition() into a writable layout). GPU 4-5 ms/frame, 16 MB/frame.
+  3. 0x15CF0000 is both the 1024x1024 D24S8 shadow depth and a 480x270 RGBA8 target every frame: target() destroyed
+     and reallocated both twice a frame. Other views of an address are now parked in spare_targets_ and reused.
+  4. Every cached texture (~150) was content-hashed every frame (23% of the game thread). Guest memory is now reserved
+     with MEM_WRITE_WATCH; textures are hashed only when their pages were written (GuestMemory::next_epoch /
+     written_since; only the cached textures' pages are scanned).
+  Remaining on the game thread at 30 FPS: vertex attribute decode + fill (~31%), per-draw string formatting
+  (std::num_put / locale, ~7%), vkGetInstanceProcAddr inside the driver per draw (~4%).
+- **Uncapped frame rate: village ~155 FPS (2026-10-24).** The game is variable-timestep: `sMain::framePacing?`
+  (0x0294B8DC) writes `sMain+0x7C` = real elapsed time in 1/60 s units (+0x4C = 60.0, +0x50 = 3000.0 -> its own
+  minimum interval 1/3000 s, +0x76 fixed-step flag 0, +0x80/+0x84 clamps 100/16, timer 62,156,250 Hz at +0xF38).
+  The 30 FPS cap is only `GX2SetSwapInterval(2)`. New `MH3U_FPS` (default: display refresh rate in a window, game
+  pacing headless; `max` = unlimited); at ~147 FPS the delta reads 0.409 (= 60/147), so game speed is unchanged.
+  Village (headless, unlimited, RTX 3060) after each step: 30 (CPU-bound, 33 ms: ~70% our display-list replay /
+  draw translation, ~18% the game's update) -> vertex conversion cache 70 -> write-watch scan once per frame,
+  direct-mapped indirect-call table, scratch buffers 75 -> recycled display-list vectors (each frame's lists were
+  VirtualAlloc'd and freed) 95 -> static vertices resident in a device-local arena (15.7 -> 6.8 MB streamed per frame,
+  GPU 4.6 -> 2.0 ms) 113 -> write-watch scan on a background thread 120 -> rebased-index cache 147 -> GX2 state lock
+  once per display list, word-wise cache keys ~155 (147-165). Pipeline keys are raw bytes instead of an
+  ostringstream. The profiler had a deadlock (walking a suspended thread's stack can need the loader lock it holds):
+  it now copies the top 64 KB of the stack, resumes the thread, and unwinds the copy.
+  Remaining on the game thread: Vulkan driver work per draw (~15%: descriptor set allocate/update per stage), source
+  hashing for the caches (~7%), and the game's own update.
+- **Asset-free distribution, Yakumo-style (2026-10-26).** mh3u.exe no longer needs `extracted/`: it reads the
+  user's dump in place and checks it. `runtime/fs/zarchive.*` reads `.wua` directly (own reader of Cemu's ZArchive
+  format, zstd 1.5.7 decoder via FetchContent; [formats/wua.md](formats/wua.md)): 1,545 files / 815 MB of base +
+  update compared byte for byte with zarchive.exe's extraction. `recomp/src/inflate.*` (own DEFLATE/zlib) decompresses
+  the RPX's SHF_RPL_ZLIB (0x08000000) sections in memory: all 39 sections equal wiiurpxtool's ELF. Dumps are
+  identified by **`code/app.xml`**, not `meta/meta.xml`: the v32 update's meta.xml carries the *base* title id
+  (0005000010118300, title_version 32 decimal) while app.xml has 0005000E10118300 / `0020` (hex)
+  ([formats/dumps.md](formats/dumps.md)). The RPX (update over base) must hash to d97aabfc… (target.txt).
+  Data folder: `portable.txt` → `data\` next to the exe, else `%APPDATA%\MH3U-PC`, the checkout when run from it.
+- **Shaders translated on first start (2026-10-26).** shaderc (Vulkan SDK `shaderc_combined`, static) compiles the
+  668 translated shaders in-process into `<data>/cache/shaders`: SPIR-V byte-identical to the earlier glslc output
+  (668/668). spirv-opt (`-O`) is the cost: 360.7 s with it vs **3.9 s** without (Release, 12 threads); the village
+  benchmark shows no GPU cost from unoptimised SPIR-V (2.05 ms vs 2.50 ms GPU/frame, 140-156 vs 120-146 FPS,
+  run-to-run noise), so first start uses unoptimised SPIR-V. Debug shaderc is ~100x slower (use a Release
+  shaderc-latte to fill a Debug run's cache). Cache stamp: translator version + RPX SHA-1.
+- **Pipelines persist across runs (2026-10-26).** Pipeline keys are now a portable `PipelineDesc` (shader content
+  keys instead of VkShaderModule handles); every new pipeline is appended to `<data>/cache/pipelines.bin` and the
+  driver's `VkPipelineCache` is saved to `pipeline_cache.bin` (every 1800 frames and at exit). At start-up all listed
+  pipelines are built on N-1 threads before the guest runs (progress bar in the window): village route → 93
+  pipelines, rebuilt in 0.1 s on the next start, and the draw path finds them all (no duplicates).
+- **Boot notices skipped by rewritten game code (2026-10-27).** New override mechanism: functions listed in
+  `config/overrides.txt` are emitted as `<name>__orig` plus a dispatcher calling a replacement registered with
+  `ppc::set_override` (src/). Findings: `uIDStartMenu::vf63` (0x0276969C) is only the 4-byte tail of the real
+  per-frame state step 0x027695A0 (switch on uIDStartMenu +0x2A0); states 0/1 (FUN_027605e0 / FUN_027607c4) run the
+  boot save setup. Save messages: FUN_020E24B8(sAppSaveData, msg, kind) closes them at once while
+  sAppSaveData+0x27F931 is set (aBoot uses it while loading); Yes/No answers come from FUN_020E28A0 (1 Yes, 2 No);
+  notices wait on sAppPad (0x10312BB0) trigger +0x11C & 0x60 (save system, aGame) or +0x6C & 0x20 (start menu).
+  The two notices before the start menu ("will begin set to the Wii U Pro Controller", "In-game language has been
+  changed") belong to aGame::vf5: handlers 0x02019C0C (Pro: sets game option 0x1D = 1), 0x02019AD4/0x02019B70
+  (GamePad: option 0), 0x02019CA8, 0x02019D30 ("set controller could not be detected"), 0x02019E38 (language),
+  0x0201A020; each returns 1 while waiting, 0 when decided. Found with the new `MH3U_WATCH_READ="@10312BB0+11C"`
+  (guard-page read watch, runtime/boot/read_watch.*): the only non-pad reader while the notice was up was
+  sub_02019C0C <- aGame::vf5. A fresh start with no input now goes Capcom logo -> intro movie, save written.
+- **Screen filters (2026-10-27).** uFilter : cUnit, draw in vtable slot 11 (uFilter::vf11 empty): uBloomFilter
+  0x02A7830C (also uAppBloomFilter), uDOFFilter 0x02A8504C, uBokehFilter 0x02A79F90; also uColorCorrectFilter,
+  uHazeFilter, uMotionBlurFilter, uRadialBlurFilter. sLtRender+0x6B98 is a feature-flag word (FUN_0275F494).
+  Skipping the bloom draw removes the glow in Moga Village, nothing else changes.
+- **Resolution scaling and the Tri look (2026-10-27).** Render targets are created at scale x guest size (compared
+  by guest size), viewports/scissors/point size scaled, CPU-initialised targets uploaded at guest size and blitted;
+  the translated shaders never use texel coordinates, so nothing else changes. Village at 0.5x / 2x / 4x renders
+  correctly (TV 960x540 / 3840x2160 / 7680x4320; GPU 0.8 / 6.6 / 26 ms). Tri look: full-screen pass on the TV image
+  (25-tap glow of the bright parts + desaturate 0.8, contrast 0.86, lifted cool shadows), from Wii screenshots.
+- **Depth of field and ambient occlusion (2026-10-27).** The game's uDOFFilter (0x02A8504C) and uBokehFilter
+  (0x02A79F90) draws are never called from the intro movie through Moga Village (call counters on the overrides,
+  4,500 frames), so gameplay has no DOF of its own. Our AO and DOF run in the renderer on the scene target once a
+  frame, right before the first draw that samples it. In the village frame that is the bloom downsample (ps
+  e86db455ede9f720), after all 3D and before the HUD. The scene is the TV-sized colour target drawn with depth
+  writes: F4000800 RGBA8, depth F47F8800 D24S8. View space comes from depth alone (z' = 1/(1-d), eye depth in
+  near-plane units) with an assumed ~48 degree vertical FOV. In a village shot the hunter is at z' ~1500 and the far
+  fence at ~8500, so the near plane is very small: AO radius 200 near-plane units, strength 1.4. Tunables
+  MH3U_AO_RADIUS/STRENGTH and MH3U_DOF_RADIUS/START/RANGE/NEAR; MH3U_FX_DEBUG=1 shows log depth plus the focus
+  marker in place of the DOF pass. GPU at 1080p: base 1.9 ms, +AO 3.5 ms, +AO+DOF 3.6 ms.
+- **Frame dumps write relative to the working directory** (`build/frame_N.bmp`). Run from the repo root: from
+  inside build/ they used to fail silently and leave an old frame_N.bmp in place (now an error is printed).
+- **Launcher over the running game (2026-10-27).** One window now: the presenter records an overlay callback into
+  every swapchain image (dynamic rendering, load op LOAD) after the game frame is blitted. The launcher builds ImGui
+  frames on the host main thread and hands over copies of the draw lists (ImDrawList::CloneOutput); the copies are
+  drawn on whichever thread presents, with the queue lock held. The game boots once its shaders are current and
+  runs behind the menu; input::set_suspended keeps its input empty until PLAY. The pipeline prebuild moved from the
+  main thread (full-window bar) to the guest thread before __rpx_start, so the launcher can show it as a toast.
+  Settings now reach the env before the window opens (MH3U_VSYNC is read when the swapchain is built) and again at
+  boot, followed by a swapchain rebuild. The windowed run reaches start-menu states 0-6 behind the overlay; 40 s with
+  VK_LAYER_KHRONOS_validation showed no errors.
+- **Settings mid-game and rebinding (2026-10-27).** F1 / controller guide (or MISC1) toggles the launcher's settings
+  over the running game (F2 now cycles the GamePad view). Controller buttons are no longer a fixed table in
+  host_input: Config.pad maps SDL gamepad buttons and the two triggers (as ids 200/201) to GamePad buttons, filled
+  from the layout's defaults or input.ini [controller]. The CONTROLS page binds from the next SDL event (keys,
+  mouse buttons, wheel, pad buttons, triggers past half way) and saves input.ini with "clear = 1" sections;
+  bindings_test covers bind / save / reset / reload.
+- **Cutscene frame cap (2026-10-27).** The game calls GX2WaitForVsync from three places, all in the renderer:
+  sLtRender::present (0x02BBF9D0; after the swap, while renderer flags 2 and 4 are set and a frame is still queued:
+  +0x6E3C != +0x6E44), FUN_02BBFD3C (a frame limiter) and sApp::presentStandalone (0x02BC1E34). FUN_02BBFD3C runs
+  while renderer flag 1 is set (FUN_02BBA714(this, 1)): it waits for the flip queue (GX2GetSwapStatus +
+  GX2WaitForVsync) and then OSSleepTicks until a minimum frame time; its only caller is FUN_02BBFEEC (present, then
+  the limiter), called from sLtRender::endFrame. Headless boot-to-village: no GX2WaitForVsync calls, 595
+  GX2GetSwapStatus calls (the limiter's loop) in 3410 frames, GX2SetSwapInterval once. With our own pacing (windowed)
+  FUN_02BBFD3C is overridden to do nothing (src/game/frame_limit.cpp) and GX2WaitForVsync returns at once, so
+  cutscenes follow the FRAME RATE LIMIT setting; confirming in a window is open.
+- **Launcher navigation (2026-10-27).** Dear ImGui 1.91 leaves InvisibleButton out of keyboard / gamepad navigation
+  unless it has ImGuiButtonFlags_EnableNav: every launcher row, menu item and keyboard key needs the flag. The
+  controller feeds ImGui from the game's own bindings (SDL3 backend in manual mode, buttons mapped through
+  input::pad_buttons_for), so A / B follow the layout and rebinds. The overlay is handed to the presenter as a copy
+  of the frame's draw lists: a frame that closes the overlay must hand over nothing, else its last picture stays.
+- **Character colour pickers and tiling apertures (2026-10-27).** Skin tone (and hair colour) took a wrong colour:
+  uIDMakeAppearance (0x0274A9F0, from uIDMakeCharacter::vf62) reads its gradient texture (512x256 RGBA8, tile mode
+  4) back on the CPU through GX2AllocateTilingApertureEx (via 0x02957070: byte-swaps the view, copies it, swaps back
+  in 0x029571FC, then GX2FreeTilingAperture). Our aperture returned the tiled image itself, so the picked texel was
+  scrambled. It now detiles level 0 into a guest buffer (rows of `pitch` elements) and retiles it at Free. Found
+  with MH3U_WATCH_READ on a word of the texture (RelWithDebInfo names); headless fresh-save run to the Skin Tone
+  page: the skin stays as chosen and follows the cursor. MH3U_INPUT_SCRIPT also takes LSTICK_LEFT/RIGHT/UP/DOWN now.
+- **Texture packs (2026-10-27).** Packs made for the 3DS release are keyed on hashes of 3DS texture data, so they
+  never match Wii U textures; 3DS packs are not supported and won't be converted (2026-10-29). Our own scheme keys a
+  replacement on the CRC32 of the texture's level 0 as it sits in guest memory (tiled) plus its size: no game hook,
+  and MH3U uploads .tex data as stored, so the key is stable across runs. Headless village run: 67 textures dumped
+  (the rest are video planes, render targets or CPU-animated); 59 of those swapped for 64x64 magenta DDS files gave
+  69 replacements and a fully magenta village at 62.6 s (no slowdown).
+- **DLC quests in the save (2026-10-27).** No eShop add-ons (no nn_aoc import): event and challenge quests were free
+  in-game downloads over nlibcurl from `http://goshawk.capcom.co.jp/3ds/mh3g/` (index files DLC_Info_List_eng.txt,
+  DLC_EventQuestInfo_eng.txt, DLC_ChallengeQuestInfo_eng.txt; quests `q_%05d.quest`; Wii U login
+  `https://goshawk.capcom.co.jp/SSL/wiiu/mh3gu_us/login.cgi`, strings at ELF offsets 0x1ACC / 0x28928). The host no
+  longer resolves. Downloaded quests live in the save files quest1..quest4 (names at 0x1BB44, sAppSaveData): file
+  0x29024 bytes, 20 slots of 0x2010 from offset 0x28, a slot = QTDS data (version 5, little-endian, u32-prefixed
+  UTF-8 titles per language) padded to 0x2000 + the 16-byte file name; quest1-3 event (q_201xx-q_203xx), quest4
+  challenge (q_61000-q_61009). The 4 bytes at 0x14 of the file header are the same in an empty and a full file. An EU
+  save backup held 38 quests. Headless boot to Moga Village does not open quest1-4 (read on demand, presumably by the
+  Port Tanzia quest lists): whether the US build lists EU quests is still to be checked in game.
+- **Monster HP (2026-10-27).** rEnemyStatus (`.ems`, magic "EMS\0" version 0x20110824, 91 files `enemy\emNNN\em_statusNN`)
+  starts with the monster's base HP (BE u32 at file +0x10, e.g. em001 4500, em025 18500; small monsters 10-220) and a
+  float (+0x14). uEnemy::loadResources? (0x0259FD68) keeps the resource at uEnemy+0x1DE0; uEnemy::getStatusData?
+  (0x0259FA9C) returns its +0x64 copy of those words. At spawn uEnemy::initStatus? (0x0259FCD0) -> 0x0259FC98 ->
+  uEnemy::setMaxHp? (0x0259FB84): max HP (state = uEnemy+0x1BE0, field +0x8BC) = base HP x row[0], row =
+  uEnemy::getStatRow?(0x0259E3B4)(this, 0), a 0x20-byte float row of a table sEnemy keeps per quest monster set
+  (FUN_020F3B9C), indexed by the byte state+0x8E8 (+1/+2 for other stats). Then, if the current quest's flags (quest
+  data +0x1E4) have 0x100000 or 0x10 and sGame+0x1B9 != 1, max HP x 0.55 (float at 0x1004D7C8) - meaning of the flags
+  and of sGame+0x1B9 not confirmed. Current quest data = *(*(sQuest+0xB050)+0x3C); byte +0x24F = quest rank, stored
+  by sEnemy::setQuestRank? (0x020F527C) at sEnemy+0x4284 (0..3). No player count found here yet. setMaxHp is now
+  overridden (src/game/monster_hp.cpp) to log every monster's inputs ("monster hp: ..."); boot-to-village headless run
+  unchanged (60.5 s), no monster spawns there.
+- **Item box menu and carving, first pass (2026-10-27).** Game text is rGUIMessage (`.gmd`, 3645 files; magic
+  stored as "\0DMG", version 0x00010201; BE header: label count +0x14, string count +0x18, label bytes +0x1C, string
+  bytes +0x20, then the name; the strings are the last block, NUL-separated, in index order). The box menu's options
+  are `GUI\font\lobby\Shop_eng` strings 389-394: Store Items, Remove Items, Combine/Manage Items, Manage Equipment,
+  Change Appearance, Equipment Sets (396/397 Item Box, 398/399 Blademaster's / Gunner's Pouch, 400 Combine Box Items,
+  402 Reorder, 403 Sell). Text is looked up as FUN_0205AD00(group, index); the Port Tanzia house root
+  (uIDLobbyMyhRoot::vf62 0x02706938) asks group 0x2E index 0x1A9 = Shop "View Talismans", so 0x2E is probably the
+  Shop table. No code loads 389-394 as immediates and no data table holds them in a row, so the option labels most
+  likely come from the menu's rGUI layout (GUI\lobby\...): adding "Item Sets" means extending that layout and
+  hooking the menu's selection handler. uIDCockpitBox (0x025F480C...) is the in-field box prompt, not this menu;
+  house UIs: uIDLobbyMyhRoot / uIDLobbyMyhBox / uIDLobbyMyhMyset (equipment My Set: register / load lists, a model
+  for item sets). Carving: player class uPlayer (0x28F0, base cPlayerBase); no carve text to anchor on - the carve
+  action state and the carcass's remaining-carves count are still to be found (hold-to-carve must key on them: the
+  same button attacks, so a plain auto-repeat would chain attacks).
+- **Game text lookups (2026-10-27).** Every text lookup ends in sID::vf37 (0x02141DE0) = sID::getText?(this, group
+  < 0xAF, index): the rGUIMessage kept for the group at sID+0x78, its vf+0x54 returns the string. FUN_0205AD00(group,
+  index) (302 callers) is only a wrapper that tail-calls it through sID's vtable (+0x134); most UI code calls the
+  vtable itself (a boot-to-village headless trace saw 2 lookups through the wrapper, 129 through vf37). Group 0x2E =
+  GUI\font\lobby\Shop (index 323 "Target" confirmed), 0x35 = lobby\NpcName (2 "Village Chief"). MH3U_TRACE_TEXT=
+  <first>-<last>[:<group>] (src/game/text_trace.cpp) logs each (group, index, caller) once: the item box menu's
+  option labels are Shop 389-394, so MH3U_TRACE_TEXT=389-394:46 while opening the box names the code that builds the
+  menu. Not found statically: no immediate 389-394 near a text call, no data table of them (u16/u32 runs or fixed
+  strides up to 64 bytes; the stride-16 hit at 0x101C5FF0 is an item data table), and rGUI layouts hold 389-394 only
+  as unrelated numbers.
+- **Item box menu (2026-10-27).** Found with MH3U_TRACE_TEXT in a window (all box labels from one call site,
+  0x026A6C64). Draw: uIDLobbyMaki::drawBoxMenuOptions? 0x026A6B80 (labels Shop 0x185 + i for i < count, 7 row
+  slots, extra rows hidden) and drawBoxMenu? 0x02687D38 (sub-lists: label base u16 table 0x10170F40 [396 397 400 424
+  418 429 433], counts 0x10170F30 [2 2 4 5 6 4 4], Help bases 0x10170F50 [148 152 156 169 161 175 180]). Logic in
+  sLobby, state at +0x6F10: +0 state byte (2 = option list), +2 open, +6 option, +8 sub cursor, +0xA level, +0xC
+  option count (6), +0xE sub count. sLobby::boxMenuStep? 0x021F0E7C returns 1 on a chosen sub entry, 2 on leaving;
+  sLobby::boxMenuUpdate? 0x02201508 dispatches options 0-5 (Store: states 3/4, Remove 5/6, Combine 7-10, Equipment
+  0xB-0xF, Appearance 0x18-0x1D, Equipment Sets 0x10-0x13); other options only play a sound. Slot 6 of every table is
+  unused and Shop 386/387/395 and Help 180-182 are "DUMMY". Pouch / box (sUserData+0x38 = hunter; the save file
+  user1 holds the same struct from offset 0x28): u16 item + u16 count per slot; blademaster pouch hunter+0xA8 (24),
+  gunner pouch hunter+0x108 (32), box sUserData+0x1C0 (= hunter+0x188, pages x 100 slots); item names = Item00 text
+  index = item id (1 "(None)"). src/game/item_sets.cpp adds option 6 "Item Sets" (Register / Load Item Set) from
+  these; text replaced through sID::getText? (src/game/text_trace.cpp set_text). Headless village run unchanged; the
+  menu is still to be seen in a window.
+- **Item Sets in a window (2026-10-27).** Register / Load and the sub-list work; with 7 options the menu drew option
+  6 in row slot 7, which the layout leaves bare. Row slot 3 (under Combine/Manage Items, above the separator) is a
+  complete row that drawBoxMenuOptions? hides on every draw: swapping slots 3 and 7 of the highlight (+0x2AC) and text
+  (+0x2B8) arrays for the call and showing slot 3's plate (+0x2B0[3]) draws Item Sets there with its plate (seen in
+  a window). The separator line still crosses that row. Pouch probe (MH3U_ITEMSET_PROBE, headless, user's save):
+  hunter data in memory = the save file's from 0x28 (name +3; blademaster pouch at hunter+0xA8 holds the save's
+  items), and the pouch pattern also sits at three other places (sUserData-0x1AD04, +0x66F54, +0x19516F8) - copies;
+  yet Register in the box menu read 24 empty slots there in a window. Register now logs what it reads.
+- **Item box menu layout: GUI objects, scroll length (2026-10-27).** The box menu widget (uIDLobbyMaki) is a tree of
+  cGUIInstance (+0xF4 root; id +4, child +0x60, sibling +0x64, flags +0x54, pos +0xA0/+0xA4). The scroll (428), the
+  rows (plates / highlights, cGUIInstAnimControl) and the separator (593) are animated instances: their frame (+0xE0)
+  follows a variable (+0x104, cGUIVarInt value +0xC; the scroll's is 60, a preset that picks style and length - 50 / 70
+  / 80 give khaki / dark / green scrolls), and what is drawn is an object tree at +0xFC (cGUIObject: child +0x68,
+  sibling +0x6C; cGUIObj2D PosX +0x80, PosY +0x84, dirty 0x20000). Setting an instance's +0xA4 does not stay for
+  animated ones; object PosY does, if written right before cGUIInstAnimation::updateTransforms? (vf13 0x02AE1E40),
+  which redoes the tree's transforms (FUN_02AF4C78) when the root's +0x8C bit 1 is set. Scroll tree (root children,
+  from per-object captures): background group, tan panel (y 270; moving it extends the tan part), its seam line, top
+  roller group, bottom roller group (y 540; moving it lengthens the scroll), a texture set. The option rows: 8 slots
+  54 apart (+0x2B0 plates, +0x2AC highlights, +0x2B8 texts - texts are GUI objects, hidden with FUN_02AF349C(text, 0);
+  FUN_0228D1B4 / FUN_02ADB830 on them walks instance children and faulted at guest 00051020). The small box is the
+  same menu with lobby+0x6F12 set (draw state +2): layout type 0x4A, 3 rows, no camera move (FUN_02201508). Item
+  Sets: rows 0-2, Item Sets in slot 3, gap in slot 4, options 3-5 in slots 5-7; tan panel, seam, separator and bottom
+  roller one row (54) down (small box: rows 4-7 hidden). The sub-list pop-up y is base + slot * row (0x1005C520..34).
+  Crash reports now give Cha-Cha.exe+offset; build/clang/runtime/boot/Release/Cha-Cha.map maps it to a function.
+- **Pouch window for the item set preview (2026-10-28).** Store Items' pouch is not the box screen widget
+  (uIDLobbyMyhBox: box grid FUN_026FF5C4 "Item Box" (3, 200), its own pouch grid FUN_026FDE44 unused there) but the
+  shared uIDCommonPauch (sID sub-unit 2 via FUN_0213F040, +0x94), found by tracing the title "Item List" (3, 0xCA) to
+  FUN_0265F010 (frame, mode 1). Store Items draws it every frame in FUN_026697C0: *FUN_0214218C(sID) = 6 (pouch
+  window selector; the box menu resets it to 0), +0x3F4 = 8, animation +0x2D4 (FUN_0203787C 0, FUN_02037600 3 0),
+  flags +0xC |= 0x100000, vf+0xE4(1) open, FUN_0265E308 reset, FUN_0265F010(1), FUN_0265FAE4(8, 0), then
+  FUN_026611B8(widget, slots, entries, page 1-based, pages, 0, 0x800, &out, 8 on the stack) lists 8 slots from any
+  u16 id + u16 count array (entries 8 x 0x18: +1 highlighted, +2 shown, +4 slot index). Run from the box menu the
+  widget also needs state bits 0x30000 at +0xC (Store Items: 44930040; the steps alone: 44900040, not drawn). Menu
+  direction bits (FUN_0221A430, key repeat): 1 up, 2 down, 4 left, 8 right; page sound 6 (FUN_020431F8).
+- **Gathering and carving (2026-10-28).** A full text trace (MH3U_TRACE_TEXT=0-5000) during a carve (Kelbi Horn)
+  and a gather (Blue Mushroom) shows "%s obtained." = text group 2 index 8, from sCockpit::message? 0x020EF0A8
+  (cockpit, kind 2, text 8, item; 52 callers). Probes on it and on 0x0285ECD4 (the in-quest add: (player, item,
+  count), 0 = added) during carving, gathering spots and mining: every item came from 0x020ECA2C
+  sCockpit::obtainItem? (11 callers: 0x028BA608, 0x028BC31C, 0x028BDB78, 0x028C1618, 0x0279E440, 0x02918338, and two in
+  the lobby code, 0x02232BEC / 0x02234218 - the farm?). It adds the item (sGame+0x48: 1 -> 0x0285ECD4, in a quest?; 2 -> the
+  sUserData pouch, the farm?) and reports < 2 as obtained. Hold to gather keys on that: no action state needed. Pouch
+  adds in the lobby go through 0x0219BA48 (box menu, quest rewards via 0x021EE7F4), not in the field.
+- **Tri look rework and global illumination (2026-10-28).** The first Tri look graded the whole TV image (HUD
+  included) with a two-ring 12-tap glow (ghosted double edges), 20% less saturation, softer contrast and lifted grey
+  shadows - washed out ("ugly", user). Now `kTriSceneFs` runs on the 3D scene target with the other scene passes
+  (before the game's bloom and the HUD): depth haze (strength 0.30 from 3000 near-plane units, 1/25000 per unit, grey-blue;
+  not on the sky), a 24-tap golden-spiral glow with a soft threshold (0.62-0.95 luma, radius 18 px at 1080p,
+  strength 0.16), then a grade fitted to a Tri screenshot of Moga Village from the user (tone statistics of the final
+  frame, same view): MH3U is more saturated (0.256 vs 0.162), yellower and darker with deeper blacks; the grade is
+  blue x1.035, saturation x0.80, levels x0.975 + 0.016 (the game's bloom and tone pass after it amplify both - a
+  first fit straight from the ratios overshot to mean 0.46). Result: mean 0.339 / sd 0.168 / 2nd percentile 0.116 /
+  saturation 0.171 against the reference's 0.344 / 0.166 / 0.114 / 0.162. A first warm, saturated version went the
+  wrong way. The TV post pass keeps only the vignette. Global illumination (`kGiFs` / `kGiApplyFs`, VIDEO > GLOBAL ILLUMINATION,
+  MH3U_GI): one screen-space bounce at half resolution - 16 AO-style taps gather the colour of nearby surfaces facing
+  the pixel (cosine x range falloff, radius 600 near-plane units), blurred depth-aware, added as c + c x gi x 0.6.
+  Order in the scene: GI, AO, Tri, DOF. Tunables: MH3U_GI_RADIUS / STRENGTH, MH3U_TRI_GLOW / GLOW_RADIUS / HAZE /
+  HAZE_START. Checked headless in Moga Village (Continue route, frame 5500): no ghosting, HUD untouched, GI subtle.
+
+## 2026-10-28 – Linux port: write tracking without GetWriteWatch
+- Windows reserves guest memory with `MEM_WRITE_WATCH`; Linux has no equivalent. Emulated in
+  `runtime/core/guest_memory_posix.inc`: pages of the renderer's watched ranges are `mprotect`ed read-only; the first
+  write faults, the SIGSEGV handler (`REG_ERR & 2` = write) marks the page (2), makes it writable and returns; the
+  scanner (500 us passes) stamps marked pages with the new epoch, counts the mark down (2 -> 1 -> 0, so a write that
+  completes just after the handler returned is stamped on the next pass too) and makes them read-only again.
+  Evidence: headless title run in WSL, 945 written pages caught, textures update as on Windows.
+- The kernel does not fault on its own writes: `read()`/`pread()` into a read-only guest page fails with EFAULT.
+  File reads into guest memory go through a 1 MB bounce buffer (`runtime/fs/host_tree.cpp`).
+- FFmpeg's H.264 decoder with `AV_CODEC_FLAG_LOW_DELAY`, one thread and the existing no-reorder SPS rewrite returns
+  each picture from the `avcodec_send_packet` that fed it, like the Wii U decoder with OUTPUT_PER_FRAME;
+  `apply_cropping = 0` keeps the 1088-line coded picture with the crop reported (as Media Foundation gave it).
+  Not yet checked in a window (WSL).
+
+## 2026-10-29 - Menu mouse: when is a menu open
+- Goal: the mouse as a pointer in menus (user 2026-10-29). Signals found with an override of sAppPad::vf6 (0x020E0CFC,
+  the pad system's per-frame update) logging candidate fields (MH3U_MENU_PROBE=1), headless Continue route + field
+  menu: sGame+0x48 is 0 on the start-menu screens and 2 from the village load on (frame 2260); sMenu+0x4C is 1 exactly
+  while the field menu is open (opened with MINUS - PLUS did nothing there - closed with B; frames 4803-5003). sID+0x368
+  goes 0 -> 1 (boot) -> 4 (village); sID+0x354 pulses 0x52 for one frame as the field menu opens.
+- FUN_0221A430 sLobby::menuDirections? (key-repeat directions 1/2/4/8 from sAppPad +0x80 | +0x6C, gated by
+  FUN_02219FB8 effects-busy and FUN_0221A0A8 sID+0x354/+0x368 checks) has 185 call sites in 97 functions, almost all
+  sLobby menu steps; two cockpit ones (0x020EB03C, 0x020ECD58). Wrapped with ctx.lr logging: not called once in the
+  village idle or in the field menu, so a call = a lobby menu is open (to be confirmed in a window with the item box).
+- FUN_021536D8(sMenu) = +0x4C && +0x34 == 2 && +0x35 == 2 (only caller: cockpit 0x020EB03C).
+- src/game/menu_mouse.cpp: pointer on while any signal holds, off 8 frames after the last one; headless run: on at
+  boot, off at frame 2267 (village), on 4803-5010 (field menu).
+- Item box hover (same day): the box screen is not reachable headless (no route to the box); forcing sLobby+0x5450 = 6
+  runs the box state machine (+0x6F10 0 -> 1 -> 2, sLobby::boxMenuStep? reads directions from 0x021F0EF0) but nothing
+  is drawn - the screen comes from the normal interaction path. sLobby+0x5450 is the lobby mode: FUN_02219800 (the
+  lobby step) switches on it - 0 walking, 6 the item box (FUN_02201508), 3/4/5/7/8/... other NPC / facility screens;
+  FUN_021F0574 is the box's close (mode 0, sID resets). Layout constants 0x1005C520..34 = 54 (row), 10, 176, -0, 0,
+  900 (the sub-list's bottom limit): the GUI works in 1920 x 1080 TV pixels. Cursor sound: FUN_020432C8 = FUN_020431F8
+  with r8 = 3 (sound 3 on a move). Hover takes the plates' summed instance x / y (+0xA0 / +0xA4) as row centres,
+  54 high, 260 either side; logged ("item box hover: ...") for checking in a window.
+- Start-menu lists (same day): snapshots of uIDStartMenu (0x171E0 bytes, every 5th pad update, MH3U_MENU_SNAP) over
+  DOWN, DOWN, UP, diffed offline. States (+0x2A0): 6 the title after the first A (d-pad ignored), 7 the Main Menu,
+  8 Game Options. Cursors (u32, a copy at +4): Main Menu +0x2AC (0 New Game .. 4 DLC, starts on Continue), Game
+  Options +0x2D4 (0 Camera .. 5 Language). Rows measured on frame dumps (orange highlight): Main Menu 5 rows, top 201,
+  110 high, 126 apart, x 588-1336; Game Options 6 rows, top 190, 92 high, 106 apart, x 175-790. Hover steps the
+  game's cursor with d-pad taps (one per 5 pad updates), a click on a row steps there then taps A. Checked headless with
+  MH3U_POINTER_SCRIPT (scripted pointer): hover to DLC, click Options -> Game Options, hover Language, a click beside
+  the rows does nothing.
+- **Linux movies stall (2026-10-29, issue #2).** Reproduced headless in WSL with the released 0.1.0 AppImage and the
+  .wua: the intro (09_EU.mp4) gets only 3 H264DECExecute calls in 180 s (AU 1 = SPS/PPS/IDR, AU 2 = P slice, nal 0x41),
+  then the player waits forever - the window shows the first frame, as reported. Likely cause: libavcodec 4.4 in
+  low-delay mode with the SPS rewritten to no reordering drops a picture whose POC is below the last one output
+  (h264_select_output_frame, "no picture ooo"), so the non-reference B picture of AU 3 never reaches the output
+  callback. Media Foundation outputs it; libavcodec cannot without reordering.
+  Fix: a second libavcodec decoder with one picture of reordering (SPS rewritten to max_num_reorder_frames = 1)
+  outputs each non-reference B at once; the low-delay one skips non-reference pictures (AVDISCARD_NONREF) and gives
+  I / P at once; pictures matched by pts. Headless WSL run: 3,673 Executes with one picture each, the intro plays to
+  the end (frame dumps 600-3000 show it moving), an A press at frame 700 reaches the title, the attract movie loops.
+- Start-menu sub-screens and Options pages (same day). Start-menu states (uIDStartMenu+0x2A0): 7 Main Menu, 8 Game
+  Options, 9 DLC, 10 New Game (Character Creation, uIDMakeCharacter), 14 Character Select, 18-24 the Options pages
+  (18 Sound, 19 Effect, 20 Game, 22 Monitor, 23 Controller, 24 Language), 25 Data Transfer. The Options pages run in
+  uIDOption (start menu widget + 0x5CF70 here; also used by the in-game Options): FUN_0275BD84(uIDOption, page)
+  dispatches page 8 list (FUN_0275A7DC, cursor s16 +0x330), 18 Sound (FUN_0275AB88: row +0x368, levels 0-7 at +0x360 /
+  +0x364), 19 Effect (FUN_0275B264, +0x37C), 20 Game (FUN_0275B3DC: row +0x3BC, values +0x3B0 / +0x3CC), 22 Monitor
+  (FUN_0275B8D4, float +0x33C), 23 Controller (FUN_0275BA88, +0x398), 24 Language (FUN_0275BBC4, +0x39C); input
+  FUN_0275A4A8(obj, 1 up 2 down 4 left 8 right) on sAppPad +0x80 | +0x6C. The Controller page saves as it moves: a
+  LEFT on it set a scratch save to the GamePad ("set controller could not be detected" afterwards). Character Select:
+  slots uIDStartMenu+0x318; its sub-state +0x290: 3 slots, 6 "Use this character?" (5 the same for an empty slot),
+  cursor the byte sMenu+0x59 (0 Yes, 1 No; up / down), from FUN_02764E60. Yes / No elsewhere: FUN_020435B4(&cursor,
+  buttons, left, right) is the shared two-choice step (decide 0x10, cancel 0x20; the system message via FUN_020E28A0
+  on sMenu+0x204); the message box draws its pair with FUN_0261C0FC(box, text, yes, no, value) every frame, value =
+  sMenu+0x204, but the DLC prompt steps its own copy into it each frame (writing sMenu+0x204 does not stick), so that
+  one is driven with left / right taps. All of these are in menu_mouse.cpp's screens(); checked headless with
+  MH3U_POINTER_SCRIPT: Main Menu -> Options -> Sound (a click at Min sets SFX to 0), Effect (click Mild), Game (click
+  Quick Load's right side: On), Continue (hover slot 3, click slot 1), "Use this character?" (hover No, click No closes
+  it), DLC prompt (hover No, click No leaves). Not covered: Character Creation, the Data Transfer wait screen (Cancel
+  is +), Monitor / Controller / Language clicks only read in code.
+- **Older GPUs: Vulkan 1.2 (2026-10-29, issue #3).** The reporter's Radeon HD 7750 on AMD 23.11.1 (Windows) reports
+  Vulkan 1.2.178: no VK_KHR_push_descriptor (we required it but never used it: no vkCmdPushDescriptorSetKHR, no push
+  layouts), no dynamic rendering (core or KHR), synchronization2 and demote only as extensions, no depth_clip_control.
+  Device setup now takes 1.3 core features or the extensions; `runtime/gfx/vk_compat.*` routes vkCmdBeginRendering /
+  EndRendering / PipelineBarrier2 to the core or KHR entry points, or emulates them (render passes + framebuffers from
+  the VkRenderingInfo, cached by attachment formats / ops / layouts and by views; pipelines and Dear ImGui get a
+  compatible render pass; sync2 barriers converted to classic ones). Shaders now compile for Vulkan 1.2 (SPIR-V 1.5;
+  translator version 2 re-translates caches once: 668 in 5.8 s in WSL). MH3U_VK_LEGACY=1 forces the emulated path.
+  Checked headless with the validation layer (loader confirmed it loaded) on the Continue route to Moga Village, 200 s:
+  normal path 2,186,760 draws and legacy path 2,213,554 draws, 0 skipped, 0 validation messages each, frames at 1300 /
+  3600 / 5200 alike. Not checked: the launcher window (Dear ImGui in a render pass) and a real 1.2 driver.
+- **Linux write-tracking race (2026-10-29, issue #3).** WSL headless New Game and Continue both died at the save load
+  with "guest memory fault: write to guest address 1D15xxxx (uncommitted)" in sub_02953DF8. The scanner sets kTracked
+  and queues a page for mprotect(PROT_READ); a write faulting meanwhile clears kTracked and unprotects it; the queued
+  mprotect then lands and leaves the page read-only, untracked, and the next write was reported as uncommitted. The
+  SIGSEGV handler now treats a write fault on any committed page (outside diagnostic watches) as a tracked write. Both
+  routes then ran 300 s (character creation; Moga Village with 93 pipelines, as on Windows).
+  House route (the reporter's other crash): a copy of the user's save, Continue, walk up to the red-curtain door
+  + A, back out (stick holds scaled to WSL's ~12 fps: the game moves by wall time). In WSL: house loaded at frame
+  3170, inside at 3250, village again at 3750, no fault through 420 s. The unfixed build never got that far (the save
+  load itself faulted, 2 of 2 runs).
+
+
+## 2026-11-02 - Mod support and damage numbers (Linux, Fedora 44)
+
+Found by reading the translated code (the disassembly kept as comments in recomp-out), RPX strings read directly:
+
+- **Monster HP**: state = *(uEnemy + 0x1BE0); state+0x8B8 int32 current HP, +0x8BC max HP (setMaxHp 0x0259FB84 writes
+  it), +0x8C8 float cap factor. FUN_025C6EE0 adds a delta to the HP (clamped 0..max*cap); FUN_025C6F74 calls it
+  with cap = max HP; FUN_025C7030 sets the HP (clamped).
+- **uEnemy::damageCheck? 0x025CB37C** (r3 = uEnemy): loops r23 = 0..7 over the parts, summing
+  `lha 0x8ec(state + 2*i)` into r25, then `FUN_025C6F74(enemy, -r25)` (0x025CBBD8) and separately
+  `FUN_025C6F74(enemy, -(int16)state+0xAB4)`. So state+0x8EC is int16[8], the frame's damage per part (cleared by
+  FUN_025C7A38 from the enemy update FUN_025A60D4, together with int16[8][3] at +0x8FC and int16[5] at +0x932).
+  Part records at state+0x978 + 8*i; the selected part's index byte at +0xAEC.
+- **uCamera properties** (uCamera::createProperty 0x02A040F0, vtable 0x10098770 slot 3): mFarPlane +0x30,
+  mNearPlane +0x34, mAspect +0x38, mFov +0x3C (degrees: 50.0 on the title camera), mCameraPos +0x40, mCameraUp
+  +0x50, mTargetPos +0x60. mAspect reads 1.0 on uGameCamera: the projection takes the viewport's aspect.
+- **uCoord properties** (0x02A057FC): mpParent +0x30, mParentNo +0x34, mPos +0x40, mQuat +0x50, mScale +0x60.
+  **uBaseModel** (0x02A009D4): mBoundaryScale +0x158, mBoundaryCenter +0x15C.
+- **uGameCamera vtable 0x10029D7C slot 8 = 0x0227EDE8**: per-frame move (sets +0x8E4 from +0x1C, then 0x0227EB7C and
+  0x0227D058). Seen running on the title screen with one camera, 0x2FE01FC0 in that run.
+- sGameCamera singleton pointer at 0x10313E58 (written by its ctor 0x0212027C).
+- FUN_021283EC (sHitCheck area) writes status values (+0x746, +0x728, ... +0x8EC) into *(r28 + 0xE30): a
+  monster's attack applying status to a hunter, not enemy damage.
+
+Mod support built on this: plugins hook functions listed in config/overrides.txt (the two above added); the emitter
+now also writes kOverrideOriginals (address -> <name>__orig) so hooks chain onto Cha-Cha's own replacements
+(docs/modding.md).
+
+- **Projection checked (2026-11-02, title camera eye (0,0,100) -> target 0):** sCamera (*0x103D2F38) +0xE0 holds a
+  right-handed view matrix (row vectors, translation in the last row: (0,0,-100)), +0x120 a GL-style perspective:
+  1/tan(25 deg) = 2.1445, 2.1445 / (16/9) = 1.2063, -1 in [2][3], -16.0003 in [3][2]. A second pair follows at +0x160 /
+  +0x1A0 (another viewport). So: vertical FOV in degrees, screen right = cross(forward, up), aspect 16:9 (not mAspect).
+- Character Creation and the rest of New Game (same day). uIDMakeCharacter (step FUN_0275412C; it does not run while
+  a sub-screen is open, start-menu state 10 does): cursor +0x884 = 1 Name, 2 gender, 4 Clothing / 5 Clothing Color,
+  6 Face / 7 Features, 8 Hairstyle / 9 Hair Color, 10 Voice / 3 Skin Tone, 11 OK (from d-pad walks); +0x868 = the
+  sub-screen open (same numbers, 0 none); +0x874 mode: 2 grid, 3 "Cancel character creation?" (cursor +0x89C, 0 Yes,
+  1 No), 4 name keyboard, 5 name entered. Sub-screen cursor +0x890: type grids 4 columns x up to 5 rows (cells 208 x 64
+  on 225 / 76 from 186, 360; Clothing's one row at y 504), colour swatches 3 x 4 above an analog gradient, Features
+  0 / 2 / 3 (Feature 2's Color greyed while Off), Skin Tone an analog slider (not covered). OK goes straight to Touch
+  Panel Settings (state 12, cursor +0x324 Standard / Dynamic), then the save slot (state 13, cursor +0x318; an
+  occupied slot asks "Overwrite all existing data?" in the message box, side by side), then "Welcome" (state 15).
+  Hover steps the game's cursor with d-pad taps; a tap that does not move it ends the walk (empty cells). Controller
+  Settings (Options page 23) stores the controller as it moves - choosing the GamePad there leaves no input with the
+  default Pro Controller setup: option_page() masks left / right (sAppPad +0x6C / +0x80 bits 4 / 8) around that page's
+  step, so its choice cannot change (B still leaves). Checked headless with MH3U_POINTER_SCRIPT: grid walks, Voice
+  Type 16 hover / Type 18 click, gender click flips it, Features, cancel prompt hover Yes / click No, Touch Panel,
+  save slot 2, overwrite prompt on slot 1; LEFT / RIGHT on Controller Settings leave Pro Controller selected.
+- Field menu (same day): sMenu snapshots (MH3U_MENU_SNAP_SMENU) over DOWN, DOWN, UP, RIGHT, LEFT, RIGHT in the
+  village: row cursor sMenu+0x5C (s16, 0-5, shared by both tabs), tab sMenu+0x84 (s16, 0 Hunter, 1 Info), open
+  +0x4C; +0x34 goes 1 when a screen opened from it (Item Pouch, the quit prompt) is up. Rows 1412-1826 x, from y 286,
+  44 high, 52 apart; tabs Hunter 1424-1556 / Info 1564-1684 at y 204-248 (frame dumps). Checked headless with a
+  scripted pointer: hover walks both tabs, tab clicks switch, Item Pouch and Quit Game open by click. Quest Info is
+  greyed in the village and the cursor skips it, so a walk gives up after 2 x rows + 2 taps.
+- Screens from the field menu (2026-11-02). Their cursors are not in their widgets' obvious fields, so a heap search
+  was added: MH3U_MENU_HUNT="f0,f1,f2,f3;..." copies the MEM2 heap (0x10600000-0x50000000, committed 1 MB blocks;
+  VirtualQuery per 4 KB page is far too slow on the write-watched heap, and 0x104xxxxx is not committed) at f0 and
+  keeps the bytes that go +1, +1, -1 with DOWN, DOWN, UP, printing the vtables before each hit. All landed in sMenu
+  (vtable 0x10020FB4): sMenu+0x34 == 1 while a screen opened from the field menu is up, sMenu+0x52 says which (0 Item
+  Pouch, 1 Combine, 2 Combo List, 3 Hunter's Notes, 4 Options, 8 Equipment, 11 Gestures, 12 Guild Card); cursors (bytes):
+  +0x21F the item lists (Pouch, Combine, Combo List, Gestures; 8 rows a page, L / R pages), +0x5F Hunter's Notes'
+  pop-out (Monster List / Hunter Info) and Equipment (Weapon, 5 armour, Charm), +0x36 Guild Card's pop-out (Check,
+  Edit, Send - greyed but counted - Card List), +0x225 Options (7 rows a page; left / right turn its pages, so a click
+  is A, no value area). Status and Moga Village have nothing to select. Rows from frame dumps: lists x 1415-1815 from
+  y 282, 46 high, 52 apart; pop-outs x 1082-1326 from y 436 / 438. Checked headless with MH3U_POINTER_SCRIPT: each
+  hover walks the game's cursor (Pouch to row 3, Combine 2, Gestures 5, Equipment to Charm, Guild Card to Card List,
+  Options to row 4), Hunter Info opens by click. Deeper screens (an item's sub-menu, Hunter's Notes pages: sMenu+0x34
+  above 1) are not mapped: a click there is A.
+- One level below the field menu's screens (2026-11-02). One headless run per screen (a wrong count of B presses
+  spoiled a single long route), sMenu snapshots over DOWN, DOWN, UP plus frame dumps. sMenu+0x34 stays 1, sMenu+0x35
+  is the level inside the screen: Item Pouch 1 = an item's Discard / Swap (cursor +0x5A, 0 Discard), 2 = "Swap into
+  which position?" (the pouch list, +0x21F); Options (id 4) 1 = a row's value being edited (left / right change it,
+  A ends it); Hunter's Notes opens Monster List as id 37 and Hunter Info as id 38 (+0x35 1): Hunter Info's categories,
+  topic lists and topic pages all use cursor +0x225 and the same rows (8 a page), +0x229 = rows shown (3 / 6 / 8 seen,
+  constant per list); Guild Card Check +0x35 13 (L / R pages, nothing to select), Card List 15. Combine's second
+  material (+0x35 0), Combo List and Equipment details (A shows them beside the list) stay on their lists. Monster List
+  and Guild Card List are empty in the test save (one row), so their cursors are unconfirmed: left unmapped (click = A).
+  Checked with MH3U_POINTER_SCRIPT: hover walks Discard / Swap, the swap target, Hunter Info rows (an empty row on the
+  3-row list does nothing), a click on Player Info opens it; Music Volume 5 -> 6 -> 5 -> 4 by clicks on the value
+  box's halves, a click on the row ends the edit.
+- Creation's analog pickers, Monster List, Guild Card List (2026-11-03). Character Creation's sub-screens run from
+  FUN_027576D8 by +0x868 (3 Skin Tone FUN_02754C04, 5 Clothing Color FUN_02755414, 9 Hair Color FUN_02756698; the
+  creation step FUN_0275412C only for 0). Skin Tone: mode 2 is the slider, left / right step the int +0x8B4 (0-99,
+  FUN_02751BA8), FUN_027518E8 places the knob (x = v / 100 * 618 + 72 in the widget; on the TV 288 + v * 6.18, y 528)
+  and recolours (sUserData+0x7418); A (or B) leaves. Colour screens: swatch cursor +0x890, 12 = the gradient row (A
+  there: mode 3); in mode 3 the d-pad steps floats x 0-175 / y 0-50 (clothing +0x8AC / +0x8B0, FUN_0275274C /
+  FUN_027527C0, redraw FUN_02752470 -> sUserData+0x57A0; hair +0x8A4 / +0x8A8, FUN_02752120 / FUN_02752194, redraw
+  FUN_02751E5C), the knob at 200 + x / 175 * 400, 610 + y / 50 * 116 TV px; A or B back to mode 2. The gradient
+  texture is sampled by FUN_027517D8 from the copy uIDMakeAppearance+0x6C8 (FUN_0274A9F0). So mode 3 inside a
+  sub-screen is not the cancel prompt (that is mode 3 with +0x868 0): the pointer had shown the prompt's boxes there.
+  Monster List (sMenu id 37, +0x35 1) is Hunter Info's list: +0x229 = 1 with only "(No Data)", the row on the same
+  place. Guild Card List is uIDLobbyCardList (0x4B0 bytes), step FUN_0268E7DC (reads FUN_0221A430, so the pointer is
+  on): state +0x3D2 (0 list, 1 / 2 prompts, 5 a card shown, 6 moving a card, 7 closing), row +0x3D4 (s8, 0-7, wraps),
+  page +0x3D8 (s16, count +0x3DA), slots s8 at +0x3DC + page * 8 + row (< 0 empty), A views; card data at 0x10315F58
+  + slot * 0x380. Checked headless (MH3U_POINTER_SCRIPT): the gradients and the slider follow the pointer and a click
+  confirms (clothing 88,25 -> 131,13 then back to the swatches; hair clamps at the edge, ignores the pointer 48 px
+  past it; skin 50, then a click at 20 leaves the screen); the card list row went 0 -> 1 -> 2 -> 1 with DOWN, DOWN, UP
+  and its empty rows take no hover or click; Monster List ignores rows below "(No Data)", a click on it is A.
+- **Camera too fast above 30 FPS; loud menu sounds (2026-11-03, issues #2, #6, #7).** uGameCamera::vf8 (0x0227EDE8)
+  sets its frame time +0x8E4 = cUnit+0x1C x 0.5 (0x10029C40; 1.0 at 30 FPS, 1.0 fixed with sMain+0x76) and hands a
+  pointer to it to its sub-blocks, but four steps ignore it and run once a frame: FUN_0227FFC0 (ease (s16)(target -
+  current) >> shift, shifts 2 / 5, from FUN_0228984C and FUN_02283374), FUN_02286DE8 (auto-turn behind the hunter),
+  FUN_02286F18 (camera left / right = player pad +0x1C8 bits 6 / 8 with bit 9: target yaw block +0x94 +- 0x40B x
+  ramp / 5, ramp +0xE4 counting the frame time; 0x34B / 0x2EB variants, max 10 when pad +0x3D == 3) and FUN_02286890
+  (under water, bits 2 / 4: target pitch +0x90 +- 0x230 x ramp / 12, clamp +-0x3E94). Above 30 FPS the camera turned
+  FPS / 30 times faster and its ease snapped ("stops abruptly"). src/game/camera_speed.cpp scales them: turns x frame
+  time, ease 1 - (1 - 2^-shift)^t; 30 FPS is unchanged. The right stick reaches the camera through sAppPad +0x13C
+  / +0x136 (magnitude / angle, filled by FUN_020DFCF4; read watch: FUN_0227E138 copies them, FUN_0286BADC turns them
+  into the pad bits). FUN_0228984C returns at once while sGame+0x48 == 2; the village camera is fixed (user), so
+  the fix still has to be seen in the field.
+  Audio (MH3U_AX_LOG): every sound plays twice, a TV voice and a GamePad voice of the same sample (title jingle
+  18C274F0: TV 0.169, DRC 0.379; peaks 4678 vs 10474). The mixer played DRC-only voices on the TV, so these came out
+  ~3x too loud (the start-menu open / close sound). DRC-only voices are now skipped while a TV voice plays the same
+  sample. Not found yet: the windpress push and the fast "red markers above characters" (uIDCockpitAbovehead
+  0x025F20B0 / 0x025F2810 is a candidate; its GUI step FUN_02A70D34 is only called at set-up).
+- **Windpress and grab escape above 30 FPS (2026-11-03, issue #2).** Found with play logs (MH3U_PLAY_LOG: per-frame
+  hunter, changed words of the uPlayer / pad block / first monster, sticks; MH3U_PLAY_WATCH=1: writers of the
+  hunter's x position per second, RelWithDebInfo). The pad block is the uPlayer itself + 0xE40 (uPlayer+0xE30 points
+  there); +7 is the action phase, +0xE0/E4/E8 the position, +0x11C/+0x120 the facing, uPlayer+0xDB8 the motion.
+  Windpress: FUN_028ABC3C (motions 0xDA -> 0xE2): phase 1 adds K x cos(motion frame) along the facing to the
+  position every frame, without the frame time (100 FPS: a ~970-unit slide; the only position writer in that phase
+  besides the per-frame mover FUN_028A337C). src/game/windpress.cpp scales that step by cUnit+0x1C / 2.
+  FUN_028A6960 (airborne physics) is fine: it integrates in frame-time sub-steps.
+  Grab (Arzuros, motions 0x118 / 0x119, the hunter shaken 6.7 s): FUN_028B0F70 adds *(pad +0x6BC) - the frame time,
+  1.0 at 30 FPS - to the gauge pad +0x6B4 for each wiggle FUN_0286C37C accepts (one-frame cooldown +0x6C0 / +0x6C4);
+  at 4 (2 with skill 0x30) it resets and +0x6B0 counts down. Log at 100 FPS: steps of 0.25-0.34 on stick flips, a
+  fill about every second - ~13 wiggles per fill instead of 4. src/game/grab_escape.cpp points +0x6BC at 1.0
+  (0x10029C08) for the call. Both: 30 FPS unchanged; to be checked in game.
+  Volume: master x0.8 with a soft knee from 20000 (runtime/audio/ax.cpp), after removing the doubled GamePad voices.
+- **Lobby menus with real hover (2026-11-03).** Each lobby list keeps its cursor in guest memory and draws its
+  highlight from it every frame, so the hover writes that cursor (src/game/menu_mouse.cpp, one wrapped step each):
+  FUN_0221C614 option scroll (list +4; geometry per caller lr), FUN_02217F10 Market list (sLobby+0x5558),
+  FUN_021F1140 item box grid (box +0xC / +0xE, 10x10), FUN_021F1B00 Store Items list (+0x14), FUN_021CE834 Smithy /
+  Armory list (sLobby+0x5944; refresh FUN_021CCDD4 + FUN_021CDCF0), FUN_021E55A8 quest level plaques (+0x38),
+  FUN_021E3978 quest list (+0x16), FUN_021D8C8C Canteen ingredients (+0x1E), FUN_021EF1A8 furnishing / Sources list
+  (u8 sLobby+0x6EB9), FUN_022101F4 Farm Name List (sLobby+0x7FC2), FUN_021D431C Farm Felyne tab (view+0x38, redraw
+  FUN_021D3E1C), FUN_021D4420 Cultivate settings (view+0x3A), FUN_021EFA70 Crop Box / Stockpile (menu u8 +0x693E,
+  grid +0x693D / +0x694E / +0x694C), FUN_02043308 stacked Yes / No (u32, 0 Yes), FUN_02863258 quest Supply Box (byte
+  +0x6BF of FUN_02166A14(sQuest), 8x5), sMenu+0x204 Abandon Quest's Yes / No (field menu screen 1/5/0).
+  Ferry: lobby mode 29 runs uIDLobbyOnline; its state 9 FUN_026AD984 is the Destination list (six entries, cursor
+  +0x408 / +0x404, drawn +0x40C; it only redraws on up / down, so the hover calls FUN_026ACBB8 like it). Furnishing
+  position picker: FUN_021C3DCC (Place) and FUN_021C4304 (Remove) share a struct (cursor +0xCA, spots +0xB3[]); the
+  spots are 3D markers (sLobbyTarget+0x19A flags) seen from fixed cameras, so their screen places were measured
+  (MH3U_MENU_PICKER_CAL steps through the free spots and captures each; Moga house, area 26 room 1, spots 0-2 at
+  475,658 / 827,515 / 1415,738). Tools: MH3U_MENU_LEARN (callers of the lobby directions and cursor helpers, field
+  menu screen keys, a screenshot per new screen), MH3U_MENU_HUNT_LIVE (Down, Down, Up in a window: the bytes that went
+  +1, +1, -1). uCamera fields (createProperty): far +0x30, near +0x34, aspect +0x38, fov +0x3C, pos +0x40, up +0x50,
+  target +0x60.
+- **Solo quest results and the hidden cursor (2026-11-03, 0.1.2hf).** The results after a solo quest are sResult's
+  FUN_02180870(?, res), not FUN_020E8DD4 (that one runs only with the network results): state res+0x2FF4, sub res+2;
+  state 1 sub 0 the Quest Rewards menu (byte res+0x3066 of res+0x3067), sub 1 the Reward Box grid (FUN_02180690:
+  row res+0x306F of res+0x3072, column res+0x306E of 8), state 5 the summary pages (res+0x3066 of res+0x3067, left /
+  right), A = 0x10 of sAppPad+0x6C read directly. Found by searching sResult's code (0x0217DB70-0x02183130) for the
+  cursor helpers, screens from MH3U_MENU_LEARN keys E1SSSS0B. The system cursor is hidden over the window while the
+  mouse is not a pointer (runtime/input). A direct mouse yaw (adding the mouse to camera block +0x94 / +0x9C) was
+  tried and reverted at the user's request; see ROADMAP Phase 5.5.
+- **Far-sea stripes = ignored polygon offset (2026-11-04, 0.1.2hf2, issue #8).** Diagonal stripes on the far sea in
+  Moga Woods, flickering only while the camera turns. Ruled out one by one: shadow map (lookups off), our AO, mip
+  levels (level 0 only, MH3U_RENDER_DEBUG=32), invariant / no-contraction positions, and hiding any one of the 42
+  pixel shaders that draw to the scene. Found with a per-draw readback of full-width bands of the scene (edge energy
+  per 128-pixel segment after each draw, F9 bursts of 6 frames with MH3U_DUMP_KEY=1): the stripes appear with a
+  blended wave layer over the sea (ps 4ee05310e4dbdfa3, LEQUAL, no depth write). MH3U enables GX2 polygon offset
+  (GX2SetPolygonControl args 6 / 7, GX2SetPolygonOffset) on nearly every draw with -32..-512, which we ignored, so the
+  layer z-fought the sea. But the same offsets sit on its two depth-writing passes of a mesh (a base pass, ps
+  9dea153816533696, then the lit pass, both LEQUAL) and differ in both directions (characters -192 -> -32, terrain
+  -32 -> -224, -160 -> -96): applied as Vulkan depth bias with either sign, characters or terrain went black. So the
+  offset is applied only to draws that test but do not write depth, pulled towards the camera by its size (the
+  Latte units / sign for the depth-writing pairs are not understood). Also: GX2's viewport depth range is -1..1
+  (window z = ndc z); clamping it to 0..1 halved the depth precision, now taken as it is with
+  VK_EXT_depth_range_unrestricted, or, without it, in 0..1 clip space (same window z; MH3U_NO_DEPTH_RANGE=1 tests
+  that path). F11 (fullscreen / window) and the cursor shown after Esc / F11, a Scaling setting (smooth / sharp) for
+  the anti-aliasing request.
+- **Stockpile and Farm hover (2026-11-04, 0.1.2hf2).** Moga Forecast FUN_021D2724(?, view): day tab view+0xC of
+  view+0xE (left / right; Y = map, view+4). Resource Items FUN_021D24BC(?, list): row list+0x8 of list+0x10 on the
+  page (up to 8), page list+0xC of list+0xE (FUN_021D2240 fills a page). Farm FUN_021D4420 state 0 ("Assign which
+  Felyne"): A goes on to the settings; settings row view+0x3A 3 is OK; states 3 / 5 are FUN_02043308 Yes / No.
+- **Linux display fixes (2026-11-04, 0.1.2hf3, issues #10, #11, #13).** The window had no SDL_WINDOW_HIGH_PIXEL_DENSITY,
+  so on a scaled Wayland desktop the swapchain had the logical size and the compositor stretched it (sharp at 50 %,
+  blurry at 150 / 200 %). With the flag the swapchain has the real pixels; ImGui 1.91.9's SDL3 backend then reports
+  points with a framebuffer scale, while the launcher lays itself out in pixels (SDL_GetWindowDisplayScale), so
+  the launcher draws in pixels 1:1 (DisplaySize x scale, framebuffer scale 1, mouse motion x pixel density). The
+  swapchain format was picked by format only: a compositor listing B8G8R8A8_UNORM again with HDR / extended colour
+  spaces (Steam Deck), or offering only _SRGB formats, showed the picture washed out and too bright. Now only plain
+  sRGB colour space, UNORM formats (B8G8R8A8, then R8G8B8A8 / A8B8G8R8, then 10-bit); the choice is logged
+  ("presenter: swapchain format 44, colour space 0" on Windows / NVIDIA). Settings > General > Session > Quit game
+  over a running game (select twice).
+- **Fullscreen on Wayland (2026-11-04, 0.1.2hf4, issue #13).** After hf3, borderless was sharp on a scaled Wayland
+  desktop but exclusive fullscreen was not: it passed SDL the desktop display mode, which on a scaled desktop has
+  the logical size; Wayland has no real mode changes, so SDL emulates the mode by drawing at that size and stretching
+  it. On Wayland "Fullscreen" now uses desktop fullscreen (null mode); Windows and X11 keep the exclusive mode. Each
+  swapchain logs window points, swapchain pixels and the display scale (Windows 100 %: windowed 1920x1080 / 1920x1080,
+  borderless and fullscreen 2560x1440 / 2560x1440).
+
+## 2026-11-04 - Washed-out picture on Wayland; camera speed that scales the camera, not the stick (fork 0.2.1)
+- **Glare / washed-out colours (user, Fedora 44 KDE Wayland, RX 7800 XT RADV).** The presenter took the *last*
+  B8G8R8A8_UNORM surface format without looking at its colour space. RADV on Wayland offers 81 pairs (9 formats x 9
+  colour spaces, MH3U_VK_FORMATS=1 listed them; upstream hf3 now ranks formats the same way and its presenter replaces ours); the last B8G8R8A8_UNORM one is 1000104011 = ADOBERGB_LINEAR, so the
+  compositor read the game's gamma-encoded sRGB as linear wide-gamut light: lifted, too bright ("a lamp on top of the
+  screen"). Frame dumps (read back before presentation) looked right, which pointed at the swapchain. Now a UNORM
+  format in SRGB_NONLINEAR is required (chosen: 44 / 0, logged at start). The game's scene itself is fine: GI on / off
+  differs in 0.3 % of the village frame. GX2SetTVGamma: the game sets 1.0 at boot (FUN_02BBA7F8, lr 0x02BBAB40:
+  gamma = A / (B - v)); the Monitor Settings slider (lr 0x027596BC) changes it - still a stub, not the cause.
+- **Camera speed.** The camera turns from digital pad bits (FUN_0286BADC: stick past a threshold), at K x ramp / max
+  a frame, so 0.2.0's scaling of the right stick never slowed it and pushed the stick under the threshold (vertical
+  dead at 50 %, horizontal at 30 %, user). Now src/game/camera_speed.cpp multiplies the setting into the steps:
+  the yaw step of FUN_02286F18, the under-water pitch of FUN_02286890 and, on land, the tilt: FUN_02286890's land path
+  (pad +0x3D != 3) only steps a tilt level block +0xA8 (0..5, up bit 1 / down bit 3, swapped by +0x697 bit 2);
+  FUN_0228984C sets +0xA0 from it and eases +0xA4 toward it with FUN_0227FFC0 shift 5 (lr 0x02289EE4 / 0x02289F64 /
+  0x02289FE4; shift 2 eases: +0x98 -> +0x90 and +0x9C -> +0x94). Those three eases run with exponent t x speed.
+  Not yet seen in a hunt (the village camera is fixed).
+
+## 2026-11-04 - True attack and key quests (fork mods)
+- **Weapon attack display.** FUN_02045108(item r3, raw r4) -> (u16)(raw x table[k] / 100), table u32 x100 at
+  0x1017C13C: 480 140 520 230 148 130 130 330 460 230 120 140 460 170; k = FUN_02158CC0(*(0x10314B80), item[0])
+  (< 14, else 0); item[0] == 0xB with FUN_020450C0(item, 1) uses entry 13. Callers: FUN_0228E554 (sprintf), FUN_020471BC,
+  FUN_02049ECC, FUN_027042E0 (GUI) and FUN_02848454 (uPlayer getter: pad +0x6E8 raw, item pad +0x3B8; no callers, no
+  vtable reference). So the stored attack is the true one. Checked headless: Iron Hammer raw 70 -> shown 364 (x5.2) on
+  Info -> Equipment; with the hook returning raw, Status and Equipment show 70. Hook point added (mods/true-attack).
+- **Quest data in memory.** All 412 rQuestData (vtable 0x1001213C, 0x938 bytes) are resident from the village on
+  (probe plugin scanning guest memory). rQuestData::createProperty 0x02077F10 names the fields: +0x164 QuestNo u16,
+  +0x17C QuestLevel, +0x17D MapNo, +0x1AC SpecialFlag, +0x1E0 Category u64, +0x230 Contract (fee) u32, +0x234 reward
+  money u32, +0x23C MainHRPoint, +0x246 ProgNo, +0x8E8 openFlag u64, +0x8F0 openSource u64, +0x8F8 openNum u8, ...
+  The .quest file (QTDS v5, little-endian) does not follow this order (loader not decoded).
+- **Unlocks.** A quest is offered when its openFlag bits have been set openNum times by clears of quests whose
+  openSource has them. Urgent quests are 2xxx (village) / 12xxx (Port Tanzia); village (1xxx-2xxx) and Port Tanzia
+  (11xxx-12xxx) use the same bit numbers for separate progress. Following each urgent's bits back through the quests
+  that set them, recursively, gives the community wiki's key quests for village 1-3, 6 and 7 star exactly; 4 star gives
+  Dragon Lady (wiki) plus "any 2 of" Leader of the Icepack / Hunter Killer / Lost in Blue / Cold Stones / Snowbound
+  Slider (urgent 2402, openNum 2). Category bit 0x00800000 is a key flag on village 1-5 star quests (adds 5 star
+  Wrath of Rathalos and A Bard's Tale). Not explained by data: 5 star bits 0x20000000 / 0x08000000 (no quest sets
+  them; the wiki's Walk 'n' Roll and Desert Gourmand lead there). Quest Counter list FUN_021E3978: quest numbers u16
+  list+0x1A[row] for the page's list+0x18 rows (from the selection path: lhz r4,0x1a(list + row*2)).
+
+## 2026-11-04 - Cutscenes are movies; skipping them
+- MH3U's story and monster cutscenes are pre-rendered (nativeCafe/movie/NN.mp4, 17 files) played by sMH3GMovie
+  (singleton 0x10314A70, ctor 0x02156B90): +0x34 the playing uMovie (+0x30 its Player), FUN_021571D0 isPlaying? =
+  movie set && uMovie+0x32C != 6, FUN_02156C28 stop (Player stop FUN_02A41748, FUN_02156BE0, unit released via vtable
+  +0x84, +0x34 = 0; harmless with no movie), FUN_0215720C(movie, on) toggles uMovie+0xC bit 0x100000. Callers of
+  isPlaying: FUN_02761A4C (title intro), FUN_02022E94 / 02023D40 / 02026020, FUN_02115D5C, FUN_02118124, FUN_0228CF18;
+  on false they go on as after the movie (FUN_02026020: state 3, then stop). The in-engine sEvDemo (0x103138C8) reads
+  no pad. src/game/movie_skip.cpp wraps isPlaying: a new + press stops the movie and answers false. Checked headless
+  on the title intro: + at frame 400 -> title screen at 650 (without: still the intro at 900); a Continue route after
+  the skip reaches Moga Village.
+- Sky / vine flicker (user): not seen in 40 consecutive village frames (fixed camera). Candidates read in the
+  renderer, not confirmed: a cached render target (targets_) is sampled for any texture at its address and is never
+  dropped when the CPU loads a texture over that memory; GX2SetRasterizerClipControlEx's zClip is ignored (the game
+  only calls it once, 1/1/1).
+
+## 2026-11-06 - Which cutscenes the + skip reaches (fork)
+- Headless New Game route (scratch save): `MH3U_INPUT_SCRIPT="400:PLUS;1000:A;1150:UP;1250:A;1450:A;1750:A;2000:DOWN;
+  2100:DOWN;2200:DOWN;2300:DOWN;2400:DOWN;2500:DOWN;2600:A;2800:A;3400:A;3700:DOWN;3850:DOWN;4000:A;4200:A;4320:A;
+  4440:A;4560:A;5600:PLUS"` (name, notice, six DOWNs to OK - gender is a stop -, touch panel, empty slot 3). Both
+  movies skip: the title intro and the opening (+ at 5600 -> Moga Village gameplay at 5700).
+- The game also has real-time cutscenes (sound/bgm/demo/demo_NN_bgm, rDemoCamera / rDemoEnemy / rDemoFade /
+  rDemoListeningPoint resources) that never go through sMH3GMovie, so + does not reach them. sEvDemo (singleton
+  0x103138C8, vtable 0x1001D1F4: 0210BEE8 0210BFD8 0210BAC4 0210BFDC 0210BBF8 0210BFA0 0210BF3C 0210BFD4):
+  FUN_0210FCA8 "demo active?" = +0x34 == 4 || +0x34 > 1 || +0x100; FUN_0211001C init (+0x34 = 1, +0x36 = 0xFF);
+  FUN_0210CA84 picks the quest's demo setup by quest number (sQuest? *(0x1031537C), FUN_02170E88). +0x34 stayed 1
+  through the whole New Game opening (no real-time demo there). Skipping these needs a save in front of one.
+
+## 2026-11-07 - Menus drawn with the game's GUI textures; how local play could work (fork)
+- **GUI sheets.** 470 GUI textures in the content; the menus use four (US English): `GUI\Texture\common\td_com_ID_eng`
+  (1024x1024 BC3: bands, frames, cursor, parchment) and `td_bu_ID` (512x256 BC3: Pro Controller glyphs) from
+  `nativeCafe/arc/ID/ID_cock_eng.arc`; `GUI\Texture\startmenu\st_M_menu_01_ID_eng` (2048x2048 BC3: title scroll,
+  parchment page x 1677-2036 y 6-628) and `st_menu_04` (2048x1024 RGBA8, 12 mips: carved wood, loaded at mip 1) from
+  `ID_dataTrans_eng.arc`. runtime/boot/skin_decode.cpp (own inflate + .arc + .tex level decode) gives pixel-identical
+  results to scripts/mt_tex.py on all four; loading them takes ~125 ms at start. Sprite rectangles in game_skin.h.
+- **Network backends.** See docs/online.md "Local play": session factory 0x02E4D9AC (kind 3 Uds, 4 Nex, 0x10 / 0x11
+  Snow), context factory 0x02E4D844, kind from nNetwork::SessionDriver +0x60; the Wii U's nn_uds can only host (no
+  Scan / Connect imports), so instance-to-instance play needs a replacement for the Nex / Snow backend.
+
+## 2026-11-08 - The 102 network backend slots (fork)
+- Read from the recompiled C++ (asm comments), v32 hash checked. Full map in docs/online.md "The 102 backend slots".
+- 56 pure virtuals (Context 11-35, Session 11-36, P2p 11-15; base entry 0x03122C18), about 21 with real logic. Session
+  requests 0x301-0x308 run slots 29-36 (dispatch 0x02E61048, overlap rules 0x02E60C74). Uds stubs slots 30 / 31, the
+  search? / join? handlers: more evidence the Uds path can only host. Base helpers fire every session listener.
+- Mode 4 pairs with kind 0x10 (Snow) in 0226EA3C. Open risk: `cCafeTransport` registers directly with Snow.
+- Static only; no runtime probe yet.
+
+## 2026-11-08 - Network probe: Internet path runs to the NEX token (fork)
+- src/game/net_probe.cpp (MH3U_NET_PROBE, off by default; no game code regenerated: vtable entries go to a host tracer
+  through ppc::register_indirect). Details in docs/online.md "Probe results".
+- Area change: (*0x103D2EF4)->slot 11(DTI), as aGalleryMenu::vf7 does. aHarborSquare 0x1030CAE8 loads Port Tanzia; aHarbor
+  0x1030C748 is an abstract parent and hangs on Now Loading. aHarborGuild 0x1030C830 came up at the same spot.
+- sLobbyNetwork (*0x103A2F90) +0x8B0 bit 0x2 starts Internet: Snow::Context comes up, OSReport "Success to network
+  initialize.", fails at AcquireNexServiceToken with GameID 0x10104D00, shuts down cleanly. +0x44 bit 0x2 starts Local (Uds).
+
+## 2026-11-08 - Solo backend: the game's Player List with no server (fork)
+- src/game/net_backend.cpp (MH3U_NET_BACKEND=solo): Snow vtable entries Context 34 / 35 and Session 29 go to host code.
+  Internet machine reaches state 10 (in session); leave returns to 17. Area change to aHarborRoomSquare 0x1030CA00 shows the
+  Player List. Requests set by the probe, not by the game's menus. Details in docs/online.md "Solo backend".
+- sLobbyNetwork +0x8AC states: 17 signed-in hub (0x4 -> 2 -> 3 session hub), 3: 0x8 -> 4, 0x10 -> 5, 0x20 -> 7, 10 in session.
+
+## 2026-11-08 - Two copies in one Player List (fork)
+- src/game/net_backend.cpp over UDP on 127.0.0.1 (47800-47807): search, join, P2p send / receive. Both headless copies show
+  two rows in the Player List and hold state 10. P2p open's arg + 0xE is member index + 1. The other hunter was not seen in
+  the world; traffic is about 2 packets a second. Details and the menu route in docs/online.md "Two copies".
+
+## 2026-11-08 - The other hunter is parked; a plugged-in pad spoiled earlier runs (fork)
+- Attached controller drove headless copies (8BitDo pad): hunters walked unscripted and changed area. With it ignored
+  (SDL_GAMECONTROLLER_IGNORE_DEVICES) the host's hunter stands still. Earlier position results and the grey screen are suspect.
+- aHarborRoomGuild builds 4 uPlayerTest units; a remote member's unit stays at the default -1600, -137.5, -366. Forcing
+  sAppProcedure +0xC3C (gate of 0x02254D3C / 0x02256080) changes nothing in the hub. Details in docs/online.md "Two copies".
+
+## 2026-11-08 - Hub movement crosses once the area id is 1B/1 (fork)
+- Sender 0x022627CC refuses *0x10315C80 +0x115/+0x116 = 1B/0, receiver 0x02262DA0 needs 1B/1; debug jumps give 1B/0. Writing 1B/1:
+  the client's unit on the host reads the client's exact position (-1335.5, -137.5, -494.6). Not drawn yet; the write loses collision.
+
+## 2026-11-08 - Two hunters on screen (fork)
+- Setting sLobby +0x5452 and +0x5465 to 1 before the area change to aHarborRoomGuild builds stage 1B/1. Both headless copies show both
+  hunters, and a client step arrives with the exact position on both. Requests and area change still come from the probe.
+
+## 2026-11-08 - Quest launch reaches the member barrier (fork)
+- Probe imitates the launch step 0x0214E8A8 (quest 1101 on both copies): "Launching Quest...", quest map loads, aQuestArea stops at +5=2, the
+  network barrier. Party table sAppProcedure +0xC40 empty, sGame +0x4B = 255. Details in docs/online.md "Two copies".
+
+## 2026-11-08 - Two copies inside one quest (fork)
+- 0x0225B238 builds the party table from the party mask (+0xB). With the mask set to 3 by the probe on both copies, then the launch step, the member
+  barrier clears: both copies enter quest 1101 with two names in the party list and identical hunter positions. Join handshake still skipped.
+
+## 2026-11-08 - Monsters load on both copies but drift apart (fork)
+- Quest 2201, zone 1/3: same kind 27 monsters and HP on both copies, positions diverge from 26-192 to as much as 2,277 units over the run. Not yet known whether
+  small monsters are synced at all, or whether a missing flag stops it; no large monster or damage compared. Details in docs/online.md "Two copies".
+
+## 2026-11-08 - Monster sync and damage work between copies (fork)
+- Quest 1407: large monster has one controller at a time, the other copy follows its route exactly, and HP matches while either copy attacks (attacker as controller, 1433 -> 1379; attacker not controller, 1433 -> 1382).
+  Hunters reach it by reading state +0xEB and calling 0x02118F8C. Table of what is and is not tried: top of docs/online.md.
+
+## 2026-11-08 - Neko is the door to online (fork)
+- uIDLobbyOnline is Neko's Destination list, and it has the game's Network Mode row. Its real flow signs in on our backend up to "Start Network Mode?". Multi rows now Host / Join, Network Mode Leave, closing with the game's own cancel. Details in docs/online.md "Neko's menu".
+
+## 2026-11-09 - Joiner's 30 FPS and empty counter: the arrival flyover was cut off (fork)
+- sEvDemo type 0x10 (Port Tanzia flyover) sets sMain +0x76 fixed step, +0x4C 30, +0x88 2 through 0x0294C968; only the end of its state 4 clears them. Our area change to the hall wiped the state, stranding 30 FPS and leaving lobby NPCs at 0,0,0. Evidence: thread samples asleep in 0x0294B8DC, gdb breakpoint on 0x0294C968 (0x0214E2B8 -> 0x0214D038 -> 0x0210F7D0). Fix and open question in docs/online.md "The arrival flyover".
+
+## 2026-11-10 - Hall movement delay is the game's send interval (fork, issue #3)
+- Hub position send 0x022627CC (from 0x02798F68) fires when a countdown reloaded from sLobbyNetwork +0x594 runs out; the receiver 0x02262DA0 glides over the
+  same +0x594 ticks (0x02797DF0). Only the constructor 0x022601B8 sets it, to 20. Headless host + joiner: lag 0.73 s at 20, 0.15 s at 4. The backend now writes 4
+  while online. Details in docs/online.md "Hub movement delay".
+
+## 2026-11-11 - Charm tables: the talisman generator and its RNG slot (fork, issue #8)
+- Talisman generator 0x0217F63C (makeTalisman?, one caller 0x0217FF18 next to the quest reward code): r4 = talisman
+  out (+0 type 6, +1 slots, +2 rarity u16, +4/+5 skill 1 id / points, +6/+7 skill 2), r5 = charm 0x25-0x28 (skill-1
+  list sizes 60 / 62 / 35 / 55, "no second skill" odds 100 / 35 / 25 / 20, tables from 0x1020598C, slot odds rows
+  0x10206040 / 6094 / 60E8 / 613C). Same logic as the 3DS generator described by the MH3U Talisman Tables project.
+- Every draw is 0x0211971C(sGame, 1): sGame = *(0x101FDB9C), u16 slots at +0x40 (slot 1 = +0x42), x -> (x || 1) * 176
+  mod 65363 (the same step as the pure 0x02119770). 65363 = 163 * 401, so the 65362 states form 17 cycles: twelve of
+  5400 (ids 1 2 3 4 5 6 9 12 13 15 18 26), two of 200 (163, 489) and three of 54 (401, 802, 1203). A save keeps slot 1
+  and never reseeds it, so it never leaves its cycle: the cycles are the 17 charm tables, the five short ones the
+  cursed tables (community numbering: 163 = T11, 401 = T12, 489 = T15, 802 = T16, 1203 = T17).
+- No emulator patch for this was found (searched: Cemu graphic packs repo has only Infinite Sharpness for MH3U; no
+  Gecko / Cemu cheat; the known fixes are save editors that move the save to another cycle, or a timed New Game).
+- Fix (mods/charm-table-fix, hook point 0x0217F63C): before the generator, slot 1 gets a random state from 1..65362;
+  after it, the save's own state comes back moved on by the draws the roll made (counted from the random start), so
+  the save stays on its cycle. MH3U_CHARM_PROBE=<frame> (src/game/charm_probe.cpp) rolls every state for every charm
+  through the hook point; results below.
+- Probe, headless (2026-11-11): without the mod, 121,952 different talismans (charm, slots, rarity, skills) over all
+  261,448 rolls; a 5400-state table gives 12,745-13,049 of them, the 200-state tables 768 / 778, the 54-state tables
+  211-213. Every roll uses 4 or 7 draws and leaves slot 1 on its cycle. With the mod: no talisman outside the vanilla
+  set (0 of 80,324), slot 1 never leaves the save's cycle, and most talismans rolled from a table are ones that table
+  cannot give (e.g. 204 of 212 from the 54-state cycle 401). Not seen yet: a charm from a real quest reward.
+
+## 2026-11-11 - GamePad touch screen and Controller Settings (fork, issue #6)
+- Touch: MH3U reads touch only through `VPADGetTPCalibratedPoint`, whose output is 1280x720 (the game then scales to 854x480). Handing it 854x480 pixels
+  through a pass-through put a touch at (512, 352) on the panel at about (341, 235). Raw samples are now 12-bit and calibrated to 1280x720; checked
+  headless (Customize Panels: the Target Cam panel at (512, 352) is the one picked).
+- Touch works whatever the game's controller option is (its own notice: "Touch controls using the touch screen can be used with any controller
+  setting"), but `pro-only` had no GamePad at all and `pro` handed VPADRead no touch. New default `MH3U_CONTROLLER=both`: Pro Controller and GamePad
+  both driven by host input (one host read shared by a VPADRead and a KPADReadEx in a row), so Options -> Controller Settings can choose either; with the
+  GamePad chosen a save loads into Moga Village and the hunter walks (headless). − -> Customize Panels -> drag Target Cam to the bin -> OK done headless with
+  scripted touches and with synthetic mouse events on the F3 inset (MH3U_MOUSE_AT). Target camera on the TV HUD in the field not checked yet.
+
+## 2026-11-11 - Widescreen 21:9 / 32:9 (fork, issue #5)
+- Idea and addresses from the MH3U ultrawide pack for the console emulator (MIT; read for understanding, no code taken):
+  sCamera::vf6 0x02BA0238 sets each camera's aspect (uCamera +0x38) every frame from the viewport rect,
+  `fdivs f11 = width r0 / height r8` at 0x02BA0474, stored at 0x02BA0478 and used for the projection later in the same
+  function, so a function override cannot reach it: added mid-function hooks to the emitter (config/hooks.txt).
+  Name tags: fmuls f1 = fraction x width at 0x02618214 / 0x026182BC (f7, f8) and 0x026189D4 / 0x02618A7C (f0, f7).
+- Our TV is mode 5 (1920x1080) at render scale 1; the pack's HUD shaders map to our keys: GS 1e2db7fd12a1ef03 (text,
+  icons, menus - its GLSL matches), VS 0b23f38235fb8aa3 and 39081fe338e695da (5 attributes, 21 uniform vec4; the
+  same uniform comparisons as the pack's 718db615...). 0b23 also draws world billboards (the red door marker, before
+  the bloom pass), so its squeeze waits until a draw samples the scene target.
+- Headless captures (village, start menu) at 2560x1080 and 3840x1080: 3D fills the screen unstretched, the menu and
+  the "To House" prompt sit in the middle 16:9, speech bubbles stay over off-centre NPCs; 1920x1080 unchanged; fixed
+  16:9 on 2560x1080 gives the old pillarbox; with bloom off the prompt is still squeezed (the colour filter samples
+  the scene). Not seen yet: a hunt's HUD (HP / stamina gauges, minimap, item bar), cutscenes, the map screen.
+## 2026-11-12 — Issue #7: 30 FPS outside the hub (stuck cutscene frame pacing)
+- `sMain` (0x103CEA44) +0x76 fixed step is set only by `sEvDemo` code (`FUN_0294C968` called from 0x0210E6B8 and
+  0x0210F7D0, with r4 1 to start and 0 to end). An area change during an event cutscene wipes sEvDemo's state, so its
+  end never runs and the game stays at the cutscene's fixed 30 FPS until restarted (the same thing the online
+  arrival flyover hit, docs/online.md "The arrival flyover").
+- Reproduced headless with `MH3U_TEST_STUCK_PACE=6000 MH3U_NO_PACE_WATCHDOG=1`: 121 FPS → a locked 30 FPS, as in
+  the report (31 FPS, frame time 32 ms, 99th percentile 31).
+- Fix: `pacing_watchdog` (src/game/net_backend.cpp, runs every swap, online or not) ends the fixed step after 90
+  swaps with no cutscene in states 2-4. In the same test the FPS was back to 120 within a second.
+- Not seen here: the +30 °C. On Linux the stuck state uses less CPU. Likely Windows only: the fixed-step loop
+  sleeps in short steps through OSSleepTicks (std::this_thread::sleep_for), which on Windows can spin. Not confirmed.

@@ -45,5 +45,7 @@ int main(int argc, char** argv) {
     out << "};\nextern const size_t kFunctionCount = " << entries.size() << ";\n";
     out << "extern const mh3u::ppc::FunctionEntry kImportTable[] = {{0xC0000000u, &" << selftest::kTestImport
         << "}};\nextern const size_t kImportCount = 1;\n";
+    out << "extern const mh3u::ppc::FunctionEntry kOverrideOriginals[] = {{0u, nullptr}};\n"
+           "extern const size_t kOverrideOriginalCount = 0;\n";
     return failed ? 1 : 0;
 }

@@ -50,6 +50,17 @@ void OverlayFs::mount(std::string guest_prefix, std::vector<std::shared_ptr<Tree
     mounts_.push_back({prefix_of(guest_prefix), std::move(layers), {}, false});
 }
 
+void OverlayFs::prepend(std::string_view guest_prefix, std::vector<std::shared_ptr<Tree>> layers) {
+    std::erase(layers, nullptr);
+    const std::string pre = prefix_of(guest_prefix);
+    for (Mount& m : mounts_)
+        if (m.prefix == pre && !m.writable) {
+            m.layers.insert(m.layers.begin(), layers.begin(), layers.end());
+            return;
+        }
+    mount(std::string(guest_prefix), std::move(layers));
+}
+
 void OverlayFs::mount_writable(std::string guest_prefix, std::filesystem::path host_dir) {
     mounts_.push_back({prefix_of(guest_prefix), {host_tree(host_dir)}, host_dir, true});
 }

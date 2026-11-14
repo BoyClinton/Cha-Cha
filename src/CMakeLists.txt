@@ -6,6 +6,11 @@ add_library(mh3u_game_src STATIC game/boot_prompts.cpp game/boot_prompts.h game/
   game/game_options.cpp game/game_options.h game/gui_util.cpp game/gui_util.h
   game/settings_page.cpp game/settings_page.h
   game/mods.cpp game/mods.h game/dlc_menu.cpp game/dlc_menu.h game/field_gfx.cpp game/field_gfx.h
-  game/soft_keyboard.cpp game/soft_keyboard.h)
+  game/soft_keyboard.cpp game/soft_keyboard.h
+  game/movie_skip.cpp game/movie_skip.h game/net_probe.cpp game/net_probe.h game/net_backend.cpp game/net_backend.h game/widescreen.cpp game/widescreen.h
+  game/charm_probe.cpp game/charm_probe.h)
 target_include_directories(mh3u_game_src PUBLIC game)
 target_link_libraries(mh3u_game_src PUBLIC mh3u_recomp_game mh3u_core)
+if(WIN32)
+  target_link_libraries(mh3u_game_src PRIVATE ws2_32)  # net_backend.cpp
+endif()

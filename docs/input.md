@@ -1,11 +1,28 @@
 # Input
 
 All host input – keyboard + mouse and any number of controllers at once (buttons are OR'ed; for each stick the
-source pushed furthest wins) – drives one Wii U controller, chosen with `MH3U_CONTROLLER`:
-- `pro-only` (**default**): a **Wii U Pro Controller** on `padscore` channel 0 and no GamePad. The game plays on the
-  TV with the Pro Controller layout; GamePad touch-screen features are not used.
+source pushed furthest wins) – drives the Wii U controllers chosen with `MH3U_CONTROLLER`:
+- `both` (**default** since issue #6): a **Wii U Pro Controller** on `padscore` channel 0 *and* the **Wii U GamePad**
+  (`vpad` channel 0), both with the same buttons and sticks. The game listens to the one its Controller Settings
+  option names, so both choices there work, and the GamePad touch screen is live in either (mouse on the shown
+  GamePad image, PlayStation touchpad). One host read serves a `VPADRead` and a `KPADReadEx` in a row, so taps,
+  wheel notches and mouse look are not split between the two.
+- `pro-only` (the default up to 0.3.2): the Pro Controller and no GamePad; GamePad touch-screen features are not used.
 - `pro`: the Pro Controller plus a connected GamePad whose only live input is the touch screen.
-- `gamepad`: the **Wii U GamePad** (`vpad` channel 0), as in the first versions of the port.
+- `gamepad`: only the **Wii U GamePad**, as in the first versions of the port.
+
+## GamePad screen and touch (issue #6)
+F3 cycles the GamePad image: hidden (default) → inset in the TV picture's bottom-right corner → the GamePad screen
+alone. While it is shown, the **left mouse button held on it touches the GamePad screen** there, and dragging moves
+the touch (e.g. − → Customize Panels on the GamePad screen, then drag a panel to the bin and touch OK: removing the
+Target Cam panel is how the real game puts the target camera on the TV). With the inset, the mouse must be free for
+that (Esc releases a captured mouse; a click outside the inset captures it again); with the GamePad screen alone,
+clicks never capture it. The cursor stays visible while the GamePad image is up and the mouse is free.
+Touch samples hold raw panel values (12 bits) and `VPADGetTPCalibratedPoint` turns them into **1280x720**, as on the
+console: the game scales that to its 854x480 screen (before, it got 854x480 pixels and every touch landed at two
+thirds of the way). Headless: `MH3U_TOUCH_SCRIPT="frame[+frames]:x,y[>x2,y2];..."` touches (or drags across) the
+GamePad screen in 854x480 pixels, on the `MH3U_INPUT_SCRIPT` clock; `MH3U_MOUSE_AT="s:x,y:down|move|up;..."` hands
+host input left-button events in window units at those seconds.
 
 Code: `runtime/input/host_input.*` (SDL3, host main thread) → `runtime/os/input.cpp` (`VPADRead`, motor).
 Settings: `input.ini` in the data folder (not in git), written by Game Options' Controller / Keyboard Settings.
@@ -22,6 +39,11 @@ Layout - Nintendo, the default, or Custom, shown once a button is remapped; Nint
 Y, Reset to Defaults for the controller only) and **Keyboard Settings** in place of the game's Game Settings (keys and
 mouse only: Mouse Sensitivity, Invert Camera Y, Reset to Defaults for keys / mouse only). `layout = xbox` in an older
 `input.ini` shows as Custom.
+**Cha-Cha Plus overlay:** **F1** (or **Select + Options** together on a controller - Back + Start, View + Menu, Share +
+Options; a lone Select or Options reaches the game 80 ms late while it waits for the other - or a controller's
+touchpad click, Home / PS / Xbox button, or the DualSense mic / Xbox Share / Switch capture button) opens the fork's
+settings over the running game (camera speed, aspect ratio, online), **F2** its Mods page (mod plugins and their
+settings); again, or Esc / B, returns to the game.
 `input.ini` sections `[bindings]` (keys / mouse) and `[controller]` (SDL gamepad button names, `lefttrigger`,
 `righttrigger`) change the defaults line by line, or replace them when they start with `clear = 1` (as saved by
 Cha-Cha). Test: `bindings_test` (bind, save, reset, reload).
@@ -48,11 +70,17 @@ SDL3's gamepad API maps everything to one layout, so the same code serves:
   since the game's previous `VPADRead` becomes right-stick deflection (`sensitivity` per pixel, averaged over two
   reads to smooth spikes, added to any stick input and clamped). A very fast flick saturates at full stick speed.
   `invert_y` flips vertical look.
+- Camera speed (`[camera] speed`, Settings → Input → Camera speed, 0.3–1.0): the game turns the camera from digital
+  pad bits (the stick past a threshold), not from the stick's deflection, so the setting scales the game's own steps
+  (`src/game/camera_speed.cpp`): the left / right turn, the under-water pitch and, on land, the ease of the camera's
+  tilt between its levels. It applies at once. (0.2.0 scaled the stick, which only pushed it below the threshold.)
+- Cutscene skip: a new press of + while a cutscene movie plays skips it (`src/game/movie_skip.cpp`; presses are
+  taken from what the game was handed, `input::note_buttons` / `take_pressed`, and count for 300 ms).
 - **Menu pointer.** While one of the game's menus is open the mouse is a free pointer with a cursor in the style of
   the game's menus (drawn by `make_cursor` in host_input, no game art; 32 px tall at 1080 lines): no mouse look, right
   click = B, wheel = d-pad up / down (fixed; the mouse bindings apply only outside menus). Left click: in a menu with
   hover (the whole start menu - Main Menu, Character Select, Character Creation with its type grids, colour swatches and gradients, the Skin Tone slider, Features and its prompts, Touch Panel Settings, the save slots, the Options list and pages - the Yes / No prompts met there, the field menu (− : both tabs, a click on a tab switches to it) and the screens it opens - Item Pouch, Combine, Combo List, Gestures, Hunter's Notes, Equipment, Guild Card, Options - with what those open: an item's Discard / Swap and the place to swap to, Hunter Info's lists, Monster List, Guild Card List, an Options value being changed - the item box options; and in the lobby (0.1.2): every facility's option scroll, the item box grid and Store Items list, Market buy list, Smithy / Armory equipment list, Quest Counter level plaques and quest list, Canteen ingredients, the house menus, furnishing list and furnishing position picker (Place and Remove; spot positions measured for the Moga Village house), Farm (menu, Name List, Felyne tabs, Cultivate settings, Sources, Crop Box) and Stockpile (0.1.2hf2: the Farm's Cultivate and OK buttons, the Moga Forecast day tabs, Resource Items with its page arrows), the Ferry's Destination list, the stacked Yes / No prompts, the save prompt, Abandon Quest's prompt and the quest Supply Box; 0.1.2hf: the solo quest results - Quest Rewards menu, Reward Box grid, the summary pages with their arrows) the option under the pointer is highlighted as it moves and a click on it
-  chooses it, a click beside the options does nothing; in other menus a click is A. On settings rows a click on the value side changes it (left / right half; on the volume bars, the bar clicked); on the Effect page a click on a card selects it. On a colour gradient or the Skin Tone slider the pointer moves the knob (the colour follows) and a click keeps it. Controller Settings is disabled for now (its choice cannot change: picking the GamePad there leaves no working input; a page of our own replaces it later). A captured mouse is
+  chooses it, a click beside the options does nothing; in other menus a click is A. On settings rows a click on the value side changes it (left / right half; on the volume bars, the bar clicked); on the Effect page a click on a card selects it. On a colour gradient or the Skin Tone slider the pointer moves the knob (the colour follows) and a click keeps it. Controller Settings works with the default `MH3U_CONTROLLER=both` (left / right choose the GamePad or the Pro Controller; both work); in the other modes its choice cannot change, since picking the missing controller would leave no working input. A captured mouse is
   released when a menu opens, with the pointer in the middle of the window, and captured again when it closes (unless
   Esc released it meanwhile). Mouse buttons held across the switch are dropped, so the right click that closes a menu
   is not an A press in the field. "A menu is open" comes from the game (`src/game/menu_mouse.cpp`): the start-menu
