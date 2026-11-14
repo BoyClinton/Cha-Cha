@@ -548,13 +548,26 @@ int main(int argc, char** argv) {
     });
     game::register_menu_mouse({&input::set_menu_open, &input::pointer_position, &input::take_clicks, &input::tap, &input::both_controllers});  // menus: mouse = pointer
     game::set_frame_capture(&gfx::dump_next_frame);
+    // Online play through a NEX server (config.ini online_server, runtime/os/online.cpp) uses the game's own Network
+    // Mode, which runs through the Snow session that the network backend replaces: one or the other.
+    const bool nex_online = !settings.online_server.empty();
     {  // the network backend, and MH3U_NET_PROBE, which logs its calls (docs/online.md)
         std::vector<std::string> fp_imports;
         for (const auto& im : img->imports)
             if (!im.data && im.rpl.rfind("nn_fp", 0) == 0) fp_imports.push_back(im.name);
-        game::register_net_backend(mem.base(), fp_imports);
-        game::net_configure(settings.online_lan, settings.online_host);
+        if (!nex_online) {
+            game::register_net_backend(mem.base(), fp_imports);
+            game::net_configure(settings.online_lan, settings.online_host);
+        }
         game::register_net_probe(mem.base(), fp_imports);
+    }
+    if (nex_online) {  // MH3U_LOG_NET=1 logs socket calls and packet bytes
+        os::OnlineConfig online{settings.online_server, settings.online_pid, settings.online_password, settings.online_name};
+        if (char* v = nullptr; _dupenv_s(&v, &frames_len, "MH3U_LOG_NET") == 0 && v) {
+            online.log = std::string(v) == "1";
+            std::free(v);
+        }
+        os::register_online(r, online);
     }
     // mods' native plugins, after Cha-Cha's own replacements so their hooks chain onto them
     game::net_set_toast([](const std::string& msg) {
@@ -618,7 +631,7 @@ int main(int argc, char** argv) {
     }
     if (headless) game::set_camera_speed(input::control_options().camera_speed);
     gfx::register_gx2(r);
-    game::register_net_backend_tick();
+    if (!nex_online) game::register_net_backend_tick();
     game::register_net_probe_jump();
     game::register_charm_probe();  // MH3U_CHARM_PROBE: talismans per charm table (research)
     audio::register_ax(r, !headless);

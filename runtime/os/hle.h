@@ -87,7 +87,19 @@ void register_input(Runtime& r);
 void register_coreinit_dynload(Runtime& r);
 void register_applets(Runtime& r);
 void register_offline(Runtime& r);
+void register_nn_ac_connected();  // nn_ac reports a connected console (offline.cpp), for online play
 void register_coreinit_misc(Runtime& r);
+// Online play (online.cpp): config.ini online_* keys. Register last; false (offline) when online_server is empty.
+struct OnlineConfig {
+    std::string server;    // NEX server "host:port", empty = offline
+    uint32_t pid = 0;      // the account's principal ID on that server
+    std::string password;  // its NEX password
+    std::string name;      // account ID / screen name
+    bool log = false;      // MH3U_LOG_NET: socket calls and packet bytes
+};
+bool register_online(Runtime& r, const OnlineConfig& cfg);
+// real sockets (nsysnet.cpp), via register_online; the game's NAT check goes to nat_check_host
+void register_nsysnet(Runtime& r, bool log, const std::string& nat_check_host);
 void register_h264(Runtime& r);  // Media Foundation H.264 decoder
 
 }  // namespace mh3u::os

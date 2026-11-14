@@ -56,6 +56,11 @@ struct Settings {
     bool monster_hp_scaling = true; // Port Tanzia monsters' HP follows the hunters on the quest (src/game/monster_hp.cpp)
     bool online_lan = false;         // Online: use the network, not only this PC
     std::string online_host;         // Online: a host's IPv4 address that Join also asks, for hosts a broadcast cannot reach
+    // Online play through a NEX server (runtime/os/online.cpp); empty online_server = offline
+    std::string online_server;
+    uint32_t online_pid = 0;
+    std::string online_password;
+    std::string online_name;
     bool operator==(const Settings&) const = default;
 };
 Settings load_settings(const AppPaths& p);
